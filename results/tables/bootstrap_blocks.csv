@@ -1,0 +1,7 @@
+statistic,value
+n_blocks,30820.0
+mean_length,8.825438027255029
+median_length,6.0
+p90_length,20.0
+max_length,40.0
+target_mean_length,10.0

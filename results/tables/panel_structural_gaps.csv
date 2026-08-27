@@ -1,0 +1,17 @@
+iso,country,first_year,last_year,n_years,missing_series
+AUS,Australia,1890,1899,10,bond
+AUS,Australia,1945,1947,3,bill
+BEL,Belgium,1914,1919,6,"bond, bill"
+CHE,Switzerland,1890,1899,10,"dom_eq, bond"
+CHE,Switzerland,1915,1915,1,bond
+DEU,Germany,1923,1923,1,bill
+DEU,Germany,1944,1949,6,"bond, bill"
+DNK,Denmark,1915,1915,1,bond
+ESP,Spain,1890,1899,10,"dom_eq, bond"
+ESP,Spain,1936,1940,5,"bond, bill"
+ESP,Spain,2018,2018,1,bill
+FIN,Finland,1890,1895,6,dom_eq
+FRA,France,1915,1921,7,bill
+ITA,Italy,1915,1921,7,bill
+JPN,Japan,1946,1947,2,dom_eq
+NLD,Netherlands,1890,1899,10,dom_eq
