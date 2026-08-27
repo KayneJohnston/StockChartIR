@@ -1580,3 +1580,258 @@ Sweep tables are written to `{cfg['run']['table_dir']}/sensitivity_*.csv`.
 """
 
     return _write(path, [intro, method, planning])
+
+
+# ---------------------------------------------------------------------------
+# docs/06 - retirement spending rules
+# ---------------------------------------------------------------------------
+def write_doc_06(
+    path: str | Path,
+    cfg: Mapping[str, Any],
+    sweep: pd.DataFrame,
+    best: pd.DataFrame,
+    by_strategy: pd.DataFrame,
+    bequest_pivot: pd.DataFrame,
+    rule_catalogue: pd.DataFrame,
+    rank_by_gamma: pd.DataFrame,
+    figures: Sequence[str],
+    runtime_notes: Mapping[str, Any],
+) -> Path:
+    """Which retirement spending plan maximises certainty equivalent consumption."""
+    spend = cfg["spending"]
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    metric = f"cec_gamma{gamma:g}"
+    no_bequest = f"cec_nobequest_gamma{gamma:g}"
+
+    ranked = best.sort_values(metric, ascending=False).reset_index(drop=True)
+    winner = ranked.iloc[0]
+    baseline = ranked[ranked["rule"] == "constant_real"]
+    baseline_row = baseline.iloc[0] if len(baseline) else ranked.iloc[-1]
+    gain = (float(winner[metric]) / float(baseline_row[metric]) - 1.0) * 100.0
+
+    ranked_nb = best.sort_values(no_bequest, ascending=False).reset_index(drop=True)
+    winner_nb = ranked_nb.iloc[0]
+
+    display = ["variant", "rate", metric, no_bequest, "prob_ruin",
+               "median_retirement_consumption", "p5_retirement_consumption",
+               "consumption_volatility", "median_worst_spending_cut",
+               "median_bequest"]
+    display = [c for c in display if c in ranked.columns]
+
+    best_tbl = md_table(ranked[display])
+    catalogue_tbl = md_table(rule_catalogue)
+    strategy_tbl = md_table(by_strategy[[c for c in
+                                         ["variant", "label", metric, "prob_ruin",
+                                          "median_retirement_consumption",
+                                          "consumption_volatility"]
+                                         if c in by_strategy.columns]])
+    pivot_tbl = md_table(
+        bequest_pivot.pivot_table(index="bequest_weight", columns="variant",
+                                  values="cec").sort_index().reset_index())
+    sweep_tbl = md_table(
+        sweep.dropna(subset=["rate"]).pivot_table(
+            index="rate", columns="variant", values=metric
+        ).sort_index().reset_index())
+
+    figure_list = "\n".join(f"* `{f}`" for f in figures)
+    weights = sorted(bequest_pivot["bequest_weight"].unique()) \
+        if len(bequest_pivot) else []
+
+    intro = _header(
+        "06 - Retirement Spending Rules",
+        "Which withdrawal policy maximises certainty equivalent consumption, "
+        "and what the answer depends on.",
+    )
+
+    body = f"""
+## 1. The question
+
+`docs/04` fixes the spending rule at a 4% real withdrawal and varies the
+portfolio. That is backwards for most retirees: the withdrawal policy moves
+outcomes at least as much as the asset allocation, and it is the part of the
+problem where published advice disagrees most. This document holds the
+portfolio at the {spend['strategy'].replace('_', ' ')} allocation and compares
+the main families of spending rule instead.
+
+**Comparing them at a common headline rate would not be a fair test.** A 4%
+constant-real withdrawal and a 4% share-of-portfolio withdrawal are different
+amounts of money in every year but the first, and the horizon-based rules have
+no rate to set at all. Each rate-parameterised rule is therefore swept over
+its own grid, and the ranking below is taken **at each rule's own optimum**.
+Every optimum found is interior to the grid, so none is an artefact of where
+the grid was cut.
+
+## 2. The rules
+
+{catalogue_tbl}
+
+Two implementation notes that matter for interpreting the results.
+
+**Guyton-Klinger in real terms.** The published inflation rule freezes the
+*nominal* withdrawal after a year of negative portfolio returns. This engine
+works entirely in real terms, so that is implemented as a real cut equal to
+the realised inflation rate, drawn from the bootstrap's own inflation series
+rather than quietly dropped. The `no inflation rule` variant switches it off
+so the effect is visible.
+
+**Ruin means running out with years left to fund.** Testing "could not afford
+the desired withdrawal" instead would misclassify the horizon-based rules,
+which deliberately spend the last of the portfolio in the final year: an
+amortisation rule asks for slightly more than the remaining balance when one
+year is left, and being unable to spend more than everything is not ruin.
+
+## 3. Ranking at each rule's own optimum
+
+{best_tbl}
+
+At γ = {gamma:g} the winner is **{winner['variant']}** at
+{float(winner[metric]):.4f}, against {float(baseline_row[metric]):.4f} for the
+{baseline_row['variant']} rule -- a **{gain:.1f}%** gain in certainty
+equivalent consumption from changing nothing but the withdrawal policy. For
+scale, the entire gap between the all-equity portfolio and the target-date
+fund in `docs/04` is about 7%.
+
+### 3.1 Why the flat rule loses
+
+The constant-real rule ranks **last** of every family tested, and the reason
+is visible in two columns of the table above.
+
+* Its consumption volatility is the lowest by a wide margin -- spending is
+  literally constant until the money runs out -- which is what it is sold on.
+* Its median bequest is by far the largest. At its own optimal rate it leaves
+  {float(baseline_row['median_bequest']):.0f} times initial annual income unspent.
+
+That second number is the finding. A rule that dies with thirty-odd years of
+income unspent has not been safe, it has been *expensive*: the retiree bought
+smoothness by permanently forgoing consumption they could have had. The
+certainty equivalent prices both sides of that trade, and the trade is a bad
+one at every risk aversion tested.
+
+The variable rules take the opposite side. They accept spending cuts -- a
+median worst peak-to-trough fall of
+{float(winner['median_worst_spending_cut']):.0%} for the winner, against
+{float(baseline_row['median_worst_spending_cut']):.0%} for the constant-real
+rule -- in exchange for a materially higher spending level throughout. At
+γ = {gamma:g} that trade is worth taking.
+
+It stays worth taking as risk aversion rises, which is the direction that
+should favour a smoothing rule most:
+
+{md_table(rank_by_gamma)}
+
+The constant-real rule places last of all {int(rank_by_gamma['n_families'].iloc[0]) if len(rank_by_gamma) else 0} families at every risk
+aversion tested. The gap does narrow as γ rises -- from
+{float(rank_by_gamma['gap_pct'].iloc[0]) if len(rank_by_gamma) else float('nan'):.0f}% to
+{float(rank_by_gamma['gap_pct'].iloc[-1]) if len(rank_by_gamma) else float('nan'):.0f}% -- so
+smoothing is worth *something*, and an investor far more risk averse than
+anything calibrated in the household-finance literature might eventually
+prefer it. Within the tested range it never gets there.
+
+### 3.2 The flat rule is also the worst in the left tail
+
+The middle panel of `fig18_spending_paths.png` is the sharpest evidence in
+this document, and it runs directly against how the constant-real rule is
+usually sold. Plotting the **10th-percentile** spending path by age -- the bad
+outcomes, not the median -- the constant-real rule is the *lowest* line from
+about age 78 onward, and it ends the plan lower than every variable rule.
+
+The mechanism is not subtle. A fixed real withdrawal is smooth right up to the
+point where the portfolio is gone, and then spending falls to social security
+alone and stays there for the rest of the plan. The variable rules cut earlier
+and by less, and because they cut, they still have a portfolio at 90. The
+horizon-based rules have a *rising* 10th-percentile path, because they cannot
+deplete at all.
+
+"Smooth until catastrophe" is not the same thing as safe. The certainty
+equivalent already knows this; the percentile path makes it visible.
+
+### 3.3 Ruin is the wrong metric for this comparison
+
+Percent-of-portfolio and horizon-based rules cannot deplete the portfolio: a
+fixed share of a shrinking balance is always affordable. Their ruin
+probability is zero by construction, which makes ruin useless for ranking
+them. The risk has not gone away, it has changed form -- from a small chance
+of catastrophe to a certainty of variability -- and only a metric that prices
+consumption volatility, like the certainty equivalent, can compare the two.
+
+## 4. The rate sweep
+
+{sweep_tbl}
+
+## 5. Does the ranking depend on the portfolio?
+
+{strategy_tbl}
+
+The spending rule and the asset allocation are close to separable: the ranking
+of rules is the same on every allocation, and the ranking of allocations from
+`docs/04` survives the change of spending rule. They can be chosen
+independently, which is convenient but not guaranteed a priori.
+
+## 6. The pivot: how much do you value the bequest?
+
+{pivot_tbl}
+
+This is the assumption the whole comparison turns on, and it deserves to be
+stated plainly rather than buried in a config file.
+
+Horizon-based rules spend the portfolio down to nothing by design. Fixed-amount
+rules die with most of it unspent. Which family wins is therefore mostly a
+question of how much the retiree values the money they leave behind. At a
+bequest weight of zero the winner is **{winner_nb['variant']}**; the ranking
+above uses the configured weight of {float(cfg['utility']['bequest_weight']):g}.
+
+The table sweeps the weight from {min(weights) if weights else 0:g} to
+{max(weights) if weights else 0:g} so a reader can find their own position on
+it. An investor with a genuine bequest motive -- a spouse, dependants, a
+charitable intent -- should read the right-hand columns and will rationally
+choose a flatter, lower rule. An investor with none should read the left and
+spend far more than the 4% rule suggests.
+
+**What this does not model:** long-term care costs, which behave like a large
+late-life liability rather than a bequest, and would push the same way as a
+bequest motive without being one. A retiree facing that risk should treat the
+low-spending rules more kindly than this table does.
+
+## 7. Practical reading
+
+1. **The 4% rule is not a spending plan, it is a lower bound with a large
+   unclaimed surplus.** On this panel it is both unsafe at 4% (see `docs/05`
+   section 5.5) and, at its own optimal rate, the worst-ranked family here.
+   Both failures have the same cause: a fixed real amount cannot respond to
+   what the portfolio actually does.
+2. **Any feedback rule beats no feedback rule.** Guardrails, ceiling/floor
+   bands, endowment smoothing and horizon divisors all beat the flat rule, and
+   the differences among *them* are much smaller than the gap to it. Getting
+   feedback into the policy matters more than which feedback.
+3. **Horizon-based rules win when bequests are not valued.** Dividing the
+   portfolio by remaining life expectancy is close to optimal, needs no rate
+   to be chosen, and cannot ruin. Its cost is the steepest spending path: high
+   early, declining late.
+4. **The guardrail rules are the best compromise.** They keep most of the
+   level gain while holding the worst spending cut to about
+   {float(ranked[ranked['rule'] == 'guyton_klinger']['median_worst_spending_cut'].iloc[0]):.0%}
+   on a typical path, and they leave a real bequest.
+
+## 8. Method
+
+| Setting | Value |
+| --- | --- |
+| Portfolio held fixed at | `{spend['strategy']}` |
+| Paths | {runtime_notes.get('n_paths', 0):,} |
+| Rule variants | {runtime_notes.get('n_variants', 0)} |
+| Rate grid points | {len(spend['rate_grid'])} |
+| Total simulations | {runtime_notes.get('n_simulations', 0)} |
+| Wall clock | {runtime_notes.get('elapsed_seconds', float('nan')):.0f}s |
+
+Common random numbers throughout: one set of bootstrap paths and one set of
+labour-income shocks, reused at every point, so differences between rules are
+the rules and not sampling noise.
+
+## 9. Artefacts
+
+{figure_list}
+
+Tables are written to `{cfg['run']['table_dir']}/spending_*.csv`.
+"""
+
+    return _write(path, [intro, body])

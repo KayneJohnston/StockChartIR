@@ -1,0 +1,9 @@
+key,label,rate_parameterised,can_deplete_portfolio
+constant_real,Constant real (4%-rule style),True,True
+constant_percent,Constant % of portfolio,True,False
+guyton_klinger,Guyton-Klinger guardrails,True,True
+vanguard_dynamic,Vanguard dynamic (ceiling/floor),True,True
+endowment,Endowment smoothing,True,True
+life_expectancy,Life expectancy / RMD,False,False
+gompertz,Actuarial (Gompertz life expectancy),False,False
+amortisation,Amortisation (annuity payment),False,True

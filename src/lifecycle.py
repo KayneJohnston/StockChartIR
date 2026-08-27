@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Mapping, Sequence, Tuple
 
 import numpy as np
 
+from . import spending as sp
 from .bootstrap import BootstrapPaths
 
 #: Asset ordering used by every weight vector in this module.
@@ -316,12 +317,17 @@ def simulate(
     strategy: Strategy,
     spec: LifecycleSpec,
     income: np.ndarray,
+    spending: "sp.SpendingRule | None" = None,
 ) -> LifecycleOutcome:
     """Run one strategy over one chunk of bootstrapped return paths.
 
     ``income`` is passed in rather than drawn inside so that every strategy
     faces the *same* labour-income realisations on the same path -- without
     that, differences across strategies would be contaminated by income noise.
+
+    ``spending`` selects the retirement withdrawal policy.  When omitted it
+    is built from ``spec.retirement_rule`` and ``spec.rule_rate``, which is
+    what the headline pipeline uses; ``docs/06`` compares the alternatives.
     """
     n_paths = paths.n_paths
     horizon = spec.horizon
@@ -345,22 +351,50 @@ def simulate(
     benefit = spec.social_security_benefit(career_average)
 
     # --- decumulation -----------------------------------------------------
-    target_withdrawal = spec.rule_rate * wealth_at_retirement
+    rule = spending or sp.from_spec(spec.retirement_rule, spec.rule_rate)
+    inflation = paths.inflation[:, :horizon]
+    initial_withdrawal = rule.initial_withdrawal(
+        wealth_at_retirement, spec.n_retired, spec.age_retire)
+    prev_withdrawal = initial_withdrawal
+    # Feedback rules condition on the year just gone; entering retirement,
+    # that is the final working year.
+    last_return = rp[:, spec.n_working - 1]
+    last_inflation = inflation[:, spec.n_working - 1]
+
     ruin_age = np.full(n_paths, spec.age_death, dtype=int)
     ruined = np.zeros(n_paths, dtype=bool)
 
     for h in range(spec.n_working, horizon):
         available = wealth[:, h]
-        if spec.retirement_rule == "fixed_real_rule":
-            desired = target_withdrawal
-        else:  # "fixed_percentage" -- proportional rule, cannot ruin
-            desired = spec.rule_rate * available
+        state = sp.SpendingState(
+            year=h - spec.n_working,
+            age=spec.age_start + h,
+            years_remaining=horizon - h,
+            wealth=available,
+            prev_withdrawal=prev_withdrawal,
+            initial_withdrawal=initial_withdrawal,
+            wealth_at_retirement=wealth_at_retirement,
+            last_return=last_return,
+            last_inflation=last_inflation,
+        )
+        desired = np.maximum(rule.desired(state), 0.0)
         withdrawal = np.minimum(desired, np.maximum(available, 0.0))
-        newly_ruined = (~ruined) & (withdrawal < desired - 1e-12)
-        ruin_age = np.where(newly_ruined, spec.age_start + h, ruin_age)
-        ruined |= newly_ruined
         consumption[:, h] = benefit + withdrawal
         wealth[:, h + 1] = np.maximum(available - withdrawal, 0.0) * (1.0 + rp[:, h])
+
+        # Ruin is running out of money with retirement years still to fund.
+        # Testing "could not afford the desired withdrawal" instead would
+        # misclassify the horizon-based rules, which deliberately spend the
+        # last of the portfolio in the final year: an amortisation rule asks
+        # for slightly more than the remaining balance at n = 1, and being
+        # unable to spend more than everything is not ruin.
+        exhausted = (wealth[:, h + 1] <= 0.0) & (h + 1 < horizon)
+        newly_ruined = (~ruined) & exhausted
+        ruin_age = np.where(newly_ruined, spec.age_start + h + 1, ruin_age)
+        ruined |= newly_ruined
+        prev_withdrawal = withdrawal
+        last_return = rp[:, h]
+        last_inflation = inflation[:, h]
 
     return LifecycleOutcome(
         strategy=strategy.key,
@@ -382,9 +416,10 @@ def simulate_all(
     strategies: Mapping[str, Strategy],
     spec: LifecycleSpec,
     income: np.ndarray,
+    spending: "sp.SpendingRule | None" = None,
 ) -> Dict[str, LifecycleOutcome]:
     """Run every strategy on the same chunk of paths and income draws."""
-    return {key: simulate(paths, strat, spec, income)
+    return {key: simulate(paths, strat, spec, income, spending)
             for key, strat in strategies.items()}
 
 

@@ -27,6 +27,7 @@ from src import lifecycle as lc
 from src import plots
 from src import report as rp
 from src import sensitivity as sn
+from src import spending as spg
 from src import utility as ut
 
 LOGGER = logging.getLogger("main")
@@ -643,7 +644,103 @@ def step5_sensitivity(cfg: Dict[str, Any], state: Dict[str, Any]
     LOGGER.info("docs/05 written (%.0fs, %s settings, %s reversals)",
                 elapsed, verdict.get("n_settings"), verdict.get("n_lost"))
     state.update({"sweeps": sweeps, "sensitivity_derived": derived,
-                  "tornado": tornado, "verdict": verdict})
+                  "tornado": tornado, "verdict": verdict,
+                  "sweep_context": ctx})
+    return state
+
+
+# ---------------------------------------------------------------------------
+# Step 6
+# ---------------------------------------------------------------------------
+def step6_spending(cfg: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
+    """Compare retirement spending rules; write docs/06."""
+    spend_cfg = cfg.get("spending", {})
+    if not spend_cfg.get("enabled", False):
+        LOGGER.info("spending-rule analysis disabled in config; skipping step 6")
+        return state
+    LOGGER.info("=== STEP 6: retirement spending rules ===")
+    started = time.perf_counter()
+
+    sens = cfg["sensitivity"]
+    panel = state["panel"]
+    gammas = [float(g) for g in cfg["utility"]["risk_aversions"]]
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    metric = f"cec_gamma{gamma:g}"
+    n_paths = int(sens["n_paths"])
+
+    ctx = state.get("sweep_context") or sn.SweepContext.build(
+        cfg, panel, n_paths=n_paths,
+        max_horizon=int(sens["max_horizon_years"]),
+        max_working=int(sens["max_working_years"]),
+    )
+
+    rule_specs = spend_cfg["rules"]
+    rate_grid = spend_cfg["rate_grid"]
+    LOGGER.info("sweeping %s rule variants over %s rates",
+                len(rule_specs), len(rate_grid))
+    sweep = sn.sweep_spending_rules(ctx, rule_specs, rate_grid,
+                                    strategy_key=str(spend_cfg["strategy"]),
+                                    gammas=gammas)
+    best = sn.best_spending_rules(sweep, metric)
+
+    # One representative per rule *family*, not the top N overall: the top of
+    # the ranking is crowded with high-spending horizon rules, and a shortlist
+    # drawn from it could not show the family crossover in section 6.
+    per_family = sn.best_spending_rules(sweep, metric, group="rule")
+    shortlist = sn.rules_from_config(cfg, per_family)
+    by_strategy = sn.spending_by_strategy(ctx, shortlist, gammas=gammas)
+    bequest_pivot = sn.spending_bequest_sensitivity(
+        ctx, shortlist, cfg["sensitivity"]["grids"]["bequest_weight"],
+        strategy_key=str(spend_cfg["strategy"]))
+    paths = sn.spending_paths(ctx, shortlist,
+                              strategy_key=str(spend_cfg["strategy"]))
+
+    catalogue = pd.DataFrame.from_records([
+        {**spg.build(str(entry["key"]),
+                     **dict(entry.get("params", {}) or {})).describe(),
+         "variant_suffix": entry.get("suffix") or "-"}
+        for entry in rule_specs
+    ]).drop_duplicates("key")[["key", "label"]]
+    catalogue["rate_parameterised"] = catalogue["key"].isin(
+        spg.RATE_PARAMETERISED)
+    catalogue["can_deplete_portfolio"] = ~catalogue["key"].isin(
+        {"constant_percent", "life_expectancy", "gompertz"})
+    rank_by_gamma = sn.spending_rank_by_risk_aversion(sweep, gammas)
+
+    tables = cfg["run"]["table_dir"]
+    _save_table(sweep, tables, "spending_rule_sweep")
+    _save_table(best, tables, "spending_rule_best")
+    _save_table(by_strategy, tables, "spending_rule_by_strategy")
+    _save_table(bequest_pivot, tables, "spending_rule_bequest_pivot")
+    _save_table(paths, tables, "spending_rule_paths")
+    _save_table(catalogue, tables, "spending_rule_catalogue")
+    _save_table(per_family, tables, "spending_rule_best_per_family")
+    _save_table(rank_by_gamma, tables, "spending_rule_rank_by_risk_aversion")
+
+    figure_dir = cfg["run"]["figure_dir"]
+    figures = [
+        str(plots.plot_spending_rate_curves(sweep, best, figure_dir, metric)),
+        str(plots.plot_spending_paths(paths, per_family, figure_dir, metric)),
+        str(plots.plot_spending_bequest_pivot(bequest_pivot, figure_dir)),
+    ]
+
+    elapsed = time.perf_counter() - started
+    runtime_notes = {
+        "n_paths": n_paths,
+        "n_variants": len(rule_specs),
+        "n_simulations": int(len(sweep) + len(by_strategy)
+                             + 2 * len(shortlist)),
+        "elapsed_seconds": elapsed,
+    }
+    rp.write_doc_06(
+        Path("docs") / "06_retirement_spending_rules.md",
+        cfg, sweep, best, by_strategy, bequest_pivot, catalogue,
+        rank_by_gamma, figures, runtime_notes,
+    )
+    LOGGER.info("docs/06 written (%.0fs, best rule: %s)",
+                elapsed, best.iloc[0]["variant"])
+    state.update({"spending_sweep": sweep, "spending_best": best,
+                  "sweep_context": ctx})
     return state
 
 
@@ -651,11 +748,11 @@ def step5_sensitivity(cfg: Dict[str, Any], state: Dict[str, Any]
 # Entry point
 # ---------------------------------------------------------------------------
 STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
-         4: step4_report, 5: step5_sensitivity}
+         4: step4_report, 5: step5_sensitivity, 6: step6_spending}
 
 
 def run(config_path: str = "config.yaml",
-        steps: Sequence[int] = (1, 2, 3, 4, 5),
+        steps: Sequence[int] = (1, 2, 3, 4, 5, 6),
         quick: bool = False) -> Dict[str, Any]:
     """Execute the pipeline and return the accumulated state."""
     cfg = dl.load_config(config_path)
@@ -685,7 +782,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--steps", nargs="+", type=int,
-                        default=[1, 2, 3, 4, 5], choices=[1, 2, 3, 4, 5])
+                        default=[1, 2, 3, 4, 5, 6],
+                        choices=[1, 2, 3, 4, 5, 6])
     parser.add_argument("--quick", action="store_true",
                         help="small N for smoke tests")
     parser.add_argument("--verbose", action="store_true")

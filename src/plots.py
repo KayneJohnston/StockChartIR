@@ -578,3 +578,110 @@ def plot_tornado(tornado: pd.DataFrame, directory: str | Path,
         ax.legend(fontsize=8, loc="lower right")
         fig.tight_layout()
     return _save(fig, directory, name)
+
+
+# ---------------------------------------------------------------------------
+# Step 6 - retirement spending rules
+# ---------------------------------------------------------------------------
+def plot_spending_rate_curves(frame: pd.DataFrame, best: pd.DataFrame,
+                              directory: str | Path, metric: str = "cec_gamma5",
+                              name: str = "fig17_spending_rate_curves") -> Path:
+    """CEC against the spending rate for each rule, and the ranking at each optimum."""
+    rated = frame.dropna(subset=["rate"])
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(1, 2, figsize=(14, 5.4),
+                                 gridspec_kw={"width_ratios": [1.0, 1.15]})
+
+        ax = axes[0]
+        for i, (variant, block) in enumerate(rated.groupby("variant")):
+            block = block.sort_values("rate")
+            ax.plot(block["rate"] * 100, block[metric], "-o", markersize=3,
+                    color=_colour(i), label=variant)
+            peak = block.loc[block[metric].idxmax()]
+            ax.scatter([peak["rate"] * 100], [peak[metric]], color=_colour(i),
+                       s=70, zorder=4, edgecolor="white", linewidth=1.2)
+        ax.set_xlabel("Spending rate (%)")
+        ax.set_ylabel("Certainty equivalent consumption")
+        ax.set_title("Each rule has an interior optimum\n"
+                     "(dots mark it)", fontsize=10)
+        ax.legend(fontsize=7)
+
+        ax = axes[1]
+        ordered = best.sort_values(metric)
+        colours = [_colour(2) if "Constant real" in v else _colour(0)
+                   for v in ordered["variant"]]
+        ax.barh(ordered["variant"], ordered[metric], color=colours)
+        ax.set_xlim(min(ordered[metric]) * 0.95, max(ordered[metric]) * 1.02)
+        for y, value in enumerate(ordered[metric]):
+            ax.text(value + 0.002, y, f"{value:.3f}", va="center", fontsize=8)
+        ax.set_xlabel("CEC at each rule's own optimal rate")
+        ax.set_title("Ranking at each rule's optimum", fontsize=10)
+        ax.tick_params(axis="y", labelsize=8)
+        fig.tight_layout()
+    return _save(fig, directory, name)
+
+
+def plot_spending_paths(paths: pd.DataFrame, best: pd.DataFrame,
+                        directory: str | Path, metric: str = "cec_gamma5",
+                        name: str = "fig18_spending_paths") -> Path:
+    """Spending shape by age under each rule, and the volatility/level trade-off.
+
+    Median and 10th-percentile paths are drawn in separate panels rather than
+    as percentile bands: eight overlapping bands obscure exactly the thing
+    the figure is for. Colours are keyed to the rule name so they mean the
+    same thing in every panel.
+    """
+    variants = sorted(paths["variant"].unique())
+    colour_of = {variant: _colour(i) for i, variant in enumerate(variants)}
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(1, 3, figsize=(16, 4.9))
+
+        for ax, column, title in (
+            (axes[0], "p50", "Median real spending path"),
+            (axes[1], "p10", "10th-percentile path (the bad outcomes)"),
+        ):
+            for variant in variants:
+                block = paths[paths["variant"] == variant].sort_values("age")
+                ax.plot(block["age"], block[column], color=colour_of[variant],
+                        linewidth=2, label=variant)
+            ax.set_xlabel("Age")
+            ax.set_ylabel("Real retirement consumption")
+            ax.set_title(title, fontsize=10)
+
+        ax = axes[2]
+        for _, row in best.iterrows():
+            variant = str(row["variant"])
+            ax.scatter(row["consumption_volatility"], row[metric],
+                       s=40 + 3.0 * float(row["median_bequest"]),
+                       color=colour_of.get(variant, _colour(0)), alpha=0.8,
+                       edgecolor="white", linewidth=1.0, zorder=3)
+        ax.set_xlabel("Consumption volatility (sd of log real spending)")
+        ax.set_ylabel("Certainty equivalent consumption")
+        ax.set_title("Smoother is not better: the flattest rule\n"
+                     "ranks last (marker size = median bequest)", fontsize=10)
+
+        handles = [plt.Line2D([], [], color=colour_of[v], linewidth=2, label=v)
+                   for v in variants]
+        fig.legend(handles=handles, loc="lower center", fontsize=8,
+                   ncol=min(3, len(variants)))
+        fig.tight_layout(rect=(0.0, 0.13, 1.0, 1.0))
+    return _save(fig, directory, name)
+
+
+def plot_spending_bequest_pivot(frame: pd.DataFrame, directory: str | Path,
+                                name: str = "fig19_spending_bequest_pivot"
+                                ) -> Path:
+    """How the spending-rule ranking turns on the strength of the bequest motive."""
+    wide = frame.pivot_table(index="bequest_weight", columns="variant",
+                             values="cec").sort_index()
+    with plt.rc_context(STYLE):
+        fig, ax = plt.subplots(figsize=(9.5, 5.2))
+        for i, column in enumerate(wide.columns):
+            ax.plot(wide.index, wide[column], "-o", markersize=4,
+                    color=_colour(i), linewidth=2, label=column)
+        ax.set_xlabel("Weight on the bequest in the utility aggregator")
+        ax.set_ylabel("Certainty equivalent consumption")
+        ax.set_title("The ranking of spending rules turns on the bequest motive")
+        ax.legend(fontsize=8)
+        fig.tight_layout()
+    return _save(fig, directory, name)

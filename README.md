@@ -23,12 +23,12 @@ financial wealth before age 93 under a 4% real withdrawal rule.
 
 | Strategy | CEC (γ=2) | CEC (γ=5) | CEC (γ=10) | P(ruin) | Median bequest |
 | --- | --- | --- | --- | --- | --- |
-| 100% International Equity | 1.451 | 1.043 | 0.740 | 12.1% | 56.9 |
-| **50/50 Domestic/International Equity** | **1.362** | **1.002** | **0.728** | **15.3%** | **37.5** |
-| Target-Date Fund (glide path) | 1.212 | 0.934 | 0.700 | 24.0% | 9.5 |
-| 60/40 Domestic Equity / Domestic Bonds | 1.120 | 0.873 | 0.673 | 25.7% | 10.0 |
-| 100% Domestic Equity | 1.166 | 0.864 | 0.658 | 29.1% | 12.8 |
-| 100% Bills (cash) | 0.844 | 0.736 | 0.616 | 61.7% | 0.0 |
+| 100% International Equity | 1.451 | 1.043 | 0.740 | 11.4% | 56.9 |
+| **50/50 Domestic/International Equity** | **1.362** | **1.002** | **0.728** | **14.4%** | **37.5** |
+| Target-Date Fund (glide path) | 1.212 | 0.934 | 0.700 | 22.3% | 9.5 |
+| 60/40 Domestic Equity / Domestic Bonds | 1.120 | 0.873 | 0.673 | 24.3% | 10.0 |
+| 100% Domestic Equity | 1.166 | 0.864 | 0.658 | 28.0% | 12.8 |
+| 100% Bills (cash) | 0.844 | 0.736 | 0.616 | 57.7% | 0.0 |
 
 The 50/50 all-equity portfolio **strictly dominates** the target-date fund and
 60/40 on all 21 reported criteria (20 wins, 1 tie, 0 losses), across every
@@ -48,8 +48,9 @@ for the full analysis and the caveats.
 | [`docs/03_lifecycle_utility_model.md`](docs/03_lifecycle_utility_model.md) | State transitions, cash-flow rules, drawdown algorithm, CRRA and Epstein-Zin definitions |
 | [`docs/04_replicated_results_and_tables.md`](docs/04_replicated_results_and_tables.md) | Headline tables, distributional evidence, robustness, comparison with the paper, limitations |
 | [`docs/05_sensitivity_analysis.md`](docs/05_sensitivity_analysis.md) | Sweeps over allocation, preferences, planning and sampling assumptions; safe withdrawal rates; tornado analysis |
+| [`docs/06_retirement_spending_rules.md`](docs/06_retirement_spending_rules.md) | Eight families of withdrawal policy compared at each rule's own optimal rate; the bequest-motive pivot |
 
-All five are **generated** by `main.py` from live pipeline objects -- edit
+All six are **generated** by `main.py` from live pipeline objects -- edit
 `src/report.py`, not the Markdown.
 
 ## Sensitivity
@@ -79,16 +80,51 @@ withdrawal rate that holds ruin probability to 5%:
 
 | Strategy | Safe withdrawal rate | Ruin at 4% |
 | --- | --- | --- |
-| 100% International Equity | 2.82% | 12.2% |
-| 50/50 Domestic/International Equity | 2.72% | 15.3% |
-| Target-Date Fund (glide path) | 2.12% | 24.1% |
-| 60/40 | 1.73% | 25.8% |
-| 100% Domestic Equity | 1.38% | 29.2% |
-| 100% Bills | 1.21% | 61.9% |
+| 100% International Equity | 2.89% | 11.6% |
+| 50/50 Domestic/International Equity | 2.79% | 14.5% |
+| Target-Date Fund (glide path) | 2.20% | 22.4% |
+| 60/40 | 1.80% | 24.4% |
+| 100% Domestic Equity | 1.45% | 28.1% |
+| 100% Bills | 1.29% | 57.9% |
 
 The 4% rule was calibrated on US history — exactly the hindsight the paper
 removes, and removing it costs more than a percentage point of retirement
 income.
+
+## Spending rules
+
+`docs/06` holds the portfolio fixed and compares eight families of withdrawal
+policy, each **at its own optimal rate** — comparing them all at 4% would not
+be a fair test, since a 4% constant-real withdrawal and a 4% share-of-portfolio
+withdrawal are different amounts of money in every year but the first.
+
+| Rule | CEC (γ=5) | Median spending | Worst spending cut | Median bequest |
+| --- | --- | --- | --- | --- |
+| Amortisation, 4% assumed return | 1.168 | 2.06 | 41% | 0.0 |
+| Actuarial (Gompertz life expectancy) | 1.164 | 2.00 | 45% | 3.9 |
+| Constant % of portfolio (7%) | 1.123 | 1.80 | 48% | 12.4 |
+| Life expectancy / RMD | 1.120 | 2.10 | 32% | 0.0 |
+| Guyton-Klinger guardrails (6.5%) | 1.107 | 1.83 | 31% | 12.1 |
+| Vanguard dynamic (5.5%) | 1.070 | 1.67 | 19% | 21.2 |
+| **Constant real, "4% rule" (4.5%)** | **1.003** | **1.51** | **0%** | **28.4** |
+
+**The constant-real rule ranks last of every family tested** — a 16% CEC gap to
+the winner, more than twice the entire all-equity-versus-glide-path gap. It
+buys perfectly smooth spending by permanently forgoing consumption: at its own
+optimal rate it dies with 28× initial annual income unspent.
+
+It is also the worst rule in the **left tail**. Plotting the 10th-percentile
+spending path by age, the constant-real rule is the lowest line from about age
+78 onward — smooth right up to the point the portfolio is gone, then social
+security for the rest of the plan. Rules that cut earlier and by less still
+have a portfolio at 90.
+
+**What this turns on:** how much you value the bequest. Horizon-based rules
+spend the portfolio to zero by design; fixed-amount rules die with most of it.
+`docs/06` sweeps the bequest weight from 0 to 10 and the winner does change —
+from the amortisation rule to the actuarial rule — but the constant-real rule
+loses at *every* weight tested, because the variable rules leave bequests too
+while also spending more.
 
 ## Quick start
 
@@ -96,8 +132,8 @@ income.
 pip install numpy pandas scipy matplotlib pyyaml openpyxl pytest
 
 python main.py --quick      # ~20 s smoke run at reduced N
-python main.py              # ~5 min full run: N = 100,000 plus sensitivity
-python -m pytest tests/ -q  # 162 tests
+python main.py              # ~7 min full run: N = 100,000 plus sweeps
+python -m pytest tests/ -q  # 210 tests
 ```
 
 Selected steps and alternative configurations:
@@ -105,13 +141,14 @@ Selected steps and alternative configurations:
 ```bash
 python main.py --steps 1 2          # panel + bootstrap only
 python main.py --steps 1 5          # panel + sensitivity sweeps only
+python main.py --steps 1 6          # panel + spending-rule comparison only
 python main.py --config other.yaml  # a different parameterisation
 ```
 
 ## Layout
 
 ```
-├── docs/                 # generated analysis documents (5 files)
+├── docs/                 # generated analysis documents (6 files)
 ├── data/
 │   ├── raw/              # primary source files, unmodified
 │   ├── processed/        # standardised real return panels (.csv and .npz)
@@ -122,19 +159,21 @@ python main.py --config other.yaml  # a different parameterisation
 │   ├── lifecycle.py      # accumulation/decumulation simulator
 │   ├── utility.py        # CRRA, Epstein-Zin, shortfall metrics
 │   ├── sensitivity.py    # common-random-number parameter sweeps
+│   ├── spending.py       # pluggable retirement withdrawal rules
 │   ├── plots.py          # publication-quality figures
 │   └── report.py         # Markdown report generation
-├── tests/                # 162 unit + integration tests
+├── tests/                # 210 unit + integration tests
 ├── results/
-│   ├── figures/          # 16 PNGs
+│   ├── figures/          # 19 PNGs
 │   └── tables/           # 40+ CSVs
 ├── config.yaml           # every tunable parameter
 └── main.py               # entry point
 ```
 
-`src/report.py` and `src/sensitivity.py` are additions to the structure
-specified in the brief: keeping Markdown generation and the sweep engine out
-of `main.py` leaves the entry point readable as a five-step pipeline.
+`src/report.py`, `src/sensitivity.py` and `src/spending.py` are additions to
+the structure specified in the brief: keeping Markdown generation, the sweep
+engine and the withdrawal policies out of `main.py` leaves the entry point
+readable as a six-step pipeline.
 
 ## Data
 
@@ -197,6 +236,10 @@ every certainty equivalent toward a common value.
 **Shortfall statistics use a strategy-invariant target** — a fixed replacement
 rate on the investor's own career-average earnings. Measuring each strategy
 against its own median makes every strategy look identical.
+
+**Ruin means running out with years left to fund**, not "could not afford the
+desired withdrawal". The latter misclassifies horizon-based spending rules,
+which deliberately spend the last of the portfolio in the final year.
 
 **Sensitivity sweeps use common random numbers.** One set of bootstrap paths
 and income shocks is drawn once and reused at every sweep point, so a

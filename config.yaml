@@ -248,3 +248,57 @@ sensitivity:
     withdrawal_rate: [0.010, 0.015, 0.020, 0.025, 0.030, 0.035, 0.040,
                       0.045, 0.050, 0.055, 0.060, 0.070, 0.080]
     mean_block_years: [1.0, 3.0, 5.0, 10.0, 15.0, 20.0]
+
+# ---------------------------------------------------------------------------
+# Step 6 - retirement spending rules
+# ---------------------------------------------------------------------------
+spending:
+  enabled: true
+  # The portfolio the rules are compared on.  The rule choice and the
+  # allocation choice are close to separable, which section 5 of docs/06
+  # checks directly.
+  strategy: balanced_all_equity
+  # Rate grid for the rules that have a rate to set.  Horizon-based rules
+  # (life expectancy, Gompertz, amortisation) derive their level from the
+  # planning horizon and are evaluated once each.
+  rate_grid: [0.020, 0.025, 0.030, 0.035, 0.040, 0.045, 0.050,
+              0.055, 0.060, 0.065, 0.070, 0.080, 0.090, 0.100]
+  # How many of the best rules to cross with every asset allocation.
+  n_rules_by_strategy: 5
+
+  rules:
+    - key: constant_real
+    - key: constant_percent
+    - key: guyton_klinger
+    - key: guyton_klinger
+      params: {guardrail: 0.10, adjustment: 0.10}
+      suffix: tight band
+    - key: guyton_klinger
+      params: {apply_inflation_rule: false}
+      suffix: no inflation rule
+    - key: vanguard_dynamic
+    - key: vanguard_dynamic
+      params: {ceiling: 0.025, floor: -0.05}
+      suffix: asymmetric
+    - key: endowment
+      params: {smoothing: 0.7}
+    - key: endowment
+      params: {smoothing: 0.3}
+      suffix: light smoothing
+    - key: life_expectancy
+    - key: life_expectancy
+      params: {buffer_years: 5}
+      suffix: +5y buffer
+    - key: gompertz
+    - key: gompertz
+      params: {buffer_years: 5.0}
+      suffix: +5y buffer
+    - key: amortisation
+      params: {assumed_return: 0.0}
+      suffix: 0% assumed return
+    - key: amortisation
+      params: {assumed_return: 0.02}
+      suffix: 2% assumed return
+    - key: amortisation
+      params: {assumed_return: 0.04}
+      suffix: 4% assumed return

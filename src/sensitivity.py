@@ -31,6 +31,7 @@ import pandas as pd
 
 from . import bootstrap as bs
 from . import lifecycle as lc
+from . import spending as spg
 from . import utility as ut
 from .data_loader import Panel
 
@@ -592,3 +593,282 @@ def overall_verdict(tornado_frame: pd.DataFrame) -> Dict[str, Any]:
         "min_advantage_pct": float(tornado_frame["min_advantage_pct"].min()),
         "max_advantage_pct": float(tornado_frame["max_advantage_pct"].max()),
     }
+
+
+# ---------------------------------------------------------------------------
+# Retirement spending rules
+# ---------------------------------------------------------------------------
+def spending_metrics(outcome: lc.LifecycleOutcome, spec: lc.LifecycleSpec
+                     ) -> Dict[str, float]:
+    """Consumption-shape diagnostics that explain a rule's certainty equivalent.
+
+    The certainty equivalent already prices volatility; these columns say
+    *where* the volatility comes from, which is what a retiree choosing a rule
+    actually wants to know.  ``median_worst_spending_cut`` is the deepest
+    peak-to-trough fall in real retirement consumption on a typical path --
+    the number a rule's critics usually point at.
+    """
+    consumption = outcome.consumption[:, spec.retirement_slice]
+    floor = 1e-9
+    logs = np.log(np.maximum(consumption, floor))
+    running_max = np.maximum.accumulate(consumption, axis=1)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        drawdown = np.where(running_max > 0.0, 1.0 - consumption / running_max, 0.0)
+    total = consumption.sum(axis=1)
+    return {
+        "consumption_volatility": float(np.mean(logs.std(axis=1, ddof=1))),
+        "median_worst_spending_cut": float(np.median(drawdown.max(axis=1))),
+        "p90_worst_spending_cut": float(np.percentile(drawdown.max(axis=1), 90)),
+        "median_total_real_spending": float(np.median(total)),
+        "median_first_year_spending": float(np.median(consumption[:, 0])),
+        "median_final_year_spending": float(np.median(consumption[:, -1])),
+    }
+
+
+def summarise_spending(outcome: lc.LifecycleOutcome, cfg: Mapping[str, Any],
+                       spec: lc.LifecycleSpec,
+                       gammas: Sequence[float] | None = None,
+                       extra: Mapping[str, Any] | None = None
+                       ) -> Dict[str, Any]:
+    """One row describing a (strategy, spending rule) pair.
+
+    Certainty equivalents are reported twice: with the configured bequest
+    weight, and with no bequest motive at all.  Horizon-based rules spend the
+    portfolio down to nothing by construction, so a bequest motive is exactly
+    the assumption that decides between them and the fixed-amount rules --
+    reporting only one would hide the mechanism.
+    """
+    util = cfg["utility"]
+    beta = float(util["discount_factor"])
+    weight = float(util["bequest_weight"])
+    gammas = list(gammas if gammas is not None else util["risk_aversions"])
+    replacement = float(cfg["report"].get("consumption_target_replacement", 0.70))
+
+    bundle = ut.bundle_from_outcome(outcome, cfg, spec)
+    row: Dict[str, Any] = dict(extra or {})
+    row["strategy"] = outcome.strategy
+    for gamma in gammas:
+        row[f"cec_gamma{float(gamma):g}"] = ut.crra_certainty_equivalent(
+            bundle, float(gamma), beta, weight, True)
+        row[f"cec_nobequest_gamma{float(gamma):g}"] = \
+            ut.crra_certainty_equivalent(bundle, float(gamma), beta, 0.0, False)
+    row["prob_ruin"] = float(outcome.ruin.mean())
+    row["median_bequest"] = float(np.median(outcome.bequest))
+    row["p5_bequest"] = float(np.percentile(outcome.bequest, 5))
+    shortfall = ut.shortfall_metrics(
+        bundle, outcome.ruin, outcome.wealth_at_retirement,
+        slice(0, bundle.horizon),
+        percentiles=(5, 50),
+        consumption_target=replacement * outcome.career_average_income)
+    row["median_retirement_consumption"] = \
+        shortfall["median_retirement_consumption"]
+    row["p5_retirement_consumption"] = shortfall["p5_retirement_consumption"]
+    row.update(spending_metrics(outcome, spec))
+    return row
+
+
+def sweep_spending_rules(
+    ctx: SweepContext,
+    rule_specs: Sequence[Mapping[str, Any]],
+    rate_grid: Sequence[float],
+    strategy_key: str = CHALLENGER,
+    gammas: Sequence[float] | None = None,
+) -> pd.DataFrame:
+    """Evaluate every spending rule, sweeping the rate where a rule has one.
+
+    Comparing families at a common headline rate would not be a fair test: a
+    4% constant-real withdrawal and a 4% share-of-portfolio withdrawal are
+    different amounts of money, and the horizon-based rules have no rate to
+    set at all.  Each rule is therefore swept over its own rate grid, and the
+    comparison in ``docs/06`` is made at each rule's own optimum.
+    """
+    spec = ctx.base_spec
+    strategies = ctx.strategies_from_config(spec)
+    if strategy_key not in strategies:
+        raise ValueError(f"unknown strategy {strategy_key!r}")
+    strategy = strategies[strategy_key]
+
+    rows: List[Dict[str, Any]] = []
+    for entry in rule_specs:
+        key = str(entry["key"])
+        params = dict(entry.get("params", {}) or {})
+        suffix = entry.get("suffix")
+        rates = (list(rate_grid) if key in spg.RATE_PARAMETERISED
+                 else [float("nan")])
+        for rate in rates:
+            call = dict(params)
+            if key in spg.RATE_PARAMETERISED:
+                call["rate"] = float(rate)
+            rule = spg.build(key, **call)
+            label = rule.label + (f" ({suffix})" if suffix else "")
+            results = lc.simulate_all(ctx.paths, {strategy_key: strategy},
+                                      spec, ctx.income_for(spec), rule)
+            outcome = results[strategy_key]
+            rows.append(summarise_spending(
+                outcome, ctx.cfg, spec, gammas,
+                extra={"rule": key, "variant": label,
+                       "rate": float(rate) if rate == rate else np.nan,
+                       "parameters": ", ".join(f"{k}={v}" for k, v in
+                                               sorted(params.items())) or "-"}))
+    return pd.DataFrame.from_records(rows)
+
+
+def best_spending_rules(frame: pd.DataFrame, metric: str,
+                        group: str = "variant") -> pd.DataFrame:
+    """Each rule variant at the rate that maximises ``metric``."""
+    best = frame.loc[frame.groupby(group)[metric].idxmax()]
+    return best.sort_values(metric, ascending=False).reset_index(drop=True)
+
+
+def spending_by_strategy(
+    ctx: SweepContext,
+    rules: Mapping[str, "spg.SpendingRule"],
+    strategy_keys: Sequence[str] = CORE_STRATEGIES,
+    gammas: Sequence[float] | None = None,
+) -> pd.DataFrame:
+    """Cross every strategy with a shortlist of already-tuned spending rules."""
+    spec = ctx.base_spec
+    strategies = ctx.strategies_from_config(spec)
+    active = {k: v for k, v in strategies.items() if k in strategy_keys}
+    income = ctx.income_for(spec)
+    rows: List[Dict[str, Any]] = []
+    for label, rule in rules.items():
+        results = lc.simulate_all(ctx.paths, active, spec, income, rule)
+        for outcome in results.values():
+            rows.append(summarise_spending(
+                outcome, ctx.cfg, spec, gammas,
+                extra={"variant": label, "label": outcome.label}))
+    return pd.DataFrame.from_records(rows)
+
+
+def spending_bequest_sensitivity(
+    ctx: SweepContext,
+    rules: Mapping[str, "spg.SpendingRule"],
+    weights: Sequence[float],
+    strategy_key: str = CHALLENGER,
+    gamma: float | None = None,
+) -> pd.DataFrame:
+    """Re-rank the spending rules across bequest motives.
+
+    This is the pivot of the whole comparison. Horizon-based rules spend the
+    portfolio down to nothing by design; fixed-amount rules die with most of
+    it unspent. Which family wins is therefore mostly a question of how much
+    the investor values the money they leave behind, so the ranking is
+    reported across the full range rather than at one assumed weight.
+    """
+    spec = ctx.base_spec
+    strategies = ctx.strategies_from_config(spec)
+    strategy = {strategy_key: strategies[strategy_key]}
+    income = ctx.income_for(spec)
+    util = ctx.cfg["utility"]
+    gamma = float(gamma if gamma is not None else util["baseline_risk_aversion"])
+    beta = float(util["discount_factor"])
+
+    rows: List[Dict[str, Any]] = []
+    for label, rule in rules.items():
+        outcome = lc.simulate_all(ctx.paths, strategy, spec, income,
+                                  rule)[strategy_key]
+        bundle = ut.bundle_from_outcome(outcome, ctx.cfg, spec)
+        for weight in weights:
+            rows.append({
+                "variant": label,
+                "bequest_weight": float(weight),
+                "cec": ut.crra_certainty_equivalent(
+                    bundle, gamma, beta, float(weight), float(weight) > 0),
+                "median_bequest": float(np.median(outcome.bequest)),
+            })
+    return pd.DataFrame.from_records(rows)
+
+
+def spending_paths(
+    ctx: SweepContext,
+    rules: Mapping[str, "spg.SpendingRule"],
+    strategy_key: str = CHALLENGER,
+    percentiles: Sequence[float] = (10, 50, 90),
+) -> pd.DataFrame:
+    """Real retirement consumption by age, for plotting each rule's shape."""
+    spec = ctx.base_spec
+    strategies = ctx.strategies_from_config(spec)
+    strategy = {strategy_key: strategies[strategy_key]}
+    income = ctx.income_for(spec)
+    ages = np.arange(spec.age_retire, spec.age_death)
+    rows: List[Dict[str, Any]] = []
+    for label, rule in rules.items():
+        outcome = lc.simulate_all(ctx.paths, strategy, spec, income,
+                                  rule)[strategy_key]
+        consumption = outcome.consumption[:, spec.retirement_slice]
+        for i, age in enumerate(ages):
+            record: Dict[str, Any] = {"variant": label, "age": int(age)}
+            for q in percentiles:
+                record[f"p{q:g}"] = float(np.percentile(consumption[:, i], q))
+            rows.append(record)
+    return pd.DataFrame.from_records(rows)
+
+
+def rules_from_config(cfg: Mapping[str, Any],
+                      best: pd.DataFrame | None = None,
+                      limit: int | None = None
+                      ) -> Dict[str, "spg.SpendingRule"]:
+    """Rebuild rule objects from a `best_spending_rules` table.
+
+    The sweep stores each winning variant's rate; this turns those rows back
+    into rule objects so the follow-up analyses evaluate exactly the tuned
+    configurations rather than the defaults.
+    """
+    if best is None:
+        return {}
+    lookup = {str(entry["key"]) + "|" + str(entry.get("suffix") or ""): entry
+              for entry in cfg["spending"]["rules"]}
+    out: Dict[str, "spg.SpendingRule"] = {}
+    for _, row in best.head(limit if limit is not None else len(best)).iterrows():
+        key = str(row["rule"])
+        params: Dict[str, Any] = {}
+        for handle, entry in lookup.items():
+            if handle.startswith(key + "|"):
+                candidate = spg.build(key, **dict(entry.get("params", {}) or {}),
+                                      **({"rate": float(row["rate"])}
+                                         if key in spg.RATE_PARAMETERISED
+                                         and row["rate"] == row["rate"] else {}))
+                suffix = entry.get("suffix")
+                label = candidate.label + (f" ({suffix})" if suffix else "")
+                if label == row["variant"]:
+                    params = dict(entry.get("params", {}) or {})
+                    break
+        if key in spg.RATE_PARAMETERISED and row["rate"] == row["rate"]:
+            params["rate"] = float(row["rate"])
+        out[str(row["variant"])] = spg.build(key, **params)
+    return out
+
+
+def spending_rank_by_risk_aversion(sweep: pd.DataFrame,
+                                   gammas: Sequence[float],
+                                   rule: str = "constant_real"
+                                   ) -> pd.DataFrame:
+    """Where one rule family places, at each risk aversion.
+
+    Turns "the flat rule loses at every risk aversion" from an assertion into
+    a table, and shows how the gap narrows as risk aversion rises -- which is
+    the direction a smoothing rule should benefit from.
+    """
+    rows: List[Dict[str, Any]] = []
+    for gamma in gammas:
+        metric = f"cec_gamma{float(gamma):g}"
+        if metric not in sweep.columns:
+            continue
+        best = sweep.loc[sweep.groupby("rule")[metric].idxmax()]
+        best = best.sort_values(metric, ascending=False).reset_index(drop=True)
+        if rule not in set(best["rule"]):
+            continue
+        position = int(best.index[best["rule"] == rule][0]) + 1
+        target = float(best.loc[best["rule"] == rule, metric].iloc[0])
+        winner = best.iloc[0]
+        rows.append({
+            "risk_aversion": float(gamma),
+            "best_rule": str(winner["variant"]),
+            "best_cec": float(winner[metric]),
+            f"{rule}_cec": target,
+            f"{rule}_rank": position,
+            "n_families": int(len(best)),
+            "gap_pct": (float(winner[metric]) / target - 1.0) * 100.0,
+        })
+    return pd.DataFrame.from_records(rows)
