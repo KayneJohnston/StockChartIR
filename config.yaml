@@ -1,0 +1,219 @@
+# =====================================================================
+# Replication of Anarkulova, Cederburg & O'Doherty (2023/2024)
+# "Beyond the Status Quo: A Critical Assessment of Lifecycle Asset
+#  Allocation"
+#
+# All tunable parameters for the pipeline live here.  Nothing in src/
+# hard-codes an economic assumption; every number below is surfaced in
+# docs/ with its provenance.
+# =====================================================================
+
+run:
+  seed: 20240115
+  output_dir: results
+  figure_dir: results/figures
+  table_dir: results/tables
+  cache_dir: data/cache
+  processed_dir: data/processed
+  raw_dir: data/raw
+
+# ---------------------------------------------------------------------
+# Step 1 - country panel construction
+# ---------------------------------------------------------------------
+data:
+  jst_workbook: data/raw/JST_macrohistory.xlsx
+  jst_sheet: Sheet1
+  clio_inflation: data/raw/clio_infra_inflation.csv
+  clio_bond_yield: data/raw/clio_infra_bond_yield.csv
+
+  # First calendar year retained in the panel.  ACO start in 1890; the
+  # JST return series only become broad after 1890 as well.
+  start_year: 1890
+  end_year: 2020
+
+  # Minimum number of usable observations for a country to enter the panel.
+  min_observations: 20
+
+  # Equal weights across the "other" countries when forming the
+  # international equity portfolio.  "equal" or "gdp".
+  international_weighting: equal
+
+  # Winsorisation of the international leg, in percent per tail.  0.1 clips
+  # roughly seven war-time country-years whose currency conversion runs
+  # through administered (non-tradable) exchange rates.  Set to 0 to keep
+  # the raw series; docs/01 lists every affected observation.
+  international_winsor_pct: 0.1
+
+  # Modified-duration proxy used to translate a Tier-B bond *yield* into a
+  # bond *total return* (see docs/01, section 4.3).
+  bond_duration_years: 7.0
+
+  # Monthly disaggregation of the annual panel (auxiliary output only -
+  # the headline engine runs at annual frequency).
+  emit_monthly: true
+  monthly_seed: 991
+
+  # Tier-B (calibrated proxy) extension to 38 developed markets.
+  extension:
+    enabled: true
+    seed: 4242
+    # Target size of the developed-market panel including Tier A.
+    target_n_countries: 38
+
+# ---------------------------------------------------------------------
+# Step 2 - cross-country joint block bootstrap
+# ---------------------------------------------------------------------
+bootstrap:
+  # "jst16"  -> only countries with fully empirical return histories
+  # "dev38"  -> Tier A + Tier B calibrated developed-market extension
+  panel: dev38
+  n_paths: 100000
+  chunk_size: 10000
+  horizon_years: 68
+  # Expected block length in years.  ACO use 120 months.
+  mean_block_years: 10.0
+  # "geometric" (stationary bootstrap, Politis-Romano) or "fixed".
+  block_length_distribution: geometric
+  min_block_years: 1
+  max_block_years: 40
+  # "per_lifetime" -> one domestic country per simulated investor
+  #                   (specification used for the headline results)
+  # "per_block"    -> country redrawn with every block (ACO's own design)
+  country_draw: per_lifetime
+  # How the domestic country identity is drawn.
+  # "history" -> probability proportional to usable country-years, which is
+  #              what pooling country-time blocks implies and which stops
+  #              25-year synthetic histories from carrying the same weight
+  #              as 131-year empirical ones.
+  # "uniform" -> equal probability across all countries in the panel.
+  country_weighting: history
+  seed: 7
+
+  diagnostics:
+    n_paths: 20000
+    block_length_grid: [1.0, 5.0, 10.0, 20.0]
+
+# ---------------------------------------------------------------------
+# Step 3 - lifecycle simulation
+# ---------------------------------------------------------------------
+lifecycle:
+  age_start: 25
+  age_retire: 63          # first year of retirement
+  age_death: 93           # investor is alive at the start of age 92; the
+                          # bequest is measured at age 93
+  savings_rate: 0.10
+
+  income:
+    # Deterministic real log-income profile:
+    #   log Y(a) = log Y0 + b1*(a-a0) + b2*(a-a0)^2
+    initial_real_income: 1.0
+    b1: 0.045
+    b2: -0.0009
+    # Idiosyncratic labour-income risk (Carroll/Cocco-Gomes-Maenhout style)
+    permanent_shock_sd: 0.10
+    transitory_shock_sd: 0.25
+    shocks_enabled: true
+
+  social_security:
+    enabled: true
+    # "progressive" -> US primary-insurance-amount bend-point schedule
+    #                  (90/32/15 percent), which makes the replacement rate
+    #                  decline with career earnings and puts a real floor
+    #                  under retirement consumption.
+    # "flat"        -> `replacement_rate` applied uniformly.
+    formula: progressive
+    replacement_rate: 0.45
+    pia_bend1: 0.21     # x economy-wide average real earnings
+    pia_bend2: 1.28
+    pia_rate1: 0.90
+    pia_rate2: 0.32
+    pia_rate3: 0.15
+
+  retirement:
+    # "fixed_real_rule"  -> withdraw rule_rate * W_retire every year, in
+    #                       constant real terms (the "4% rule")
+    # "fixed_percentage" -> withdraw rule_rate * W_t (never ruins)
+    rule: fixed_real_rule
+    rule_rate: 0.04
+    # Consumption floor supplied by social security if wealth is exhausted.
+    allow_ruin: true
+
+  rebalancing: annual
+
+# ---------------------------------------------------------------------
+# Candidate portfolios
+# ---------------------------------------------------------------------
+strategies:
+  balanced_all_equity:
+    label: "50/50 Domestic/International Equity"
+    type: constant
+    weights: {dom_eq: 0.50, intl_eq: 0.50, bond: 0.0, bill: 0.0}
+  domestic_equity:
+    label: "100% Domestic Equity"
+    type: constant
+    weights: {dom_eq: 1.0, intl_eq: 0.0, bond: 0.0, bill: 0.0}
+  international_equity:
+    label: "100% International Equity"
+    type: constant
+    weights: {dom_eq: 0.0, intl_eq: 1.0, bond: 0.0, bill: 0.0}
+  sixty_forty:
+    label: "60/40 Domestic Equity/Domestic Bonds"
+    type: constant
+    weights: {dom_eq: 0.60, intl_eq: 0.0, bond: 0.40, bill: 0.0}
+  target_date_fund:
+    label: "Target-Date Fund (glide path)"
+    type: glide
+    # Piecewise-linear equity share by age; the equity sleeve is split
+    # domestic/international using `equity_split`, the fixed-income sleeve
+    # using `fixed_income_split`.
+    glide_ages:   [25, 40, 55, 63, 75, 93]
+    glide_equity: [0.90, 0.90, 0.65, 0.50, 0.35, 0.30]
+    equity_split: {dom_eq: 0.6, intl_eq: 0.4}
+    fixed_income_split: {bond: 0.7, bill: 0.3}
+  bills_only:
+    label: "100% Bills (cash)"
+    type: constant
+    weights: {dom_eq: 0.0, intl_eq: 0.0, bond: 0.0, bill: 1.0}
+
+# ---------------------------------------------------------------------
+# Step 3 - preferences
+# ---------------------------------------------------------------------
+utility:
+  discount_factor: 0.96
+  risk_aversions: [2.0, 5.0, 10.0]
+  baseline_risk_aversion: 5.0
+  # Epstein-Zin elasticity of intertemporal substitution.
+  epstein_zin_ies: [0.5, 1.5]
+  baseline_ies: 1.5
+  # Weight on the age-93 bequest inside the consumption aggregator.
+  bequest_weight: 2.0
+  bequest_enabled: true
+  # De Nardi (2004) "bequests are a luxury" shift, in units of the
+  # investor's initial annual real income.  Keeps u(0 bequest) finite.
+  bequest_shift: 1.0
+  # Numerical floor on real consumption (avoids -inf in CRRA).
+  consumption_floor: 1.0e-4
+  # Which consumption dates enter the utility aggregator.
+  # "retirement" -> ages 63-92 plus the bequest.  Working-life consumption
+  #                 is (1 - savings_rate) * income and is therefore identical
+  #                 across strategies by construction, so including it only
+  #                 adds a large strategy-invariant term that compresses every
+  #                 CEC toward a common value.  This is the reporting basis
+  #                 used by ACO and the default here.
+  # "full"       -> ages 25-92 plus the bequest.
+  consumption_window: retirement
+
+# ---------------------------------------------------------------------
+# Step 4 - reporting
+# ---------------------------------------------------------------------
+report:
+  percentiles: [1, 5, 10, 25, 50, 75, 90, 95, 99]
+  # Shortfall statistics are measured against a strategy-invariant target:
+  # this fraction of the investor's own career-average real earnings.  The
+  # target must not depend on the strategy, or shortfall numbers stop being
+  # comparable across portfolios.
+  consumption_target_replacement: 0.70
+  # Also run the fully-empirical 16-country panel as a robustness check.
+  robustness_panels: [jst16]
+  robustness_country_draw: [per_block]
+  robustness_country_weighting: [uniform]

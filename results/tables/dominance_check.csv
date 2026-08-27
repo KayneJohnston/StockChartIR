@@ -1,0 +1,5 @@
+challenger,incumbent,criteria,criteria_won,criteria_tied,criteria_lost_n,strict_dominance,criteria_lost
+balanced_all_equity,target_date_fund,21,20,1,0,True,-
+balanced_all_equity,sixty_forty,21,20,1,0,True,-
+balanced_all_equity,domestic_equity,21,20,1,0,True,-
+balanced_all_equity,bills_only,21,20,1,0,True,-
