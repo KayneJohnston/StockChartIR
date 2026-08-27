@@ -402,3 +402,179 @@ def plot_ruin_probability(table: pd.DataFrame, directory: str | Path,
         ax.set_xlabel("Probability of wealth depletion before age 93 (%)")
         ax.set_title("Ruin probability under the 4% real withdrawal rule")
     return _save(fig, directory, name)
+
+
+# ---------------------------------------------------------------------------
+# Step 5 - sensitivity analysis
+# ---------------------------------------------------------------------------
+def plot_allocation_frontier(domestic: pd.DataFrame, equity: pd.DataFrame,
+                             gammas: Sequence[float], directory: str | Path,
+                             name: str = "fig12_allocation_frontier") -> Path:
+    """Certainty equivalent against the two allocation dials.
+
+    Left: how much of an all-equity portfolio should sit in the home market.
+    Right: how much of the portfolio should be in equities at all.  Both
+    curves are normalised to their own maximum so that three very different
+    risk-aversion levels can share one axis.
+    """
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(1, 2, figsize=(13, 4.8))
+        panels = (
+            (axes[0], domestic, "domestic_share",
+             "Domestic share of the equity sleeve"),
+            (axes[1], equity, "equity_share", "Equity share of the portfolio"),
+        )
+        for ax, frame, column, xlabel in panels:
+            for i, gamma in enumerate(gammas):
+                col = f"cec_crra_gamma{float(gamma):g}"
+                if col not in frame.columns:
+                    continue
+                block = frame.sort_values(column)
+                values = block[col].to_numpy()
+                ax.plot(block[column] * 100, values / values.max(),
+                        "-o", markersize=3.5, color=_colour(i),
+                        label=f"γ = {float(gamma):g}")
+                best = int(np.argmax(values))
+                ax.scatter([block[column].iloc[best] * 100], [1.0],
+                           color=_colour(i), s=70, zorder=4,
+                           edgecolor="white", linewidth=1.2)
+            ax.set_xlabel(f"{xlabel} (%)")
+            ax.set_ylabel("CEC relative to its own maximum")
+            ax.legend(fontsize=8)
+        axes[0].set_title("Home bias is costly")
+        axes[1].set_title("More equity is better, at every risk aversion")
+        fig.suptitle("Certainty equivalent consumption along the allocation "
+                     "dials (dots mark each curve's optimum)", fontsize=11)
+        fig.tight_layout(rect=(0.0, 0.0, 1.0, 0.94))
+    return _save(fig, directory, name)
+
+
+def plot_risk_aversion_sweep(frame: pd.DataFrame, directory: str | Path,
+                             challenger: str = "balanced_all_equity",
+                             name: str = "fig13_risk_aversion_sweep") -> Path:
+    """CEC by risk aversion, and the challenger's advantage over each rival."""
+    wide = frame.pivot_table(index="risk_aversion", columns="label",
+                             values="cec").sort_index()
+    labels = {row["strategy"]: row["label"]
+              for _, row in frame.drop_duplicates("strategy").iterrows()}
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(1, 2, figsize=(13, 4.8))
+        for i, column in enumerate(wide.columns):
+            axes[0].plot(wide.index, wide[column], "-o", markersize=3,
+                         color=_colour(i), label=column)
+        axes[0].set_xlabel("CRRA risk aversion γ")
+        axes[0].set_ylabel("Certainty equivalent consumption")
+        axes[0].set_title("CEC falls with risk aversion, but the order holds")
+        axes[0].legend(fontsize=8)
+
+        base_label = labels.get(challenger, challenger)
+        if base_label in wide.columns:
+            for i, column in enumerate(wide.columns):
+                if column == base_label:
+                    continue
+                axes[1].plot(wide.index,
+                             (wide[base_label] / wide[column] - 1.0) * 100,
+                             "-o", markersize=3, color=_colour(i), label=column)
+            axes[1].axhline(0, color="black", linewidth=1.0)
+        axes[1].set_xlabel("CRRA risk aversion γ")
+        axes[1].set_ylabel(f"CEC advantage of\n{base_label} (%)")
+        axes[1].set_title("Advantage stays positive across the whole grid")
+        axes[1].legend(fontsize=8)
+    return _save(fig, directory, name)
+
+
+def plot_withdrawal_sensitivity(frame: pd.DataFrame, swr: pd.DataFrame,
+                                target_ruin: float, directory: str | Path,
+                                name: str = "fig14_withdrawal_sensitivity"
+                                ) -> Path:
+    """Ruin probability against withdrawal rate, plus the implied safe rate."""
+    ruin = frame.pivot_table(index="withdrawal_rate", columns="label",
+                             values="prob_ruin").sort_index()
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(1, 2, figsize=(14, 4.8),
+                                 gridspec_kw={"width_ratios": [1.0, 1.15]})
+        for i, column in enumerate(ruin.columns):
+            axes[0].plot(ruin.index * 100, ruin[column] * 100, "-o",
+                         markersize=3, color=_colour(i), label=column)
+        axes[0].axhline(target_ruin * 100, color="black", linestyle="--",
+                        linewidth=1.0, label=f"{target_ruin:.0%} ruin target")
+        axes[0].axvline(4.0, color="grey", linestyle=":", linewidth=1.0)
+        axes[0].text(4.05, 92, 'the "4% rule"', fontsize=8, color="grey")
+        axes[0].set_xlabel("Real withdrawal rate (% of wealth at retirement)")
+        axes[0].set_ylabel("Probability of ruin before age 93 (%)")
+        axes[0].set_title("Ruin probability by withdrawal rate")
+        axes[0].legend(fontsize=8)
+
+        column = [c for c in swr.columns if c.startswith("safe_withdrawal_rate")][0]
+        ordered = swr.sort_values(column)
+        axes[1].barh(ordered["label"], ordered[column] * 100,
+                     color=[_colour(i) for i in range(len(ordered))])
+        axes[1].axvline(4.0, color="grey", linestyle=":", linewidth=1.2)
+        axes[1].text(4.05, -0.4, '4% rule', fontsize=8, color="grey")
+        for y, value in enumerate(ordered[column] * 100):
+            axes[1].text(value + 0.05, y, f"{value:.2f}%", va="center",
+                         fontsize=8)
+        axes[1].set_xlabel(f"Withdrawal rate giving a {target_ruin:.0%} "
+                           "ruin probability (%)")
+        axes[1].set_title("Safe withdrawal rate by strategy")
+        axes[1].tick_params(axis="y", labelsize=8)
+        fig.tight_layout()
+    return _save(fig, directory, name)
+
+
+def plot_planning_sweeps(frames: Mapping[str, tuple], directory: str | Path,
+                         metric: str = "cec_crra_gamma5",
+                         name: str = "fig15_planning_sweeps") -> Path:
+    """A small-multiple grid of CEC against each planning parameter."""
+    items = [(title, frame, column) for title, (frame, column) in frames.items()
+             if column in frame.columns and metric in frame.columns]
+    if not items:  # pragma: no cover - defensive
+        raise ValueError("no plottable planning sweeps supplied")
+    ncols = min(3, len(items))
+    nrows = int(np.ceil(len(items) / ncols))
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(nrows, ncols, figsize=(4.6 * ncols, 3.9 * nrows),
+                                 squeeze=False)
+        flat = axes.ravel()
+        for ax, (title, frame, column) in zip(flat, items):
+            wide = frame.pivot_table(index=column, columns="label",
+                                     values=metric).sort_index()
+            for i, series in enumerate(wide.columns):
+                ax.plot(wide.index, wide[series], "-o", markersize=3,
+                        color=_colour(i), label=series)
+            ax.set_xlabel(title)
+            ax.set_ylabel("CEC")
+        for ax in flat[len(items):]:
+            ax.axis("off")
+        handles, labels = flat[0].get_legend_handles_labels()
+        fig.legend(handles, labels, loc="lower center", fontsize=8,
+                   ncol=min(3, len(labels)))
+        fig.suptitle("Certainty equivalent consumption across planning "
+                     "parameters (γ = 5)", fontsize=12)
+        fig.tight_layout(rect=(0.0, 0.10, 1.0, 0.95))
+    return _save(fig, directory, name)
+
+
+def plot_tornado(tornado: pd.DataFrame, directory: str | Path,
+                 incumbent: str = "target_date_fund",
+                 name: str = "fig16_tornado") -> Path:
+    """Range of the all-equity advantage across every swept assumption."""
+    block = tornado[tornado["incumbent"] == incumbent].sort_values("range_pp")
+    with plt.rc_context(STYLE):
+        fig, ax = plt.subplots(figsize=(11.0, 0.45 * len(block) + 2.4))
+        y = np.arange(len(block))
+        lo = block["min_advantage_pct"].to_numpy()
+        hi = block["max_advantage_pct"].to_numpy()
+        median = block["median_advantage_pct"].to_numpy()
+        ax.barh(y, hi - lo, left=lo, height=0.6, color=_colour(0), alpha=0.55)
+        ax.scatter(median, y, color=_colour(1), zorder=4, s=28, label="median")
+        ax.axvline(0, color="black", linewidth=1.4)
+        ax.set_yticks(y)
+        ax.set_yticklabels(block["dimension"], fontsize=9)
+        ax.set_xlabel(f"CEC advantage of the 50/50 all-equity portfolio "
+                      f"over the {incumbent.replace('_', ' ')} (%)")
+        ax.set_title("Every bar sits entirely to the right of zero:\n"
+                     "no tested assumption reverses the ranking", fontsize=11)
+        ax.legend(fontsize=8, loc="lower right")
+        fig.tight_layout()
+    return _save(fig, directory, name)

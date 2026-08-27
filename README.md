@@ -47,31 +47,71 @@ for the full analysis and the caveats.
 | [`docs/02_multicountry_block_bootstrap.md`](docs/02_multicountry_block_bootstrap.md) | Bootstrap algorithm, mean/covariance/persistence preservation, block-length sensitivity, tail diagnostics |
 | [`docs/03_lifecycle_utility_model.md`](docs/03_lifecycle_utility_model.md) | State transitions, cash-flow rules, drawdown algorithm, CRRA and Epstein-Zin definitions |
 | [`docs/04_replicated_results_and_tables.md`](docs/04_replicated_results_and_tables.md) | Headline tables, distributional evidence, robustness, comparison with the paper, limitations |
+| [`docs/05_sensitivity_analysis.md`](docs/05_sensitivity_analysis.md) | Sweeps over allocation, preferences, planning and sampling assumptions; safe withdrawal rates; tornado analysis |
 
-All four are **generated** by `main.py` from live pipeline objects -- edit
+All five are **generated** by `main.py` from live pipeline objects -- edit
 `src/report.py`, not the Markdown.
+
+## Sensitivity
+
+The headline result is one point in a large parameter space, so the pipeline
+sweeps that space. Across **136 parameter settings spanning 10 dimensions --
+allocation, risk aversion, IES, bequest weight, longevity, retirement age,
+savings rate, withdrawal rate, social-security design, block length and return
+panel -- not one reverses the ranking.** The 50/50 all-equity advantage over
+the target-date fund ranges from 3.3% to 26.6%.
+
+Three findings from the sweeps are worth pulling out.
+
+**Home bias is the expensive mistake, not the equity/bond split.** The optimal
+domestic share of the equity sleeve is 0-20% depending on risk aversion.
+Moving from that optimum to 100% domestic equity costs more certainty
+equivalent consumption than the entire gap between the 50/50 portfolio and the
+target-date fund.
+
+**The optimal equity share is 100% at every risk aversion tested**, up to
+γ = 20. Rising risk aversion lowers the level of the certainty equivalent
+everywhere but never moves the argmax toward bonds, and no rival overtakes the
+all-equity portfolio anywhere on the grid.
+
+**The 4% rule is not safe for any strategy on a developed-market panel.** The
+withdrawal rate that holds ruin probability to 5%:
+
+| Strategy | Safe withdrawal rate | Ruin at 4% |
+| --- | --- | --- |
+| 100% International Equity | 2.82% | 12.2% |
+| 50/50 Domestic/International Equity | 2.72% | 15.3% |
+| Target-Date Fund (glide path) | 2.12% | 24.1% |
+| 60/40 | 1.73% | 25.8% |
+| 100% Domestic Equity | 1.38% | 29.2% |
+| 100% Bills | 1.21% | 61.9% |
+
+The 4% rule was calibrated on US history — exactly the hindsight the paper
+removes, and removing it costs more than a percentage point of retirement
+income.
 
 ## Quick start
 
 ```bash
 pip install numpy pandas scipy matplotlib pyyaml openpyxl pytest
 
-python main.py --quick      # ~15 s smoke run at N = 5,000
-python main.py              # ~80 s full run at N = 100,000
-python -m pytest tests/ -q  # 128 tests
+python main.py --quick      # ~20 s smoke run at reduced N
+python main.py              # ~5 min full run: N = 100,000 plus sensitivity
+python -m pytest tests/ -q  # 162 tests
 ```
 
 Selected steps and alternative configurations:
 
 ```bash
 python main.py --steps 1 2          # panel + bootstrap only
+python main.py --steps 1 5          # panel + sensitivity sweeps only
 python main.py --config other.yaml  # a different parameterisation
 ```
 
 ## Layout
 
 ```
-├── docs/                 # generated analysis documents (4 files)
+├── docs/                 # generated analysis documents (5 files)
 ├── data/
 │   ├── raw/              # primary source files, unmodified
 │   ├── processed/        # standardised real return panels (.csv and .npz)
@@ -81,19 +121,20 @@ python main.py --config other.yaml  # a different parameterisation
 │   ├── bootstrap.py      # cross-country joint block bootstrap + validation
 │   ├── lifecycle.py      # accumulation/decumulation simulator
 │   ├── utility.py        # CRRA, Epstein-Zin, shortfall metrics
+│   ├── sensitivity.py    # common-random-number parameter sweeps
 │   ├── plots.py          # publication-quality figures
 │   └── report.py         # Markdown report generation
-├── tests/                # 128 unit + integration tests
+├── tests/                # 162 unit + integration tests
 ├── results/
-│   ├── figures/          # 11 PNGs
-│   └── tables/           # 20+ CSVs
+│   ├── figures/          # 16 PNGs
+│   └── tables/           # 40+ CSVs
 ├── config.yaml           # every tunable parameter
 └── main.py               # entry point
 ```
 
-`src/report.py` is an addition to the structure specified in the brief: keeping
-the ~700 lines of Markdown generation out of `main.py` leaves the entry point
-readable as a four-step pipeline.
+`src/report.py` and `src/sensitivity.py` are additions to the structure
+specified in the brief: keeping Markdown generation and the sweep engine out
+of `main.py` leaves the entry point readable as a five-step pipeline.
 
 ## Data
 
@@ -156,6 +197,12 @@ every certainty equivalent toward a common value.
 **Shortfall statistics use a strategy-invariant target** — a fixed replacement
 rate on the investor's own career-average earnings. Measuring each strategy
 against its own median makes every strategy look identical.
+
+**Sensitivity sweeps use common random numbers.** One set of bootstrap paths
+and income shocks is drawn once and reused at every sweep point, so a
+difference between two settings is the parameter's effect rather than Monte
+Carlo noise. Preference sweeps re-evaluate cached consumption paths instead of
+re-simulating, since γ, ψ and the bequest weight enter only the aggregator.
 
 ---
 

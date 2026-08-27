@@ -1,0 +1,73 @@
+risk_aversion,strategy,label,cec
+1.0,balanced_all_equity,50/50 Domestic/International Equity,1.6512764076026305
+1.5,balanced_all_equity,50/50 Domestic/International Equity,1.4668948402794382
+2.0,balanced_all_equity,50/50 Domestic/International Equity,1.358322952274493
+3.0,balanced_all_equity,50/50 Domestic/International Equity,1.2064920596459483
+4.0,balanced_all_equity,50/50 Domestic/International Equity,1.093161860992277
+5.0,balanced_all_equity,50/50 Domestic/International Equity,1.0025242507178538
+6.0,balanced_all_equity,50/50 Domestic/International Equity,0.9283225127838385
+8.0,balanced_all_equity,50/50 Domestic/International Equity,0.8155386212179077
+10.0,balanced_all_equity,50/50 Domestic/International Equity,0.7355353848024861
+12.0,balanced_all_equity,50/50 Domestic/International Equity,0.6766085457744881
+15.0,balanced_all_equity,50/50 Domestic/International Equity,0.6125741967451848
+20.0,balanced_all_equity,50/50 Domestic/International Equity,0.5416530942114608
+1.0,domestic_equity,100% Domestic Equity,1.4436486933761195
+1.5,domestic_equity,100% Domestic Equity,1.2641607462231175
+2.0,domestic_equity,100% Domestic Equity,1.1625493549017787
+3.0,domestic_equity,100% Domestic Equity,1.0288188828437412
+4.0,domestic_equity,100% Domestic Equity,0.9352525115686134
+5.0,domestic_equity,100% Domestic Equity,0.8636009244767896
+6.0,domestic_equity,100% Domestic Equity,0.8065688815606754
+8.0,domestic_equity,100% Domestic Equity,0.7214567875005004
+10.0,domestic_equity,100% Domestic Equity,0.6609637220100234
+12.0,domestic_equity,100% Domestic Equity,0.6154911857384748
+15.0,domestic_equity,100% Domestic Equity,0.5644496017132807
+20.0,domestic_equity,100% Domestic Equity,0.5055836884448752
+1.0,international_equity,100% International Equity,1.7740347649690356
+1.5,international_equity,100% International Equity,1.568784397484917
+2.0,international_equity,100% International Equity,1.4487950845358288
+3.0,international_equity,100% International Equity,1.2783168783474674
+4.0,international_equity,100% International Equity,1.1487339243878214
+5.0,international_equity,100% International Equity,1.0446254363936025
+6.0,international_equity,100% International Equity,0.9598032162330546
+8.0,international_equity,100% International Equity,0.8328436864756467
+10.0,international_equity,100% International Equity,0.7449834117823239
+12.0,international_equity,100% International Equity,0.6817854866049546
+15.0,international_equity,100% International Equity,0.6150420709928808
+20.0,international_equity,100% International Equity,0.5446857104398939
+1.0,sixty_forty,60/40 Domestic Equity/Domestic Bonds,1.30468798031169
+1.5,sixty_forty,60/40 Domestic Equity/Domestic Bonds,1.1898210358514416
+2.0,sixty_forty,60/40 Domestic Equity/Domestic Bonds,1.1175318219333832
+3.0,sixty_forty,60/40 Domestic Equity/Domestic Bonds,1.0142770252814328
+4.0,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.9361058621344547
+5.0,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.8725435072685855
+6.0,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.8195395806613027
+8.0,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.73658750230053
+10.0,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.675182753018801
+12.0,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.6279937188782111
+15.0,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.5742716791826311
+20.0,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.5117379464053072
+1.0,target_date_fund,Target-Date Fund (glide path),1.3939762686526707
+1.5,target_date_fund,Target-Date Fund (glide path),1.284166901321408
+2.0,target_date_fund,Target-Date Fund (glide path),1.2090382970366083
+3.0,target_date_fund,Target-Date Fund (glide path),1.096022620772323
+4.0,target_date_fund,Target-Date Fund (glide path),1.0071957793281519
+5.0,target_date_fund,Target-Date Fund (glide path),0.9335371304345791
+6.0,target_date_fund,Target-Date Fund (glide path),0.8714852111439827
+8.0,target_date_fund,Target-Date Fund (glide path),0.7740811367749647
+10.0,target_date_fund,Target-Date Fund (glide path),0.7025697538218527
+12.0,target_date_fund,Target-Date Fund (glide path),0.6484040073493913
+15.0,target_date_fund,Target-Date Fund (glide path),0.587853633890557
+20.0,target_date_fund,Target-Date Fund (glide path),0.5191156928762913
+1.0,bills_only,100% Bills (cash),0.8903224690791488
+1.5,bills_only,100% Bills (cash),0.8653725055678172
+2.0,bills_only,100% Bills (cash),0.8430270372022566
+3.0,bills_only,100% Bills (cash),0.8029595583079369
+4.0,bills_only,100% Bills (cash),0.7672582878097037
+5.0,bills_only,100% Bills (cash),0.7351380700828921
+6.0,bills_only,100% Bills (cash),0.7062068372367947
+8.0,bills_only,100% Bills (cash),0.6566278051672133
+10.0,bills_only,100% Bills (cash),0.6160523679115409
+12.0,bills_only,100% Bills (cash),0.5823167284362497
+15.0,bills_only,100% Bills (cash),0.5409875046100386
+20.0,bills_only,100% Bills (cash),0.48875530689849894

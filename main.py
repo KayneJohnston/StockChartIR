@@ -26,6 +26,7 @@ from src import data_loader as dl
 from src import lifecycle as lc
 from src import plots
 from src import report as rp
+from src import sensitivity as sn
 from src import utility as ut
 
 LOGGER = logging.getLogger("main")
@@ -56,6 +57,9 @@ def _apply_quick(cfg: Dict[str, Any]) -> Dict[str, Any]:
     cfg["bootstrap"]["n_paths"] = 5000
     cfg["bootstrap"]["chunk_size"] = 2500
     cfg["bootstrap"]["diagnostics"]["n_paths"] = 4000
+    if "sensitivity" in cfg:
+        cfg["sensitivity"]["n_paths"] = 4000
+        cfg["sensitivity"]["redraw_n_paths"] = 2000
     LOGGER.warning("quick mode: n_paths reduced to %s",
                    cfg["bootstrap"]["n_paths"])
     return cfg
@@ -497,13 +501,161 @@ def step4_report(cfg: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Step 5
+# ---------------------------------------------------------------------------
+def step5_sensitivity(cfg: Dict[str, Any], state: Dict[str, Any]
+                      ) -> Dict[str, Any]:
+    """Sweep every parameter that could move the conclusion; write docs/05."""
+    sens = cfg.get("sensitivity", {})
+    if not sens.get("enabled", False):
+        LOGGER.info("sensitivity analysis disabled in config; skipping step 5")
+        return state
+    LOGGER.info("=== STEP 5: sensitivity analysis ===")
+    started = time.perf_counter()
+
+    panel = state["panel"]
+    spec = state.get("spec") or lc.spec_from_config(cfg)
+    grids = sens["grids"]
+    gammas = [float(g) for g in cfg["utility"]["risk_aversions"]]
+    n_paths = int(sens["n_paths"])
+    redraw_paths = int(sens["redraw_n_paths"])
+    target_ruin = float(sens["safe_withdrawal_target_ruin"])
+
+    ctx = sn.SweepContext.build(
+        cfg, panel, n_paths=n_paths,
+        max_horizon=int(sens["max_horizon_years"]),
+        max_working=int(sens["max_working_years"]),
+    )
+    strategies = ctx.strategies_from_config()
+    core = {k: v for k, v in strategies.items() if k in sn.CORE_STRATEGIES}
+
+    sweeps: Dict[str, pd.DataFrame] = {}
+    LOGGER.info("sweeping allocation dials")
+    sweeps["domestic_share"] = sn.sweep_domestic_share(
+        ctx, grids["domestic_share"], gammas)
+    sweeps["equity_share"] = sn.sweep_equity_share(
+        ctx, grids["equity_share"], gammas)
+
+    LOGGER.info("sweeping preferences")
+    sweeps["risk_aversion"] = sn.sweep_risk_aversion(
+        ctx, core, grids["risk_aversion"])
+    sweeps["ies"] = sn.sweep_ies(ctx, core, grids["ies"])
+    sweeps["bequest_weight"] = sn.sweep_bequest_weight(
+        ctx, core, grids["bequest_weight"])
+
+    LOGGER.info("sweeping planning parameters")
+    for field, key in (("age_death", "age_death"),
+                       ("age_retire", "age_retire"),
+                       ("savings_rate", "savings_rate"),
+                       ("rule_rate", "withdrawal_rate")):
+        sweeps[key] = sn.sweep_lifecycle_field(
+            ctx, core, field, grids[key], gammas)
+    sweeps["social_security"] = sn.sweep_social_security(ctx, core, gammas)
+
+    LOGGER.info("sweeping sampling assumptions")
+    sweeps["mean_block_years"] = sn.sweep_bootstrap_field(
+        cfg, panel, core, spec, "mean_block_years",
+        grids["mean_block_years"], redraw_paths, gammas)
+    panels = {name: p for name, p in state.get("panels", {}).items()}
+    if len(panels) > 1:
+        sweeps["panel"] = sn.sweep_panels(cfg, panels, core, spec,
+                                          redraw_paths, gammas)
+
+    baseline_cec = f"cec_crra_gamma{float(cfg['utility']['baseline_risk_aversion']):g}"
+    derived: Dict[str, pd.DataFrame] = {
+        "domestic_optimum": sn.optimal_allocation(
+            sweeps["domestic_share"], "domestic_share", gammas),
+        "equity_optimum": sn.optimal_allocation(
+            sweeps["equity_share"], "equity_share", gammas),
+        "crossover": sn.crossover_risk_aversion(sweeps["risk_aversion"]),
+        "safe_withdrawal_rates": sn.safe_withdrawal_rates(
+            sweeps["withdrawal_rate"], target_ruin),
+    }
+
+    # Dimensions that carry a per-strategy CEC and so can enter the tornado.
+    tornado_inputs = {
+        "Longevity (age at death)": (sweeps["age_death"], "age_death"),
+        "Retirement age": (sweeps["age_retire"], "age_retire"),
+        "Savings rate": (sweeps["savings_rate"], "savings_rate"),
+        "Withdrawal rate": (sweeps["withdrawal_rate"], "withdrawal_rate"),
+        "Social security design": (sweeps["social_security"], "social_security"),
+        "Bootstrap block length": (sweeps["mean_block_years"],
+                                   "mean_block_years"),
+    }
+    if "panel" in sweeps:
+        tornado_inputs["Return panel"] = (sweeps["panel"], "panel")
+    tornado = sn.tornado(tornado_inputs, baseline_cec)
+
+    # The preference sweeps report a bare `cec` column, so they are folded in
+    # through the same machinery after a rename.
+    for name, key in (("Risk aversion", "risk_aversion"),
+                      ("Elasticity of substitution", "ies"),
+                      ("Bequest weight", "bequest_weight")):
+        frame = sweeps[key].rename(columns={"cec": baseline_cec})
+        column = {"risk_aversion": "risk_aversion", "ies": "ies",
+                  "bequest_weight": "bequest_weight"}[key]
+        extra = sn.tornado({name: (frame, column)}, baseline_cec)
+        tornado = pd.concat([tornado, extra], ignore_index=True)
+    tornado = tornado.sort_values("range_pp", ascending=False)
+    verdict = sn.overall_verdict(tornado)
+
+    tables = cfg["run"]["table_dir"]
+    for name, frame in sweeps.items():
+        _save_table(frame, tables, f"sensitivity_{name}")
+    for name, frame in derived.items():
+        _save_table(frame, tables, f"sensitivity_{name}")
+    _save_table(tornado, tables, "sensitivity_tornado")
+
+    figure_dir = cfg["run"]["figure_dir"]
+    figures = [
+        str(plots.plot_allocation_frontier(
+            sweeps["domestic_share"], sweeps["equity_share"], gammas,
+            figure_dir)),
+        str(plots.plot_risk_aversion_sweep(sweeps["risk_aversion"], figure_dir)),
+        str(plots.plot_withdrawal_sensitivity(
+            sweeps["withdrawal_rate"], derived["safe_withdrawal_rates"],
+            target_ruin, figure_dir)),
+        str(plots.plot_planning_sweeps({
+            "Age at death": (sweeps["age_death"], "age_death"),
+            "Retirement age": (sweeps["age_retire"], "age_retire"),
+            "Savings rate": (sweeps["savings_rate"], "savings_rate"),
+            "Withdrawal rate": (sweeps["withdrawal_rate"], "withdrawal_rate"),
+            "Bootstrap block length": (sweeps["mean_block_years"],
+                                       "mean_block_years"),
+        }, figure_dir, metric=baseline_cec)),
+        str(plots.plot_tornado(tornado, figure_dir)),
+    ]
+
+    elapsed = time.perf_counter() - started
+    runtime_notes = {
+        "n_simulations": int(
+            len(grids["domestic_share"]) + len(grids["equity_share"])
+            + len(core) * (len(grids["age_death"]) + len(grids["age_retire"])
+                           + len(grids["savings_rate"])
+                           + len(grids["withdrawal_rate"]) + 4
+                           + len(grids["mean_block_years"]))),
+        "elapsed_seconds": elapsed,
+    }
+    rp.write_doc_05(
+        Path("docs") / "05_sensitivity_analysis.md",
+        cfg, sweeps, derived, tornado, verdict, figures, runtime_notes,
+    )
+    LOGGER.info("docs/05 written (%.0fs, %s settings, %s reversals)",
+                elapsed, verdict.get("n_settings"), verdict.get("n_lost"))
+    state.update({"sweeps": sweeps, "sensitivity_derived": derived,
+                  "tornado": tornado, "verdict": verdict})
+    return state
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
-         4: step4_report}
+         4: step4_report, 5: step5_sensitivity}
 
 
-def run(config_path: str = "config.yaml", steps: Sequence[int] = (1, 2, 3, 4),
+def run(config_path: str = "config.yaml",
+        steps: Sequence[int] = (1, 2, 3, 4, 5),
         quick: bool = False) -> Dict[str, Any]:
     """Execute the pipeline and return the accumulated state."""
     cfg = dl.load_config(config_path)
@@ -532,8 +684,8 @@ def run(config_path: str = "config.yaml", steps: Sequence[int] = (1, 2, 3, 4),
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config.yaml")
-    parser.add_argument("--steps", nargs="+", type=int, default=[1, 2, 3, 4],
-                        choices=[1, 2, 3, 4])
+    parser.add_argument("--steps", nargs="+", type=int,
+                        default=[1, 2, 3, 4, 5], choices=[1, 2, 3, 4, 5])
     parser.add_argument("--quick", action="store_true",
                         help="small N for smoke tests")
     parser.add_argument("--verbose", action="store_true")

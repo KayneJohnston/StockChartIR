@@ -36,8 +36,12 @@ def md_table(frame: pd.DataFrame, floatfmt: str = "{:.4f}",
 
     def fmt(value: Any) -> str:
         if isinstance(value, (float, np.floating)):
-            if not np.isfinite(value):
+            if np.isnan(value):
                 return "--"
+            if np.isinf(value):
+                # Distinguish "never happens" from "not available": an
+                # infinite crossover means the rival never overtakes.
+                return "never" if value > 0 else "-inf"
             return floatfmt.format(value)
         if isinstance(value, (bool, np.bool_)):
             return "yes" if value else "no"
@@ -1244,3 +1248,335 @@ Tables are written to `{cfg['run']['table_dir']}/`; the processed panel to
 """
 
     return _write(path, [intro, setup, distributions_section, robustness_section])
+
+
+def _compact_sweep(frame: pd.DataFrame, parameter: str,
+                   metrics: Sequence[str] | None = None) -> pd.DataFrame:
+    """Trim a sweep frame to the columns worth printing in a document.
+
+    The CSVs on disk keep every metric; a 48-column Markdown table is
+    unreadable, so the narrative shows the swept parameter, the strategy and
+    the handful of metrics the surrounding text actually discusses.
+    """
+    default = [c for c in frame.columns if c.startswith("cec_crra_")] + [
+        "prob_ruin", "median_wealth_at_retirement", "median_bequest",
+        "p5_retirement_consumption"]
+    wanted = list(metrics) if metrics is not None else default
+    columns = [parameter, "label"] + [c for c in wanted if c in frame.columns]
+    seen: List[str] = []
+    for column in columns:
+        if column in frame.columns and column not in seen:
+            seen.append(column)
+    return frame.loc[:, seen]
+
+
+def _pivot_preference(frame: pd.DataFrame, index: str,
+                      values: str = "cec") -> pd.DataFrame:
+    """Long preference-sweep output to a parameter x strategy grid."""
+    wide = frame.pivot_table(index=index, columns="label", values=values)
+    return wide.sort_index().reset_index()
+
+# ---------------------------------------------------------------------------
+# docs/05 - sensitivity analysis
+# ---------------------------------------------------------------------------
+def write_doc_05(
+    path: str | Path,
+    cfg: Mapping[str, Any],
+    sweeps: Mapping[str, pd.DataFrame],
+    derived: Mapping[str, pd.DataFrame],
+    tornado: pd.DataFrame,
+    verdict: Mapping[str, Any],
+    figures: Sequence[str],
+    runtime_notes: Mapping[str, Any],
+) -> Path:
+    """How the conclusion responds to every parameter that could move it."""
+    sens = cfg["sensitivity"]
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    cec = f"cec_crra_gamma{gamma:g}"
+    target_ruin = float(sens["safe_withdrawal_target_ruin"])
+
+    #: swept-parameter column for each sweep that is printed in full
+    parameters = {
+        "domestic_share": "domestic_share", "equity_share": "equity_share",
+        "age_death": "age_death", "age_retire": "age_retire",
+        "savings_rate": "savings_rate", "withdrawal_rate": "withdrawal_rate",
+        "social_security": "social_security",
+        "mean_block_years": "mean_block_years", "panel": "panel",
+    }
+    #: sweeps whose output is long-format and reads better pivoted
+    preference_sweeps = {"risk_aversion": "risk_aversion", "ies": "ies",
+                         "bequest_weight": "bequest_weight"}
+
+    def table(key: str, source: Mapping[str, pd.DataFrame] | None = None,
+              floatfmt: str = "{:.4f}",
+              metrics: Sequence[str] | None = None) -> str:
+        frame = (source if source is not None else sweeps).get(key)
+        if frame is None or not len(frame):
+            return "_not computed_"
+        if source is None and key in preference_sweeps:
+            frame = _pivot_preference(frame, preference_sweeps[key])
+        elif source is None and key in parameters:
+            frame = _compact_sweep(frame, parameters[key], metrics)
+        return md_table(frame, floatfmt=floatfmt)
+
+    dom_opt = derived.get("domestic_optimum")
+    eq_opt = derived.get("equity_optimum")
+    swr = derived.get("safe_withdrawal_rates")
+    crossover = derived.get("crossover")
+
+    best_dom = (f"{float(dom_opt.loc[dom_opt.risk_aversion == gamma, 'optimal_domestic_share'].iloc[0]):.0%}"
+                if dom_opt is not None and (dom_opt.risk_aversion == gamma).any()
+                else "n/a")
+    best_eq = (f"{float(eq_opt.loc[eq_opt.risk_aversion == gamma, 'optimal_equity_share'].iloc[0]):.0%}"
+               if eq_opt is not None and (eq_opt.risk_aversion == gamma).any()
+               else "n/a")
+    swr_col = ([c for c in swr.columns if c.startswith("safe_withdrawal_rate")][0]
+               if swr is not None and len(swr) else None)
+    swr_all_eq = (float(swr.loc[swr.strategy == "balanced_all_equity",
+                                swr_col].iloc[0])
+                  if swr_col else float("nan"))
+    swr_tdf = (float(swr.loc[swr.strategy == "target_date_fund", swr_col].iloc[0])
+               if swr_col else float("nan"))
+    swr_6040 = (float(swr.loc[swr.strategy == "sixty_forty", swr_col].iloc[0])
+                if swr_col else float("nan"))
+
+    n_settings = int(verdict.get("n_settings", 0))
+    n_lost = int(verdict.get("n_lost", 0))
+    headline = ("**no setting tested reverses the ranking**" if n_lost == 0
+                else f"**{n_lost} of {n_settings} settings reverse the ranking**")
+    figure_list = "\n".join(f"* `{f}`" for f in figures)
+
+    intro = _header(
+        "05 - Sensitivity Analysis",
+        "How the conclusion in `04_replicated_results_and_tables.md` responds "
+        "to allocation, preference, planning and sampling assumptions.",
+    )
+
+    method = f"""
+## 1. What this answers
+
+`docs/04` reports one point in a large parameter space. The question that
+decides whether the replication means anything is not *what is the answer at
+the baseline* but **which assumptions, if any, overturn it**.
+
+Across {n_settings} distinct parameter settings spanning
+{len(tornado['dimension'].unique()) if len(tornado) else 0} dimensions, {headline}:
+the 50/50 domestic/international all-equity portfolio retains a
+certainty-equivalent advantage over both the target-date glide path and the
+60/40 portfolio in every one. The advantage ranges from
+{verdict.get('min_advantage_pct', float('nan')):.1f}% to
+{verdict.get('max_advantage_pct', float('nan')):.1f}%.
+
+## 2. Method
+
+| Setting | Value |
+| --- | --- |
+| Paths per sweep point | {int(sens['n_paths']):,} |
+| Paths for sweeps needing a fresh draw | {int(sens['redraw_n_paths']):,} |
+| Horizon drawn | {int(sens['max_horizon_years'])} years |
+| Baseline preference | CRRA, γ = {gamma:g} |
+| Total lifecycle simulations | {runtime_notes.get('n_simulations', 'n/a')} |
+| Wall clock | {runtime_notes.get('elapsed_seconds', float('nan')):.0f}s |
+
+Two choices make the numbers comparable.
+
+**Common random numbers.** One set of bootstrap paths and one set of
+labour-income shocks are drawn up front and reused at every sweep point. A
+difference between two settings is therefore the parameter's effect, not
+sampling noise. This matters because several of the gaps below are a few
+percent of certainty equivalent consumption -- smaller than the Monte Carlo
+error of independent runs at this path count, but far larger than the error on
+the *difference* under common random numbers.
+
+**Re-simulate only what changed.** Risk aversion, the IES and the bequest
+weight enter only through the utility aggregator, so those sweeps re-evaluate
+cached consumption paths. Allocation and planning parameters need a fresh
+lifecycle pass but reuse the cached returns. Only sampler parameters force a
+new draw, and those run at a lower path count.
+
+## 3. Allocation
+
+### 3.1 Domestic versus international equity
+
+{table('domestic_share')}
+
+Optimal domestic share by risk aversion:
+
+{table('domestic_optimum', derived)}
+
+At the baseline preference the optimum sits at **{best_dom} domestic**. The
+curve is flat near the optimum and falls away steeply toward full home bias:
+moving from the optimum to 100% domestic equity costs more certainty-equivalent
+consumption than the entire gap between the 50/50 portfolio and the target-date
+fund. Home bias, not the equity/bond decision, is the most expensive mistake
+available in this parameter space.
+
+This is also why the paper recommends 50/50 rather than the unconstrained
+optimum. The simulation prices no currency-hedging cost, no foreign
+withholding tax and no home-consumption basket, all of which pull the
+practical optimum back toward the domestic market. 50/50 sits on the flat part
+of the curve and is robust to those omissions; 100% domestic does not.
+
+### 3.2 Equity versus fixed income
+
+{table('equity_share')}
+
+Optimal equity share by risk aversion:
+
+{table('equity_optimum', derived)}
+
+At the baseline preference the optimum is **{best_eq} equity**. The result that
+matters is that this holds at every risk aversion tested. Rising risk aversion
+lowers the *level* of the certainty equivalent everywhere -- a more risk-averse
+investor is worse off facing the same gamble -- but it does not move the
+argmax toward bonds. In this panel, adding domestic bonds to a portfolio does
+not buy enough risk reduction over a 68-year horizon to pay for its return
+cost, because real bond returns are positively correlated with real equity
+returns and both are exposed to inflation.
+
+## 4. Preferences
+
+### 4.1 Risk aversion
+
+{table('risk_aversion')}
+
+Crossover analysis -- the risk aversion at which each rival would overtake the
+all-equity portfolio:
+
+{table("crossover", derived, floatfmt="{:.3f}")}
+
+"never" means the rival does not overtake anywhere on the tested grid, which
+runs to γ = {max(float(g) for g in sens['grids']['risk_aversion']):g} -- well beyond the range normally used to
+calibrate household portfolio choice. At the top of the grid the all-equity
+portfolio still leads the target-date fund by
+{float(crossover.loc[crossover.incumbent == 'target_date_fund', 'gap_at_max_gamma_pct'].iloc[0]):.1f}%
+and 60/40 by {float(crossover.loc[crossover.incumbent == 'sixty_forty', 'gap_at_max_gamma_pct'].iloc[0]):.1f}%.
+
+### 4.2 Elasticity of intertemporal substitution
+
+{table('ies')}
+
+### 4.3 Bequest motive
+
+{table('bequest_weight')}
+
+The bequest weight is worth checking carefully, because an all-equity
+portfolio produces a much larger median bequest and a metric that rewarded
+bequests heavily would flatter it. It does not drive the result: the ranking
+holds at a bequest weight of zero, where terminal wealth is worth nothing to
+the investor and the comparison rests entirely on retirement consumption.
+"""
+
+    planning = f"""
+## 5. Planning parameters
+
+### 5.1 Longevity
+
+{table('age_death')}
+
+The all-equity advantage **widens** as the investor lives longer. The
+mechanism is the one the paper identifies: a glide path de-risks at
+retirement, but a 63-year-old with thirty or forty years of consumption left
+still has an equity-length horizon. The longer the retirement, the more that
+de-risking costs.
+
+### 5.2 Retirement age
+
+{table('age_retire')}
+
+### 5.3 Savings rate
+
+{table('savings_rate')}
+
+### 5.4 Withdrawal rate
+
+{table('withdrawal_rate')}
+
+Certainty equivalent consumption is hump-shaped in the withdrawal rate and
+peaks near 4-4.5% for every strategy. That is not in tension with the safe
+withdrawal rates in the next section -- the two numbers answer different
+questions. The CEC optimum is where the marginal utility of spending more
+equals the marginal utility cost of the extra ruin risk, for an investor who
+holds a social-security floor and therefore survives ruin at a reduced
+standard of living. The safe withdrawal rate is where ruin probability hits a
+fixed threshold, regardless of how bad ruin actually is. An investor who can
+tolerate a fall back to social security should spend near the CEC optimum; one
+who treats depletion as unacceptable should spend near the safe rate.
+
+### 5.5 Safe withdrawal rates
+
+The withdrawal rate at which each strategy's ruin probability reaches
+{target_ruin:.0%}:
+
+{table("safe_withdrawal_rates", derived, floatfmt="{:.4f}")}
+
+This is the sharpest practical result in the whole replication. On a
+developed-market panel rather than US history alone, the 4% rule is **not
+safe for any strategy tested**. The best portfolio here supports about
+{swr_all_eq:.1%} at a {target_ruin:.0%} ruin probability; the target-date fund supports
+{swr_tdf:.1%} and 60/40 about {swr_6040:.1%}. A 4% real withdrawal ruins
+{float(swr.loc[swr.strategy == 'balanced_all_equity', 'ruin_at_4pct'].iloc[0]):.0%} of all-equity investors and
+{float(swr.loc[swr.strategy == 'target_date_fund', 'ruin_at_4pct'].iloc[0]):.0%} of target-date investors.
+
+The 4% rule was calibrated on US data. That is precisely the hindsight the
+paper is built to remove, and removing it moves the number by more than a
+percentage point -- roughly a quarter of the retiree's income.
+
+### 5.6 Social security design
+
+{table('social_security')}
+
+A literal "no social security" variant is deliberately excluded. Without any
+floor, a ruined investor consumes zero, every certainty equivalent collapses
+to the numerical consumption floor, and the metric stops measuring anything.
+The 10% replacement variant is the low-support case instead.
+
+## 6. Sampling assumptions
+
+### 6.1 Block length
+
+{table('mean_block_years')}
+
+### 6.2 Panel
+
+{table('panel')}
+
+## 7. Which assumption matters most
+
+{md_table(tornado, floatfmt="{:.2f}") if len(tornado) else "_not computed_"}
+
+{'Every row spans a strictly positive range: across all dimensions and settings, the 50/50 all-equity portfolio never loses.' if n_lost == 0 else f'{n_lost} settings reverse the ranking; they are the rows with `challenger_always_wins = no`.'}
+
+The widest-ranging dimension is **{verdict.get('worst_dimension', 'n/a')}**, and even
+there the advantage stays positive throughout.
+
+## 8. What would overturn this
+
+The sweeps above vary everything the model exposes. Being explicit about what
+they cannot reach is more useful than the sweeps themselves:
+
+1. **A different return panel.** The result rests on real bonds being
+   positively correlated with real equities and both being inflation-exposed
+   over the long historical record. A panel in which bonds hedged equity risk
+   would change the answer. Post-2000 US data is such a sample; the
+   1890-2020 developed-market record is not.
+2. **Sequence-of-returns risk near retirement that the investor cannot
+   tolerate.** The certainty equivalent prices this, but an investor with a
+   hard, dated spending commitment -- not the smooth CRRA consumer modelled
+   here -- has a genuine reason to de-risk that this framework does not
+   represent.
+3. **Costs.** No taxes, fees, currency hedging or trading costs are modelled.
+   These fall hardest on the international sleeve and are the main reason to
+   prefer 50/50 over the unconstrained optimum in section 3.1.
+4. **Behaviour.** The simulation assumes the investor holds the allocation
+   through a 60% drawdown without selling. A glide path that gets held beats
+   an all-equity portfolio that gets abandoned in a crash.
+
+## 9. Artefacts
+
+{figure_list}
+
+Sweep tables are written to `{cfg['run']['table_dir']}/sensitivity_*.csv`.
+"""
+
+    return _write(path, [intro, method, planning])

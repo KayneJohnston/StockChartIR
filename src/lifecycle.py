@@ -212,22 +212,51 @@ def spec_from_config(cfg: Mapping[str, Any]) -> LifecycleSpec:
 # ---------------------------------------------------------------------------
 # Labour income
 # ---------------------------------------------------------------------------
+def draw_income_shocks(n_paths: int, n_years: int,
+                       rng: np.random.Generator) -> Tuple[np.ndarray, np.ndarray]:
+    """Standard-normal draws for the permanent and transitory components.
+
+    Drawing these once and reusing them across configurations gives
+    :mod:`src.sensitivity` common random numbers: when a sweep changes the
+    retirement age or the withdrawal rate, the difference in outcomes is the
+    parameter's effect rather than Monte Carlo noise.
+    """
+    return (rng.standard_normal((n_paths, n_years)),
+            rng.standard_normal((n_paths, n_years)))
+
+
 def simulate_income(spec: LifecycleSpec, n_paths: int,
-                    rng: np.random.Generator) -> np.ndarray:
+                    rng: np.random.Generator | None = None,
+                    shocks: Tuple[np.ndarray, np.ndarray] | None = None
+                    ) -> np.ndarray:
     """Real labour income over the working years, shape ``(n_paths, n_working)``.
 
     The deterministic hump is multiplied by a permanent component (a random
     walk in logs) and an i.i.d. transitory component, both normalised to have
     unit mean so that the profile's *level* is unchanged by adding risk.
+
+    ``shocks`` optionally supplies pre-drawn standard normals from
+    :func:`draw_income_shocks`; they are sliced to the spec's working years,
+    so a shorter career is a prefix of a longer one rather than an
+    independent draw.
     """
     profile = spec.deterministic_income()[None, :]
     if not spec.income_shocks_enabled:
         return np.repeat(profile, n_paths, axis=0)
     n_work = spec.n_working
-    perm = rng.normal(-0.5 * spec.permanent_shock_sd ** 2,
-                      spec.permanent_shock_sd, size=(n_paths, n_work))
-    tran = rng.normal(-0.5 * spec.transitory_shock_sd ** 2,
-                      spec.transitory_shock_sd, size=(n_paths, n_work))
+    if shocks is None:
+        if rng is None:
+            raise ValueError("simulate_income needs either rng or shocks")
+        z_perm = rng.standard_normal((n_paths, n_work))
+        z_tran = rng.standard_normal((n_paths, n_work))
+    else:
+        z_perm, z_tran = (arr[:n_paths, :n_work] for arr in shocks)
+        if z_perm.shape != (n_paths, n_work):
+            raise ValueError(
+                f"pre-drawn shocks are too small: need ({n_paths}, {n_work}), "
+                f"got {z_perm.shape}")
+    perm = -0.5 * spec.permanent_shock_sd ** 2 + spec.permanent_shock_sd * z_perm
+    tran = -0.5 * spec.transitory_shock_sd ** 2 + spec.transitory_shock_sd * z_tran
     permanent = np.exp(np.cumsum(perm, axis=1))
     transitory = np.exp(tran)
     return profile * permanent * transitory
