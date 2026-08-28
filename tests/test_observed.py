@@ -81,7 +81,8 @@ def clio_yields():
                         index=pd.Index([1990, 1991, 1992], name="year"))
 
 
-def test_clio_yields_are_read_as_decimals(clio_yields):
+def test_clio_yields_are_read_as_decimals(clio_yields, monkeypatch):
+    monkeypatch.setattr(obs, "MIN_YIELD_YEARS", 1)
     years = np.array([1990, 1991, 1992])
     got = obs.bond_from_clio(clio_yields, "Someland", years,
                              np.zeros(3), duration=7.0)
@@ -91,13 +92,32 @@ def test_clio_yields_are_read_as_decimals(clio_yields):
     )
 
 
-def test_clio_recovery_is_not_dominated_by_the_deflator(clio_yields):
+def test_clio_recovery_is_not_dominated_by_the_deflator(clio_yields,
+                                                        monkeypatch):
     """The regression this guards: double-scaling left return ~= -inflation."""
+    monkeypatch.setattr(obs, "MIN_YIELD_YEARS", 1)
     years = np.array([1990, 1991, 1992])
     got = obs.bond_from_clio(clio_yields, "Someland", years,
                              np.full(3, 0.03), duration=7.0)
     assert got[1] > 0.0
     assert got[1] == pytest.approx(1.04 / 1.03 - 1.0)
+
+
+def test_a_series_too_short_to_be_worth_having_is_dropped():
+    """Below the block-length threshold a fragment adds bookkeeping, not evidence."""
+    years = np.arange(1990, 1990 + obs.MIN_YIELD_YEARS - 1)
+    clio = pd.DataFrame({"Tiny": np.full(years.size, 0.04)},
+                        index=pd.Index(years, name="year"))
+    got = obs.bond_from_clio(clio, "Tiny", years, np.zeros(years.size), 7.0)
+    assert np.isnan(got).all()
+
+
+def test_a_series_long_enough_is_kept():
+    years = np.arange(1900, 1900 + obs.MIN_YIELD_YEARS + 5)
+    clio = pd.DataFrame({"Long": np.full(years.size, 0.04)},
+                        index=pd.Index(years, name="year"))
+    got = obs.bond_from_clio(clio, "Long", years, np.zeros(years.size), 7.0)
+    assert np.isfinite(got).sum() >= obs.MIN_YIELD_YEARS
 
 
 def test_absent_column_gives_all_nan(clio_yields):
@@ -106,7 +126,8 @@ def test_absent_column_gives_all_nan(clio_yields):
     assert np.isnan(got).all()
 
 
-def test_years_outside_the_source_are_nan(clio_yields):
+def test_years_outside_the_source_are_nan(clio_yields, monkeypatch):
+    monkeypatch.setattr(obs, "MIN_YIELD_YEARS", 1)
     years = np.array([1988, 1990, 1991, 2015])
     got = obs.bond_from_clio(clio_yields, "Someland", years,
                              np.zeros(4), duration=7.0)

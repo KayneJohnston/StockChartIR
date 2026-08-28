@@ -508,8 +508,8 @@ python main.py --config other.yaml  # a different parameterisation
 │   └── report.py         # Markdown report generation
 ├── tests/                # 486 unit + integration tests
 ├── results/
-│   ├── figures/          # 25 PNGs
-│   └── tables/           # 40+ CSVs
+│   ├── figures/          # 39 PNGs
+│   └── tables/           # 110+ CSVs
 ├── config.yaml           # every tunable parameter
 └── main.py               # entry point
 ```

@@ -380,6 +380,7 @@ def section_introduction(ctx: Any) -> List[Flowable]:
 # 2. Background
 # ---------------------------------------------------------------------------
 def section_background(ctx: Any) -> List[Flowable]:
+    f = ctx.f
     out: List[Flowable] = [ctx.h1("2. Background and Related Work")]
     out.append(ctx.h2("2.1 The theoretical case for the glide path"))
     out.append(ctx.p(
@@ -441,11 +442,14 @@ def section_background(ctx: Any) -> List[Flowable]:
         "international asset-return work and it is what makes an exercise of "
         "this kind possible at all."))
     out.append(ctx.p(
-        "It is also the binding constraint on this study, and we are explicit "
-        "about that in Section 3.2 and again in Section 16: sixteen countries "
-        "have complete empirical series, and the remaining twenty-two "
-        "developed markets in our panel are constructed rather than observed. "
-        "Results are reported separately for the two tiers throughout."))
+        f"It is also the binding constraint on this study, and we are explicit "
+        f"about that in Section 3.2 and again in Section 16: "
+        f"{f.panel['n_tier_a']} countries have complete observed series, and "
+        f"the remaining {f.panel['n_simulated_equity']} developed markets in "
+        f"our panel have equity that is simulated rather than observed — "
+        f"though {f.panel['n_tier_b']} of those do have real bond and bill "
+        f"histories, rebuilt from published rates in Section 3.6.1. Results "
+        f"are reported separately by tier throughout."))
 
     out.append(ctx.h2("2.4 Adjacent literatures this paper touches"))
     out.extend(ctx.bullets([
@@ -594,8 +598,8 @@ def section_data(ctx: Any) -> List[Flowable]:
              "ar1": lambda v: f2(v)},
             limit=20),
         "Real domestic equity returns by country (first twenty by ISO code)",
-        note="Tier A countries have fully empirical series; Tier B series are "
-             "constructed from the Tier A cross-section. The full "
+        note="Tier A equity is observed; Tier B and C equity is simulated "
+             "from the Tier A cross-section. The full "
              "38-country table is Appendix B. Arithmetic and geometric means "
              "are annual real returns; AR(1) is the first-order "
              "autocorrelation of the annual series.",
@@ -817,6 +821,15 @@ def section_data(ctx: Any) -> List[Flowable]:
             "what a household can buy and would change the headline result. We "
             "measure it, record it, and leave it out — deliberately, and on "
             "the record."))
+        out.extend(ctx.figure(
+            "fig39_housing_smoothing",
+            "Left: risk and return by country for housing as published, for "
+            "housing with its own first-order smoothing undone (arrows), and "
+            "for that country's domestic equity. Right: the lag-one "
+            "autocorrelation that does the work. De-smoothing closes part of "
+            "the volatility gap and not all of it, which is why housing is "
+            "reported here rather than added to the investable set.",
+            max_height=8.5 * cm))
 
     out.append(ctx.h3("Is the primary source genuine?"))
     out.append(ctx.p(
@@ -1482,9 +1495,10 @@ def section_baseline(ctx: Any) -> List[Flowable]:
 
     out.append(ctx.h2("5.5 Does the result depend on the synthetic countries?"))
     out.append(ctx.p(
-        "Because twenty-two of the thirty-eight countries are constructed "
-        "rather than observed, the single most important robustness question "
-        "is whether the result survives on the empirical subset alone."))
+        f"Because {f.panel['n_simulated_equity']} of the "
+        f"{f.panel['n_countries']} countries have simulated equity rather than "
+        f"observed, the single most important robustness question is whether "
+        f"the result survives on the observed subset alone."))
     out.extend(ctx.table(
         rows_from(tiers.assign(label=tiers["strategy"].map(LABELS)),
                   ["tier", "label", "n_paths", "cec_crra_gamma5", "prob_ruin",
@@ -1496,20 +1510,46 @@ def section_baseline(ctx: Any) -> List[Flowable]:
                    "prob_ruin": lambda v: pc(v, 1),
                    "median_bequest": lambda v: f2(v, 1)}),
         "Results split by country tier",
-        note="Tier A countries have fully empirical Jordà–Schularick–Taylor "
-             "series; Tier B countries are constructed. Paths are allocated "
-             "by the history-weighted country draw, so the split is uneven.",
+        note="Tier A countries have observed Jordà–Schularick–Taylor series; "
+             "Tier B has observed bonds and bills with simulated equity; "
+             "Tier C is simulated throughout. Paths are allocated by the "
+             "history-weighted country draw, so the split is uneven.",
         font_size=7.2))
+    # Classified from the table rather than asserted: the direction of this
+    # comparison is the whole point of the subsection, so it must not be
+    # written down in advance of the numbers.
+    adv_a = _tier_adv(tiers, "A")
+    others = [t for t in ("B", "C") if (tiers["tier"] == t).any()]
+    adv_other = {t: _tier_adv(tiers, t) for t in others}
+    weaker = [t for t, v in adv_other.items() if v < adv_a]
+    survives = "does" if adv_a > 0 else "does not"
+    if adv_other and len(weaker) == len(adv_other):
+        direction = "<i>larger</i>"
+        reading = ("The simulated countries dilute the result rather than "
+                   "creating it, which is the direction one would expect if "
+                   "the factor model smooths away national idiosyncrasy.")
+    elif weaker:
+        direction = "<i>not uniformly larger</i>"
+        reading = (
+            "The comparison is mixed: the advantage is larger than on Tier "
+            + ", ".join(weaker) + " and smaller elsewhere, so the simulated "
+            "countries cannot be said to create the result, but neither do "
+            "they uniformly dilute it.")
+    else:
+        direction = "<i>smaller</i>"
+        reading = ("This runs against the reading elsewhere in this section "
+                   "and is reported as it stands: on these paths the "
+                   "simulated countries strengthen rather than dilute the "
+                   "advantage, and the observed subset is the weaker case.")
     out.append(ctx.p(
-        f"The answer is that it does. On Tier A paths alone the all-equity "
-        f"portfolio's certainty equivalent is "
+        f"The answer is that it {survives}. On Tier A paths alone the "
+        f"all-equity portfolio's certainty equivalent is "
         f"{f2(_tier_cec(tiers, 'A', 'balanced_all_equity'), 3)} against "
         f"{f2(_tier_cec(tiers, 'A', 'target_date_fund'), 3)} for the "
-        f"target-date fund — an advantage of "
-        f"{_tier_adv(tiers, 'A'):.1f}%, which is <i>larger</i> than on the "
-        f"full panel. The synthetic countries dilute the result rather than "
-        f"creating it, which is the direction one would expect if their "
-        f"construction smooths away national idiosyncrasy."))
+        f"target-date fund — an advantage of {adv_a:.1f}%, which is "
+        f"{direction} than on the tiers whose equity was generated ("
+        + ", ".join(f"{v:.1f}% on Tier {t}" for t, v in adv_other.items())
+        + f"). {reading}"))
     out.append(ctx.p(
         "Two further sampling variations are reported in Appendix C: drawing "
         "the country afresh at every block rather than once per lifetime, and "
@@ -4020,8 +4060,10 @@ def appendix_panel(ctx: Any) -> List[Flowable]:
     out.append(ctx.p(
         "The full 38-country panel, with real domestic equity statistics for "
         "each. Tier A countries have complete Jordà–Schularick–Taylor series; "
-        "Tier B series are constructed from the Tier A cross-section and are "
-        "reported separately throughout the paper for that reason."))
+        "Tier B has observed bonds and bills but simulated equity; Tier C is "
+        "simulated throughout. Because this table reports <i>equity</i>, only "
+        "the Tier A rows are observed, and the tiers are reported separately "
+        "throughout the paper for that reason."))
     out.extend(ctx.table(
         rows_from(equity, ["country", "tier", "n_years", "first_year",
                            "last_year", "mean", "geometric_mean", "std",

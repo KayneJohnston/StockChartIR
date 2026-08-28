@@ -25,7 +25,10 @@ carry more than the pipeline was reading:
   Austria carry enough history to do the same.
 * The macro file also carries housing total returns for all sixteen observed
   countries -- an entire asset class, fully empirical, that nothing in the
-  project reads.
+  project read. It is now extracted and audited (`src.provenance.housing_audit`,
+  `docs/14` section 3.2) but deliberately kept out of the investable set: an
+  appraisal-based index is smoothed, and de-smoothing it is an assumption
+  rather than an observation.
 
 None of that closes the equity gap, which is the one that matters most, and
 this module does not pretend otherwise. What it does is stop simulating the
@@ -57,6 +60,10 @@ CLIO_BOND_COUNTRIES: Mapping[str, str] = {
     "Austria": "AUT",
 }
 
+#: Minimum usable years before a recovered yield series is worth having. Below
+#: roughly forty a country contributes almost no admissible long blocks, so the
+#: series adds provenance bookkeeping without adding evidence. Enforced in
+#: :func:`bond_from_clio` rather than left as a comment on the mapping above.
 MIN_YIELD_YEARS = 40
 
 
@@ -133,9 +140,19 @@ def bond_from_clio(clio: pd.DataFrame, column: str, years: np.ndarray,
     from Clio's own CPI file, so the two come from the same project.
     """
     if column not in clio.columns:
+        LOGGER.warning("Clio-Infra file has no column %r; nothing recovered",
+                       column)
         return np.full(years.size, np.nan)
     yields = clio[column].reindex(years).to_numpy(dtype=float)
-    return _real(bond_return_from_yield(yields, duration), inflation)
+    recovered = _real(bond_return_from_yield(yields, duration), inflation)
+    usable = int(np.isfinite(recovered).sum())
+    if usable < MIN_YIELD_YEARS:
+        LOGGER.warning(
+            "%s yields give only %d usable years (minimum %d); dropping the "
+            "series rather than recovering a fragment", column, usable,
+            MIN_YIELD_YEARS)
+        return np.full(years.size, np.nan)
+    return recovered
 
 
 def housing_returns(jst: pd.DataFrame, isos: Sequence[str],

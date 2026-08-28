@@ -1875,6 +1875,9 @@ def step14_provenance(cfg: Dict[str, Any],
 
     figures = [str(plots.plot_provenance(era, contamination, tail, countries,
                                          cfg["run"]["figure_dir"]))]
+    if len(housing):
+        figures.append(str(plots.plot_housing(housing,
+                                              cfg["run"]["figure_dir"])))
 
     elapsed = time.perf_counter() - started
     rp.write_doc_14(

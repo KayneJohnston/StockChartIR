@@ -1737,3 +1737,61 @@ def plot_provenance(era: pd.DataFrame, contamination: pd.DataFrame,
         ax.grid(axis="y", alpha=0.0)
         fig.tight_layout()
     return _save(fig, directory, name)
+
+
+def plot_housing(audit: pd.DataFrame, directory: str | Path,
+                 name: str = "fig39_housing_smoothing") -> Path:
+    """Why the observed housing series stays out of the investable set.
+
+    Left: risk and return by country, housing as published and again with its
+    own smoothing undone, against that country's equity. Right: the lag-one
+    autocorrelation that does the work, country by country.
+    """
+    block = audit.sort_values("sd").reset_index(drop=True)
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(1, 2, figsize=(13.5, 5.4),
+                                 gridspec_kw={"width_ratios": [1.25, 1.0]})
+
+        ax = axes[0]
+        series = [
+            ("sd", "mean", 0, "o", "Housing, as published"),
+            ("sd_desmoothed", "mean", 1, "s", "Housing, de-smoothed"),
+            ("equity_sd", "equity_mean", 2, "^", "Domestic equity"),
+        ]
+        for x_col, y_col, colour, marker, label in series:
+            ax.scatter(block[x_col] * 100, block[y_col] * 100,
+                       s=46, color=_colour(colour), marker=marker,
+                       edgecolor="white", linewidth=0.6, label=label, zorder=3)
+        # One arrow per country, published -> de-smoothed, so the correction is
+        # readable as a movement rather than as two unrelated clouds.
+        for row in block.itertuples():
+            ax.annotate("", xy=(row.sd_desmoothed * 100, row.mean * 100),
+                        xytext=(row.sd * 100, row.mean * 100),
+                        arrowprops={"arrowstyle": "->", "linewidth": 0.7,
+                                    "color": "0.55", "shrinkA": 3,
+                                    "shrinkB": 3}, zorder=2)
+        ax.set_xlabel("Standard deviation of real annual returns (%)")
+        ax.set_ylabel("Mean real annual return (%)")
+        ax.set_title("Housing earns equity-like returns at a fraction of the\n"
+                     "risk; de-smoothing closes part of that gap, not all",
+                     fontsize=10)
+        ax.legend(fontsize=8, loc="lower right")
+
+        ax = axes[1]
+        order = block.sort_values("autocorrelation")
+        y = np.arange(len(order))
+        height = 0.38
+        ax.barh(y + height / 2, order["autocorrelation"], height,
+                color=_colour(0), label="Housing")
+        ax.barh(y - height / 2, order["equity_autocorrelation"], height,
+                color=_colour(2), label="Domestic equity")
+        ax.axvline(0.0, color="black", linewidth=1.1)
+        ax.set_yticks(y)
+        ax.set_yticklabels(order["iso"], fontsize=7.5)
+        ax.set_xlabel("First-order autocorrelation of real returns")
+        ax.set_title("Housing returns are persistent where\n"
+                     "equity returns are not", fontsize=10)
+        ax.legend(fontsize=8, loc="lower right")
+        ax.grid(axis="y", alpha=0.0)
+        fig.tight_layout()
+    return _save(fig, directory, name)
