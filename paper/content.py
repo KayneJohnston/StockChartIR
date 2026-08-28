@@ -3845,7 +3845,7 @@ def section_limitations(ctx: Any) -> List[Flowable]:
         "largest asset and the mortgage the largest liability, and both "
         "interact with inflation in ways the financial portfolio does not. "
         "This is the single largest omission and it is not a small one."
-        + (f" We do hold the data: Section 3.6.1 audits "
+        + (f" We do hold the data: Section 3.6.2 audits "
            f"{hs['country_years']:,} country-years of observed housing "
            f"returns and explains why an appraisal-smoothed index is not a "
            f"fourth sleeve. That is a reason not to use it as written, not a "
