@@ -16,13 +16,15 @@ from src import data_loader as dl
 from src import provenance as pv
 
 
-def _retier(panel: dl.Panel, tier, provenance) -> dl.Panel:
+def _retier(panel: dl.Panel, tier, provenance, observed=None,
+            name=None) -> dl.Panel:
     return dl.Panel(
         years=panel.years, countries=panel.countries, tier=tier,
         dom_eq=panel.dom_eq, intl_eq=panel.intl_eq, bond=panel.bond,
         bill=panel.bill, inflation=panel.inflation,
         real_exchange_rate=panel.real_exchange_rate,
-        available=panel.available, name=panel.name, provenance=provenance)
+        available=panel.available, name=name or panel.name,
+        provenance=provenance, observed=observed or {})
 
 
 @pytest.fixture()
@@ -33,23 +35,41 @@ def observed_panel(toy_panel) -> dl.Panel:
                    (note,) * len(toy_panel.countries))
 
 
+EMPIRICAL_NOTE = "JST/JKKST empirical 2000-2019; inflation 100% empirical"
+SIMULATED_NOTE = ("Tier-B calibrated: inflation Clio-Infra CPI (80% of 20 "
+                  "active years empirical, remainder factor-model); "
+                  "equity/bond/bill simulated from donor AAA; market "
+                  "inception 2000")
+
+
 @pytest.fixture()
 def mixed_panel(toy_panel) -> dl.Panel:
-    """The toy panel relabelled so one of its three countries is simulated."""
-    return dl.Panel(
-        years=toy_panel.years, countries=toy_panel.countries,
-        tier=("A", "A", "B"),
-        dom_eq=toy_panel.dom_eq, intl_eq=toy_panel.intl_eq,
-        bond=toy_panel.bond, bill=toy_panel.bill,
-        inflation=toy_panel.inflation,
-        real_exchange_rate=toy_panel.real_exchange_rate,
-        available=toy_panel.available, name="mixed",
-        provenance=("JST/JKKST empirical 2000-2019; inflation 100% empirical",
-                    "JST/JKKST empirical 2000-2019; inflation 100% empirical",
-                    "Tier-B calibrated: inflation Clio-Infra CPI (80% of 20 "
-                    "active years empirical, remainder factor-model); "
-                    "equity/bond/bill simulated from donor AAA; market "
-                    "inception 2000"))
+    """The toy panel relabelled so one of its three countries is simulated.
+
+    No explicit masks: this is the fixture that checks the tier fallback, so
+    the audit has to reach the same answer from the labels alone.
+    """
+    return _retier(toy_panel, ("A", "A", "C"),
+                   (EMPIRICAL_NOTE, EMPIRICAL_NOTE, SIMULATED_NOTE),
+                   name="mixed")
+
+
+@pytest.fixture()
+def partial_panel(toy_panel) -> dl.Panel:
+    """One country whose rates were recovered but whose equity is simulated.
+
+    The masks are explicit here, because the whole point of Tier B is that a
+    country-level label cannot express it.
+    """
+    shape = toy_panel.available.shape
+    observed = {"dom_eq": np.ones(shape, dtype=bool),
+                "bond": np.ones(shape, dtype=bool),
+                "bill": np.ones(shape, dtype=bool),
+                "inflation": np.ones(shape, dtype=bool)}
+    observed["dom_eq"][:, 2] = False            # equity simulated throughout
+    return _retier(toy_panel, ("A", "A", "B"),
+                   (EMPIRICAL_NOTE, EMPIRICAL_NOTE, SIMULATED_NOTE),
+                   observed=observed, name="partial")
 
 
 class TestFingerprints:
@@ -67,10 +87,21 @@ class TestFingerprints:
 class TestCountryProvenance:
     def test_simulated_countries_are_named_as_such(self, mixed_panel) -> None:
         frame = pv.country_provenance(mixed_panel)
-        simulated = frame[frame["tier"] == "B"]
+        simulated = frame[frame["tier"] == "C"]
         assert len(simulated) == 1
         assert simulated["returns_source"].iloc[0] == "factor model"
         assert int(simulated["returns_empirical_years"].iloc[0]) == 0
+
+    def test_a_partly_observed_country_is_counted_per_series(
+            self, partial_panel) -> None:
+        """The reason cells replaced countries: this row is both things."""
+        frame = pv.country_provenance(partial_panel).set_index("tier")
+        row = frame.loc["B"]
+        assert int(row["dom_eq_observed_years"]) == 0
+        assert int(row["bond_observed_years"]) == int(row["usable_years"])
+        assert int(row["bill_observed_years"]) == int(row["usable_years"])
+        assert float(row["share_returns_observed"]) == pytest.approx(2 / 3)
+        assert "recovered from published rates" in row["returns_source"]
 
     def test_observed_countries_count_all_their_years_as_empirical(
             self, mixed_panel) -> None:
@@ -78,20 +109,55 @@ class TestCountryProvenance:
         observed = frame[frame["tier"] == "A"]
         assert (observed["returns_source"] == "JST/JKKST").all()
         assert (observed["returns_simulated_years"] == 0).all()
+        # One cell per series per year, so an observed country's empirical
+        # count is its usable years times the number of return series.
         assert (observed["returns_empirical_years"]
-                == observed["usable_years"]).all()
+                == observed["usable_years"] * len(pv.RETURN_SERIES)).all()
+        assert (observed["share_returns_observed"] == 1.0).all()
 
     def test_the_donor_is_recovered_from_the_note(self, mixed_panel) -> None:
         frame = pv.country_provenance(mixed_panel)
-        assert frame[frame["tier"] == "B"]["donor"].iloc[0] == "AAA"
+        assert frame[frame["tier"] == "C"]["donor"].iloc[0] == "AAA"
 
     def test_the_inflation_share_is_recovered_from_the_note(self, mixed_panel
                                                             ) -> None:
         frame = pv.country_provenance(mixed_panel)
-        assert float(frame[frame["tier"] == "B"]
+        assert float(frame[frame["tier"] == "C"]
                      ["inflation_empirical_share"].iloc[0]) == pytest.approx(0.8)
         assert float(frame[frame["tier"] == "A"]
                      ["inflation_empirical_share"].iloc[0]) == pytest.approx(1.0)
+
+
+class TestRecoveredSeries:
+    def test_it_reports_only_the_partly_observed_countries(self, partial_panel
+                                                           ) -> None:
+        frame = pv.recovered_series(partial_panel)
+        assert set(frame["iso"]) == {partial_panel.countries[2]}
+        assert set(frame["series"]) == {"bond", "bill"}, (
+            "equity is simulated for this country and must not be listed"
+        )
+
+    def test_it_counts_the_years_that_stopped_being_simulated(
+            self, partial_panel) -> None:
+        frame = pv.recovered_series(partial_panel)
+        usable = int(partial_panel.available[:, 2].sum())
+        assert int(frame["observed_years"].sum()) == 2 * usable
+
+    def test_a_panel_with_nothing_recovered_gives_an_empty_frame(
+            self, mixed_panel) -> None:
+        frame = pv.recovered_series(mixed_panel)
+        assert frame.empty
+        assert "observed_years" in frame.columns, (
+            "callers sum this column, so it must exist even when empty"
+        )
+
+    def test_the_span_comes_from_the_mask_not_the_calendar(self, partial_panel
+                                                           ) -> None:
+        frame = pv.recovered_series(partial_panel).set_index("series")
+        years = np.asarray(partial_panel.years)
+        column = partial_panel.available[:, 2]
+        assert int(frame.loc["bond", "first_year"]) == int(years[column].min())
+        assert int(frame.loc["bond", "last_year"]) == int(years[column].max())
 
 
 class TestPanelShares:
@@ -99,7 +165,7 @@ class TestPanelShares:
                                                               ) -> None:
         summary = pv.panel_summary(mixed_panel)
         available = mixed_panel.available
-        simulated = np.array(mixed_panel.tier) == "B"
+        simulated = np.array(mixed_panel.tier) != "A"
         assert summary["country_years"] == int(available.sum())
         assert summary["country_years_simulated"] \
             == int(available[:, simulated].sum())
@@ -117,7 +183,8 @@ class TestPanelShares:
             mixed_panel, edges=(2000, 2010, 2020))
         summary = pv.panel_summary(mixed_panel)
         assert int(era["country_years"].sum()) == summary["country_years"]
-        assert int(era["simulated"].sum()) == summary["country_years_simulated"]
+        assert int(era["return_cells"].sum()) == summary["return_cells"]
+        assert int(era["simulated"].sum()) == summary["return_cells_simulated"]
 
 
 class TestInternationalLeg:

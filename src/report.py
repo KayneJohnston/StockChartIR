@@ -108,6 +108,7 @@ def write_doc_01(
     run_cfg = cfg["run"]
     tier_a = [i for i, t in zip(panel.countries, panel.tier) if t == "A"]
     tier_b = [i for i, t in zip(panel.countries, panel.tier) if t == "B"]
+    tier_c = [i for i, t in zip(panel.countries, panel.tier) if t == "C"]
 
     # -- everything that needs computing is computed first, then interpolated
     def by_series(key: str) -> str:
@@ -162,10 +163,23 @@ re-used here. This replication therefore rebuilds the closest panel that can
 be assembled from openly licensed primary data, and labels every series by
 provenance:
 
-| Tier | Countries | Equity / bond / bill returns | Inflation |
-| --- | --- | --- | --- |
-| **A** | {len(tier_a)} | empirical (JST / JKKST) | empirical |
-| **B** | {len(tier_b)} | calibrated proxy (factor model) | empirical where a source exists, otherwise factor model |
+| Tier | Countries | Equity | Bonds and bills | Inflation |
+| --- | --- | --- | --- | --- |
+| **A** | {len(tier_a)} | observed (JST / JKKST) | observed | observed |
+| **B** | {len(tier_b)} | simulated (factor model) | **observed**, rebuilt from published yields and short rates | observed |
+| **C** | {len(tier_c)} | simulated (factor model) | simulated (factor model) | observed where a source exists, otherwise factor model |
+
+The tiers are **derived from the per-cell observation masks, not asserted**:
+`src.data_loader.derive_tiers` labels a country A when every available cell of
+every return series is an observation, C when none is, and B in between. A
+label therefore cannot drift away from the data it describes.
+
+Tier B exists because four countries have real interest-rate histories in the
+sources but no equity return series. Simulating a series a source can supply
+would be indefensible, so those cells are rebuilt and recorded --
+{len(tier_b)} countries, and the count of recovered country-years is in
+`14_data_provenance_and_trust.md`. Their equity is still generated, which is
+why they are not Tier A.
 
 Read the headline results on the understanding that the Tier-A countries carry
 the empirical content. Section 5 of `04_replicated_results_and_tables.md`
@@ -183,12 +197,20 @@ Market in September 2018.
 
 * **Tier A ({len(tier_a)}):** {", ".join(tier_a)}
 * **Tier B ({len(tier_b)}):** {", ".join(tier_b)}
+* **Tier C ({len(tier_c)}):** {", ".join(tier_c)}
 
 Tier A is exactly the set of countries for which the
 Jorda-Knoll-Kuvshinov-Schularick-Taylor *Rate of Return on Everything* series
-carry complete equity, bond and bill total returns. Canada and Ireland appear
-in the macro half of the JST database but have no return series there, so they
-fall into Tier B while still using their **empirical** JST CPI.
+carry complete equity, bond and bill total returns.
+
+Tier B is the four countries whose interest rates survive in a primary source
+even though their return series do not. Canada and Ireland appear in the macro
+half of the JST database with a long-term bond yield, a short rate and a
+consumer price index but no return series; New Zealand and Austria carry a
+long-term yield in the Clio-Infra bond-yield file. A bond total return follows
+from a yield and a duration assumption, a bill return is a lagged short rate,
+and both are then deflated by that country's own price index -- so the result
+is an observation, not a draw. Section 4.3 gives the arithmetic.
 
 ## 3. Primary sources
 
@@ -1189,13 +1211,15 @@ draw and uniform country weighting. That the Tier-A-only (fully empirical,
 conclusion is not an artefact of the calibrated Tier-B extension.
 
 The tier split says something stronger. The all-equity advantage over the
-glide path is **larger** on the empirical Tier-A histories than on the
-calibrated Tier-B ones, and 60/40 does relatively *better* among Tier-B
-domestic markets. The synthetic countries are generated from a factor model
+glide path is **larger** on the observed Tier-A histories than on the
+simulated ones, and 60/40 does relatively *better* among domestic markets whose
+equity was generated. The synthetic countries are drawn from a factor model
 fitted to Tier-A, so their equity returns are less fat-tailed and less
 persistent than the real thing -- they dilute the result rather than create
-it. If the Tier-B extension were manufacturing the finding, this table would
-show the opposite pattern.
+it. If the extension were manufacturing the finding, this table would show the
+opposite pattern. (Tier B carries observed bonds and bills but simulated
+equity, so it sits with the simulated group on the mechanism that matters
+here.)
 
 ## 6. Comparison with the published paper
 
@@ -1219,8 +1243,9 @@ its economic mechanism**, which is what the paper's contribution actually is.
 
 ## 7. Limitations
 
-1. **The Tier-B extension is calibrated, not observed.** {runtime_notes.get('n_tier_b')} of the
-   {runtime_notes.get('n_countries')} countries have simulated equity, bond and bill returns. Section 5
+1. **The extension is largely calibrated, not observed.** {runtime_notes.get('n_tier_c')} of the
+   {runtime_notes.get('n_countries')} countries have simulated equity, bond *and* bill returns, and a further
+   {runtime_notes.get('n_partial')} have simulated equity with observed rates. Section 5
    shows the ranking survives dropping them entirely.
 2. **Annual, not monthly.** Blocks are drawn in years. This coarsens the
    persistence structure relative to ACO's 120-month blocks.
@@ -4447,6 +4472,7 @@ def write_doc_14(
     identity = frames["identity"].iloc[0]
     tail = frames["tail"]
     comparison = frames["panel_comparison"]
+    recovered = frames.get("recovered", pd.DataFrame())
     summary = notes["summary"]
     verdict = notes["tail_verdict"]
 
@@ -4487,7 +4513,7 @@ def write_doc_14(
          "mean_synthetic_share_of_intl_leg":
              "Mean simulated share of the international leg (%)"}),
         floatfmt="{:.1f}")
-    simulated = countries[countries["tier"] == "B"]
+    simulated = countries[countries["tier"].isin(["B", "C"])]
     simulated_tbl = md_table(_compact(
         _pct(simulated, ["inflation_empirical_share"]),
         ["country", "usable_years", "first_year", "returns_source", "donor",
@@ -4503,6 +4529,18 @@ def write_doc_14(
          "cec_jst16": "16 observed countries", "difference_pct": "Change (%)"}),
         floatfmt="{:.4f}")
 
+    recovered_tbl = md_table(_compact(
+        recovered, ["country", "series", "source", "first_year", "last_year",
+                    "observed_years"],
+        {"country": "Country", "series": "Series", "source": "Source",
+         "first_year": "From", "last_year": "To",
+         "observed_years": "Observed years"}),
+        floatfmt="{:.0f}") if len(recovered) else "_Nothing to recover._"
+    n_recovered = int(recovered["observed_years"].sum()) if len(recovered) \
+        else 0
+    recovered_countries = sorted(set(recovered["country"])) if len(recovered) \
+        else []
+
     adv38 = float(notes["advantage_dev38"])
     adv16 = float(notes["advantage_jst16"])
     stronger = adv16 > adv38
@@ -4517,12 +4555,12 @@ def write_doc_14(
     body = f"""
 ## 1. Why this document exists
 
-`docs/01` labels each country Tier A or Tier B and describes Tier B as
-"constructed". That is true and far too soft, and the softness was hiding
-something a reader needs to know before believing anything else in this
+`docs/01` originally labelled each country Tier A or Tier B and described
+Tier B as "constructed". That was true and far too soft, and the softness was
+hiding something a reader needs to know before believing anything else in this
 project.
 
-For a Tier-B country the equity, bond and bill series are not derived from
+For a simulated country the equity, bond and bill series are not derived from
 anything that country experienced. They are draws from a single-factor model
 fitted to a **randomly assigned Tier-A donor**, plus Gaussian noise carrying
 that donor's residual covariance. Only inflation is empirical, and only where
@@ -4533,6 +4571,12 @@ This document measures exactly how much of the panel that covers, audits the
 observed tier rather than taking it on trust, and — the part that decides
 whether any of it matters — re-runs the headline result on the observed
 countries alone.
+
+Everything below counts **cells**: one country, one year, one return series.
+That is the unit the bootstrap draws, and it is the only unit that can describe
+a country whose bonds are observed for 130 years while its equity is generated
+throughout. A country-level count would have to call such a country wholly real
+or wholly generated, and it is neither.
 
 ## 2. The sources, fingerprinted
 
@@ -4548,12 +4592,49 @@ not all of them carry returns.
 
 {coverage_tbl}
 
-**Two countries in the file have macro data but no asset returns at all.**
-Canada and Ireland carry consumer prices and exchange rates and nothing else,
-which is why they appear in the simulated tier despite being in the source
-file. That is a property of the published database — the "Rate of Return on
-Everything" return series cover sixteen countries, not the eighteen in the
-macro database — and not a defect in this pipeline.
+**Two countries in the file have macro data but no asset *return* series.**
+Canada and Ireland carry consumer prices, exchange rates, a long-term bond
+yield and a short-term rate, but no total-return series. That is a property of
+the published database — the "Rate of Return on Everything" return series cover
+sixteen countries, not the eighteen in the macro database — and not a defect in
+this pipeline.
+
+It does not follow that their returns have to be invented. A bond total return
+follows from a yield and a duration assumption, a bill return is a lagged short
+rate, and deflating both by that country's own consumer price index gives a
+real return that was *measured* rather than drawn.
+
+### 3.1 What was recovered rather than generated
+
+{recovered_tbl}
+
+**{n_recovered:,} country-years across {len(recovered_countries)} countries
+stopped being simulated**: {", ".join(recovered_countries)}. Canada and Ireland
+come from the macro file above; New Zealand and Austria from the Clio-Infra
+bond-yield file, which carries a long-term yield for forty-two countries but
+enough history for only those two.
+
+Three constraints were imposed on the recovery, and each one costs coverage:
+
+* **A real return needs a real deflator.** A genuine nominal yield divided by a
+  drawn price index is not an observation, so a country-year is marked observed
+  only where its inflation is itself empirical. That is what limits New Zealand
+  to {int(recovered[(recovered['iso'] == 'NZL')]['observed_years'].iloc[0]) if (recovered['iso'] == 'NZL').any() else 0} years rather than its full yield history.
+* **No equity was recovered**, because no source available here carries an
+  equity return for these countries. Their equity remains simulated, which is
+  why they are Tier B and not Tier A, and why section 7 below is unchanged by
+  any of this.
+* **The reconstruction is an approximation.** ``r_t = y_{{t-1}} + D · (y_{{t-1}} − y_t)``
+  ignores convexity and assumes a constant modified duration of
+  {float(cfg["data"].get("bond_duration_years", 7.0)):g} years, so the recovered
+  series are smoother than a true total-return index. They understate bond
+  volatility; they do not invent bond returns.
+
+No new *external* source could be added. Outbound access from the build
+environment is governed by an egress policy that denies the macrohistory host
+itself along with every other bulk macro-data provider tested, and guessing at
+redistributed mirrors would have reproduced exactly the unverifiable provenance
+this document exists to warn about.
 
 ## 4. Is the workbook genuine?
 
@@ -4614,18 +4695,27 @@ finding is recorded here rather than left for a reader to discover.
 
 {era_tbl}
 
-Of {int(summary['country_years']):,} usable country-years,
-**{int(summary['country_years_simulated']):,}
-({float(summary['share_country_years_simulated']):.1%}) are simulated**, spread
-across {int(summary['n_simulated_countries'])} of
-{int(summary['n_countries'])} countries. Because the bootstrap draws countries
-in proportion to their history length, the same share —
-**{float(summary['share_draws_simulated']):.1%}** — of simulated lifetimes are
-drawn from a country whose returns never happened.
+{int(summary['country_years']):,} usable country-years carry three return
+series each, so the panel holds {int(summary['return_cells']):,} return cells.
+**{int(summary['return_cells_simulated']):,} of them
+({float(summary['share_cells_simulated']):.1%}) are simulated.** Because the
+bootstrap draws countries in proportion to their history length, the same
+share — **{float(summary['share_draws_simulated']):.1%}** — of a simulated
+lifetime's return draws never happened.
+
+The country-level view is coarser and worse: {int(summary['n_simulated_countries'])} of
+{int(summary['n_countries'])} countries have no observed returns at all, a
+further {int(summary['n_partial_countries'])} have observed rates and simulated
+equity, and {int(summary['n_observed_countries'])} are observed throughout.
+Counting whole countries as simulated puts
+{float(summary['share_country_years_simulated']):.1%} of country-years on the
+generated side; counting cells, which is what the sampler actually draws, gives
+{float(summary['share_cells_simulated']):.1%}. The gap between those two numbers
+is the {n_recovered:,} recovered country-years of section 3.1.
 
 The simulated share is not constant. It rises from
 {float(era['share_simulated'].iloc[0]):.0%} before 1930 to
-{float(era['share_simulated'].iloc[-1]):.0%} after 2000, because the Tier-B
+{float(era['share_simulated'].iloc[-1]):.0%} after 2000, because the simulated
 countries enter at documented market-inception dates and the observed sixteen
 do not grow in number.
 
@@ -4675,8 +4765,21 @@ depends on. Simulated data dilute the finding; they do not manufacture it.
 * **The synthetic tier is now named as such.** "Constructed" understated it;
   the equity, bond and bill series for {int(summary['n_simulated_countries'])}
   of {int(summary['n_countries'])} countries are model output, and
-  {float(summary['share_draws_simulated']):.0%} of simulated lifetimes draw
-  from them.
+  {float(summary['share_draws_simulated']):.0%} of a simulated lifetime's
+  return draws come from a cell that was generated.
+* **Everything a source could supply has been taken from the source.** The
+  audit prompted a sweep of the primary files for series the pipeline was not
+  reading, which recovered {n_recovered:,} country-years across
+  {len(recovered_countries)} countries (section 3.1) and cut the simulated
+  share of return cells from
+  {float(summary['share_country_years_simulated']):.1%} to
+  {float(summary['share_cells_simulated']):.1%}. Provenance is now recorded
+  per cell rather than per country, and `docs/01`'s tiers are *derived* from
+  those masks, so a label cannot drift from the data it describes.
+* **The equity gap is the one that remains.** Nothing was recovered for
+  equity, which is the series the headline mechanism runs through — so
+  section 7's number is unchanged, and it is the honest bound on this
+  panel's evidence.
 * **The observed-only panel is the one to believe.** It is reported alongside
   the 38-country panel everywhere the headline appears, and it is the
   stronger of the two.

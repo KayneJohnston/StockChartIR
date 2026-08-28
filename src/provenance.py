@@ -99,6 +99,35 @@ def load_raw_workbook(cfg: Mapping[str, Any]) -> pd.DataFrame:
     return pd.read_excel(data["jst_workbook"], sheet_name=data["jst_sheet"])
 
 
+#: The three investable return series whose provenance this module measures.
+#: Inflation is empirical for nearly every country and would flatter any
+#: aggregate it entered; the international leg is measured separately because
+#: it is a cross-country average and so never wholly one thing or the other.
+RETURN_SERIES: Tuple[str, ...] = ("dom_eq", "bond", "bill")
+
+
+def observed_cells(panel: dl.Panel) -> Dict[str, np.ndarray]:
+    """``series -> (T, C)`` boolean, True where the cell is a real observation.
+
+    Counting cells rather than countries is what lets this module report the
+    recovered interest-rate histories honestly: Canada's bonds are observed
+    for 130 years while its equity is simulated throughout, and a country-level
+    label cannot express that.
+    """
+    return {key: panel.observed_mask(key) & panel.available
+            for key in RETURN_SERIES}
+
+
+def _cell_counts(panel: dl.Panel) -> Tuple[np.ndarray, np.ndarray]:
+    """``(observed, total)`` return-cells per country, summed over series."""
+    cells = observed_cells(panel)
+    observed = np.zeros(panel.n_countries, dtype=int)
+    for values in cells.values():
+        observed += values.sum(axis=0).astype(int)
+    total = panel.available.sum(axis=0).astype(int) * len(RETURN_SERIES)
+    return observed, total
+
+
 def country_provenance(panel: dl.Panel) -> pd.DataFrame:
     """One row per country: tier, coverage, and the source of each series.
 
@@ -108,31 +137,88 @@ def country_provenance(panel: dl.Panel) -> pd.DataFrame:
     """
     available = panel.available
     years = np.asarray(panel.years)
+    cells = observed_cells(panel)
     rows: List[Dict[str, Any]] = []
     for i, iso in enumerate(panel.countries):
         column = available[:, i]
         n = int(column.sum())
         note = panel.provenance[i] if i < len(panel.provenance) else ""
-        synthetic = panel.tier[i] == "B"
+        tier = panel.tier[i]
         donor = ""
         if "donor" in note:
             donor = note.split("donor")[1].split(";")[0].strip()
-        inflation_share = _inflation_share(note)
+        seen = {key: int(values[:, i].sum()) for key, values in cells.items()}
+        observed_years = sum(seen.values())
+        total_years = n * len(RETURN_SERIES)
         rows.append({
             "iso": iso,
             "country": dl.ISO_TO_NAME.get(iso, iso),
-            "tier": panel.tier[i],
+            "tier": tier,
+            "tier_label": dl.TIER_LABELS.get(tier, tier),
             "usable_years": n,
             "first_year": int(years[column].min()) if n else 0,
             "last_year": int(years[column].max()) if n else 0,
-            "returns_source": "factor model" if synthetic else "JST/JKKST",
-            "returns_empirical_years": 0 if synthetic else n,
-            "returns_simulated_years": n if synthetic else 0,
-            "inflation_empirical_share": inflation_share,
+            "returns_source": _returns_source(tier, seen),
+            "returns_empirical_years": observed_years,
+            "returns_simulated_years": total_years - observed_years,
+            "share_returns_observed": (observed_years / total_years)
+            if total_years else 0.0,
+            "dom_eq_observed_years": seen["dom_eq"],
+            "bond_observed_years": seen["bond"],
+            "bill_observed_years": seen["bill"],
+            "inflation_empirical_share": _inflation_share(note),
             "donor": donor,
             "note": note,
         })
     return pd.DataFrame.from_records(rows)
+
+
+def recovered_series(panel: dl.Panel) -> pd.DataFrame:
+    """What was rebuilt from published rates rather than generated.
+
+    One row per recovered country-series: the source, the span, and how many
+    country-years stopped being simulated because of it. Empty when nothing was
+    recovered, which is the correct output for a wholly empirical panel.
+    """
+    years = np.asarray(panel.years)
+    cells = observed_cells(panel)
+    rows: List[Dict[str, Any]] = []
+    for i, iso in enumerate(panel.countries):
+        if panel.tier[i] != "B":
+            continue
+        note = panel.provenance[i] if i < len(panel.provenance) else ""
+        source = ("Jordà–Schularick–Taylor yields and short rates"
+                  if "JST rates" in note else "Clio-Infra bond yields")
+        for key, values in cells.items():
+            column = values[:, i]
+            n = int(column.sum())
+            if not n:
+                continue
+            rows.append({
+                "iso": iso,
+                "country": dl.ISO_TO_NAME.get(iso, iso),
+                "series": key,
+                "source": source,
+                "first_year": int(years[column].min()),
+                "last_year": int(years[column].max()),
+                "observed_years": n,
+            })
+    if not rows:
+        return pd.DataFrame(columns=["iso", "country", "series", "source",
+                                     "first_year", "last_year",
+                                     "observed_years"])
+    return pd.DataFrame.from_records(rows).sort_values(["iso", "series"]) \
+        .reset_index(drop=True)
+
+
+def _returns_source(tier: str, seen: Mapping[str, int]) -> str:
+    """Name the source of a country's return history in a few words."""
+    if tier == "A":
+        return "JST/JKKST"
+    recovered = ", ".join(k for k in RETURN_SERIES if seen.get(k))
+    if not recovered:
+        return "factor model"
+    return f"factor model; {recovered} recovered from published rates"
 
 
 def _inflation_share(note: str) -> float:
@@ -146,43 +232,64 @@ def _inflation_share(note: str) -> float:
 
 
 def panel_summary(panel: dl.Panel) -> Dict[str, Any]:
-    """Headline shares: how much of the panel, and of the sampler, is simulated."""
+    """Headline shares: how much of the panel, and of the sampler, is simulated.
+
+    Everything here counts *cells* -- one country, one year, one return series
+    -- because that is the unit the bootstrap actually draws. A country-level
+    count would have to call Canada either wholly real or wholly generated,
+    and it is neither.
+    """
     tier = np.asarray(panel.tier)
     available = panel.available
-    synthetic = tier == "B"
-    total = int(available.sum())
-    simulated = int(available[:, synthetic].sum())
+    observed, total_by_country = _cell_counts(panel)
+    total = int(total_by_country.sum())
+    simulated = total - int(observed.sum())
     history = available.sum(axis=0).astype(float)
     weight = history / history.sum()
+    #: A draw lands on a country-year, so weight each country's simulated share
+    #: of its own cells by how often the sampler reaches it.
+    per_country = np.divide(observed, total_by_country,
+                            out=np.zeros(len(observed), dtype=float),
+                            where=total_by_country > 0)
     return {
         "n_countries": len(panel.countries),
-        "n_empirical_countries": int((~synthetic).sum()),
-        "n_simulated_countries": int(synthetic.sum()),
-        "country_years": total,
-        "country_years_empirical": total - simulated,
-        "country_years_simulated": simulated,
-        "share_country_years_simulated": simulated / total if total else 0.0,
-        "share_draws_simulated": float(weight[synthetic].sum()),
+        "n_observed_countries": int((tier == "A").sum()),
+        "n_partial_countries": int((tier == "B").sum()),
+        "n_simulated_countries": int((tier == "C").sum()),
+        # Retained under their old names: every consumer reads these, and a
+        # country with any simulated return still contaminates a lifetime.
+        "n_empirical_countries": int((tier == "A").sum()),
+        "country_years": int(available.sum()),
+        "return_cells": total,
+        "return_cells_empirical": int(observed.sum()),
+        "return_cells_simulated": simulated,
+        "country_years_empirical": int(available[:, tier == "A"].sum()),
+        "country_years_simulated": int(available[:, tier != "A"].sum()),
+        "share_country_years_simulated": float(
+            available[:, tier != "A"].sum() / available.sum())
+        if available.sum() else 0.0,
+        "share_cells_simulated": simulated / total if total else 0.0,
+        "share_draws_simulated": float((weight * (1.0 - per_country)).sum()),
     }
 
 
 def simulated_share_by_era(panel: dl.Panel, edges: Sequence[int] =
                            (1890, 1930, 1970, 2000, 2021)) -> pd.DataFrame:
     """How the simulated share of the cross-section moves through time."""
-    tier = np.asarray(panel.tier)
-    synthetic = tier == "B"
     years = np.asarray(panel.years)
+    cells = observed_cells(panel)
     rows = []
     for lo, hi in zip(edges[:-1], edges[1:]):
         mask = (years >= lo) & (years < hi)
         block = panel.available[mask]
-        total = int(block.sum())
+        total = int(block.sum()) * len(RETURN_SERIES)
+        seen = sum(int(values[mask].sum()) for values in cells.values())
         rows.append({
             "era": f"{lo}-{hi - 1}",
-            "country_years": total,
-            "simulated": int(block[:, synthetic].sum()),
-            "share_simulated": float(block[:, synthetic].sum() / total)
-            if total else 0.0,
+            "country_years": int(block.sum()),
+            "return_cells": total,
+            "simulated": total - seen,
+            "share_simulated": float((total - seen) / total) if total else 0.0,
             "mean_countries_available": float(block.sum(axis=1).mean())
             if len(block) else 0.0,
         })
@@ -201,8 +308,11 @@ def international_leg_contamination(panel: dl.Panel,
     partly diversification into countries that do not exist.
     """
     tier = np.asarray(panel.tier)
-    synthetic = tier == "B"
-    empirical = ~synthetic
+    empirical = tier == "A"
+    #: The leg is an average of *equity* returns, so a country contaminates it
+    #: exactly when its own equity for that year was generated -- which stays
+    #: true of the four countries whose interest rates were recovered.
+    equity_seen = panel.observed_mask("dom_eq")
     years = np.asarray(panel.years)
     rows = []
     for lo, hi in zip((edges[0],) + tuple(edges[:-1]),
@@ -211,11 +321,13 @@ def international_leg_contamination(panel: dl.Panel,
         shares: List[float] = []
         for t in np.flatnonzero(mask):
             column = panel.available[t]
+            synthetic = column & ~equity_seen[t]
             for i in np.flatnonzero(column & empirical):
                 others = column.copy()
                 others[i] = False
                 if others.sum():
-                    shares.append(float(synthetic[others].sum() / others.sum()))
+                    shares.append(float((synthetic & others).sum()
+                                        / others.sum()))
         rows.append({
             "era": "whole panel" if (lo, hi) == (edges[0], edges[-1])
             else f"{lo}-{hi - 1}",

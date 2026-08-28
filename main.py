@@ -358,7 +358,7 @@ def tier_breakdown(results: Mapping[str, lc.LifecycleOutcome],
 
     rows: List[Dict[str, Any]] = []
     gamma = float(cfg["utility"]["baseline_risk_aversion"])
-    for tier in ("A", "B"):
+    for tier in ("A", "B", "C"):
         mask = path_tier == tier
         if mask.sum() < 100:
             continue
@@ -538,7 +538,9 @@ def step4_report(cfg: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
     runtime_notes = {
         "n_countries": panel.n_countries,
         "n_years": panel.n_years,
-        "n_tier_b": sum(1 for t in panel.tier if t == "B"),
+        "n_tier_b": sum(1 for t in panel.tier if t != "A"),
+        "n_tier_c": sum(1 for t in panel.tier if t == "C"),
+        "n_partial": sum(1 for t in panel.tier if t == "B"),
         "fingerprint": panel.fingerprint(),
     }
 
@@ -1815,6 +1817,7 @@ def step14_provenance(cfg: Dict[str, Any],
     countries = pvn.country_provenance(panel)
     era = pvn.simulated_share_by_era(panel)
     contamination = pvn.international_leg_contamination(panel)
+    recovered = pvn.recovered_series(panel)
     anchors = pvn.anchor_check(raw)
     identity = pvn.identity_check(raw)
     tail = pvn.tail_variance_test(
@@ -1861,6 +1864,7 @@ def step14_provenance(cfg: Dict[str, Any],
                         (countries, "provenance_by_country"),
                         (era, "provenance_by_era"),
                         (contamination, "provenance_intl_contamination"),
+                        (recovered, "provenance_recovered_series"),
                         (anchors, "provenance_anchor_checks"),
                         (identity, "provenance_identity_check"),
                         (tail, "provenance_tail_variance"),
@@ -1875,6 +1879,7 @@ def step14_provenance(cfg: Dict[str, Any],
         Path("docs") / "14_data_provenance.md", cfg,
         {"digests": digests, "coverage": coverage, "countries": countries,
          "era": era, "contamination": contamination, "anchors": anchors,
+         "recovered": recovered,
          "identity": identity, "tail": tail, "panel_comparison": comparison},
         figures,
         {"elapsed_seconds": elapsed, "summary": summary,

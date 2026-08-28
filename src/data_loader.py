@@ -37,6 +37,8 @@ import numpy as np
 import pandas as pd
 import yaml
 
+from . import observed as obs
+
 LOGGER = logging.getLogger(__name__)
 
 #: Core series carried by the panel, in canonical order.
@@ -111,6 +113,19 @@ def load_config(path: str | Path = "config.yaml") -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Panel container
 # ---------------------------------------------------------------------------
+#: Provenance tiers, derived from the per-cell observation masks rather than
+#: asserted, so a label can never drift from the data it describes.
+TIER_LABELS: Mapping[str, str] = {
+    "A": "observed returns",
+    "B": "partly observed returns",
+    "C": "simulated returns",
+}
+
+#: The three investable return series a tier describes. Inflation is excluded:
+#: it is empirical for almost every country and would flatter the label.
+TIERED_SERIES: Tuple[str, ...] = ("dom_eq", "bond", "bill")
+
+
 @dataclasses.dataclass(frozen=True)
 class Panel:
     """Calendar-aligned real return panel.
@@ -132,6 +147,10 @@ class Panel:
     available: np.ndarray
     name: str = "panel"
     provenance: Tuple[str, ...] = ()
+    #: ``series -> (T, C)`` boolean, True where the cell was *observed* rather
+    #: than generated. Empty for a panel that is empirical throughout, in
+    #: which case every available cell is observed by construction.
+    observed: Mapping[str, np.ndarray] = dataclasses.field(default_factory=dict)
 
     # -- basic geometry -----------------------------------------------------
     @property
@@ -158,6 +177,27 @@ class Panel:
     def tier_mask(self, tier: str) -> np.ndarray:
         return np.array([t == tier for t in self.tier], dtype=bool)
 
+    def observed_mask(self, key: str) -> np.ndarray:
+        """``(T, C)`` True where ``key`` was observed rather than generated.
+
+        A panel carrying no explicit mask falls back to its country labels,
+        which are the coarser statement of the same thing: a Tier-A country's
+        returns are observed and no other country's are. That default is what
+        makes the empirical-only panel audit correctly without special-casing,
+        and it keeps the mask from ever contradicting the tier beside it.
+
+        Inflation is exempt from the fallback because it is empirical for
+        nearly every country regardless of tier; where it is not, the panel
+        that generated it records the fact per cell.
+        """
+        if key not in CORE_SERIES:
+            raise KeyError(f"unknown series {key!r}; expected one of {CORE_SERIES}")
+        if self.observed:
+            return np.asarray(self.observed[key], dtype=bool) & self.available
+        if key not in TIERED_SERIES:
+            return self.available.copy()
+        return self.available & self.tier_mask("A")[np.newaxis, :]
+
     def subset(self, isos: Sequence[str], name: str | None = None) -> "Panel":
         """Return a new panel restricted to ``isos`` (international legs are
         *not* recomputed; use :func:`build_panel` for that)."""
@@ -176,6 +216,7 @@ class Panel:
             name=name or self.name,
             provenance=tuple(self.provenance[i] for i in idx)
             if self.provenance else (),
+            observed={k: v[:, idx] for k, v in self.observed.items()},
         )
 
     # -- persistence --------------------------------------------------------
@@ -752,6 +793,7 @@ def build_tier_b(
     factors = world_factors(tier_a)
     fits = fit_factor_model(tier_a)
     clio = load_clio_wide(data_cfg["clio_inflation"])
+    clio_yields = load_clio_wide(data_cfg["clio_bond_yield"])
 
     isos = list(TIER_B_SPEC)
     notes: List[str] = []
@@ -760,6 +802,11 @@ def build_tier_b(
     bond = np.full((n_t, n_b), np.nan)
     bill = np.full((n_t, n_b), np.nan)
     inflation = np.full((n_t, n_b), np.nan)
+    #: True where that country-year's inflation came from a published price
+    #: index rather than from the factor model. It gates the observed flag on
+    #: every *real* return built here: a genuine nominal yield deflated by a
+    #: drawn CPI is not an observation.
+    empirical_inflation = np.zeros((n_t, n_b), dtype=bool)
 
     world_infl = factors["inflation"]
     keys = list(CORE_SERIES)
@@ -783,6 +830,7 @@ def build_tier_b(
                     + rng.normal(0.0, sd, size=n_t))
             infl = np.where(infl_missing, draw, infl)
         inflation[:, b] = np.where(active, infl, np.nan)
+        empirical_inflation[:, b] = active & ~infl_missing & np.isfinite(infl)
         n_active = int(active.sum())
         n_empirical = int((active & ~infl_missing).sum()) if n_active else 0
         share = n_empirical / n_active if n_active else 0.0
@@ -814,6 +862,42 @@ def build_tier_b(
             target[:, b] = np.where(active & np.isfinite(factors[key]),
                                     fitted, np.nan)
 
+    # ---- replace simulated series with observed ones where they exist -----
+    # Four of these countries do have real interest-rate histories, in the
+    # macro file (Canada, Ireland) or in Clio-Infra (New Zealand, Austria).
+    # A bond return follows from a long yield and a duration; a bill return is
+    # a short rate. Simulating a series the sources can supply would be
+    # indefensible, so those cells are overwritten and recorded.
+    duration = float(data_cfg.get("bond_duration_years", 7.0))
+    observed_mask = {key: np.zeros((n_t, n_b), dtype=bool)
+                     for key in ("dom_eq", "bond", "bill", "inflation")}
+    for b, iso in enumerate(isos):
+        recovered: Dict[str, np.ndarray] = {}
+        if iso in obs.JST_RATE_ONLY:
+            recovered = obs.rates_from_jst(jst, iso, years, duration)
+        else:
+            column = next((c for c, code in obs.CLIO_BOND_COUNTRIES.items()
+                           if code == iso), None)
+            if column is not None:
+                recovered = {"bond": obs.bond_from_clio(
+                    clio_yields, column, years, inflation[:, b], duration)}
+        # A real return is observed only if *both* its nominal series and its
+        # deflator are. Years whose CPI came from the factor model keep the
+        # simulated return rather than a half-observed one.
+        active = empirical_inflation[:, b]
+        for key, values in recovered.items():
+            target = {"dom_eq": dom_eq, "bond": bond, "bill": bill}[key]
+            usable = np.isfinite(values) & active
+            if not usable.any():
+                continue
+            target[usable, b] = values[usable]
+            observed_mask[key][usable, b] = True
+            source = ("JST rates" if iso in obs.JST_RATE_ONLY
+                      else "Clio-Infra yields")
+            notes[b] += (f"; {key} OBSERVED from {source} "
+                         f"({int(usable.sum())} years)")
+    observed_mask["inflation"] = empirical_inflation.copy()
+
     # Nominal CPI level and USD exchange rate are needed to fold Tier-B
     # countries into the international equity leg.  CPI is cumulated from
     # the inflation series; the USD rate is cumulated from a PPP-consistent
@@ -836,12 +920,37 @@ def build_tier_b(
             cpi[t, b] = level
             xrusd[t, b] = fx
     return (np.array(isos, dtype=object), dom_eq, bond, bill,
-            inflation, cpi, xrusd, tuple(notes))
+            inflation, cpi, xrusd, tuple(notes), observed_mask)
 
 
 # ---------------------------------------------------------------------------
 # Panel assembly
 # ---------------------------------------------------------------------------
+def derive_tiers(observed: Mapping[str, np.ndarray], available: np.ndarray,
+                 base: Sequence[str]) -> List[str]:
+    """Relabel each country by how much of its return history is observed.
+
+    ``A`` every available cell of every return series is an observation;
+    ``C`` none of them is; ``B`` in between -- a country whose interest rates
+    survive in a source but whose equity market has to be generated.
+
+    ``base`` supplies the label for a country the masks say nothing about, so
+    a panel built without them keeps whatever it was already called.
+    """
+    labels: List[str] = []
+    for i, fallback in enumerate(base):
+        column = available[:, i]
+        total = int(column.sum())
+        if total == 0 or not observed:
+            labels.append(str(fallback))
+            continue
+        seen = sum(int((np.asarray(observed[k], dtype=bool)[:, i] & column).sum())
+                   for k in TIERED_SERIES if k in observed)
+        span = total * sum(1 for k in TIERED_SERIES if k in observed)
+        labels.append("A" if seen == span else "C" if seen == 0 else "B")
+    return labels
+
+
 def _fx_gain_from_levels(xrusd: np.ndarray) -> np.ndarray:
     gain = np.full_like(xrusd, np.nan)
     gain[1:] = xrusd[:-1] / xrusd[1:]
@@ -877,7 +986,7 @@ def build_panel(cfg: Mapping[str, Any], mode: str | None = None,
 
     jst = add_real_returns(load_jst(cfg))
     (b_iso, b_eq, b_bond, b_bill, b_infl, b_cpi, b_fx,
-     b_notes) = build_tier_b(tier_a, cfg, jst)
+     b_notes, b_observed) = build_tier_b(tier_a, cfg, jst)
 
     years = tier_a.years
     isos = list(tier_a.countries) + [str(i) for i in b_iso]
@@ -927,6 +1036,22 @@ def build_panel(cfg: Mapping[str, Any], mode: str | None = None,
         np.isfinite(dom_eq) & np.isfinite(intl_eq) & np.isfinite(bond)
         & np.isfinite(bill) & np.isfinite(inflation)
     )
+    # Tier-A cells are observed by construction; the simulated block carries
+    # its own per-cell mask, with the international leg counted as observed
+    # only where it is an average over observed markets -- which, being a
+    # cross-country average, it never wholly is. It is therefore recorded
+    # separately by `src.provenance` rather than forced into a binary here.
+    n_a = tier_a.n_countries
+    observed = {}
+    for key in ("dom_eq", "bond", "bill", "inflation"):
+        block = np.zeros((years.size, len(isos)), dtype=bool)
+        block[:, :n_a] = True
+        block[:, n_a:] = b_observed[key]
+        observed[key] = block
+    observed["intl_eq"] = np.zeros((years.size, len(isos)), dtype=bool)
+
+    tiers = derive_tiers(observed, available, tiers)
+
     keep = available.sum(axis=0) >= int(cfg["data"]["min_observations"])
     idx = np.flatnonzero(keep)
     if idx.size != len(isos):
@@ -949,6 +1074,7 @@ def build_panel(cfg: Mapping[str, Any], mode: str | None = None,
         available=available[:, idx],
         name="dev38",
         provenance=tuple(notes[i] for i in idx),
+        observed={k: v[:, idx] for k, v in observed.items()},
     )
 
 
