@@ -152,17 +152,19 @@ def front_matter(ctx: Any) -> List[Flowable]:
         f"({income_net:.1f}%). Finally, the decade around the retirement date "
         f"explains {pc(float(lottery['r2_retirement_window']), 0)} of the "
         f"variation in retirement outcomes, a lottery no allocation rule can "
-        f"diversify away. Every table, figure and quoted number in this paper "
+        f"diversify away. "
         f"A provenance audit of the panel itself finds that "
         f"{pr['share_cells_simulated']:.0%} of its return cells — and "
         f"{pr['intl_simulated']:.0%} of an observed investor's international "
         f"leg — are model-simulated rather than observed; re-running on the "
-        f"sixteen fully observed countries alone <i>strengthens</i> the "
-        f"headline from {adv['dev38']:.1f}% to {adv['jst16']:.1f}%, so the "
-        f"simulated data dilute the finding rather than create it. "
+        f"{pr['n_observed']} fully observed countries alone "
+        f"<i>{'strengthens' if adv['jst16'] > adv['dev38'] else 'weakens'}</i> "
+        f"the headline from {adv['dev38']:.1f}% to {adv['jst16']:.1f}%, so the "
+        f"simulated data "
+        f"{'dilute the finding rather than create it' if adv['jst16'] > adv['dev38'] else 'flatter the finding and are reported as such'}. "
         f"Every table, figure and quoted number in this paper "
         f"is regenerated from a single command; the pipeline, its "
-        f"{facts.n_tests} unit tests and its full diagnostic record are "
+        f"{f.n_tests} unit tests and its full diagnostic record are "
         f"public."
     )
     out.append(Paragraph(abstract, s["abstract"]))
@@ -797,10 +799,11 @@ def section_data(ctx: Any) -> List[Flowable]:
             f"against <b>{pc(hs['equity_mean'], 1)}</b> for the same "
             f"countries' equity — indistinguishable — at a published standard "
             f"deviation of {pc(hs['sd'], 1)} versus "
-            f"{pc(hs['equity_sd'], 1)}. Equity-like returns at two-fifths the "
-            f"volatility would dominate every portfolio in this paper, which "
-            f"is precisely why the series deserves scrutiny rather than "
-            f"adoption."))
+            f"{pc(hs['equity_sd'], 1)} — a ratio of "
+            f"{f2(hs['sd'] / hs['equity_sd'], 2)}. Equity-like returns at that "
+            f"volatility would look dominant in any mean-variance comparison "
+            f"in this paper, which is precisely why the series deserves "
+            f"scrutiny rather than adoption."))
         out.append(ctx.p(
             f"A house price index is built from appraisals and sparse "
             f"transactions, and that smooths it. The median lag-one "
@@ -1271,7 +1274,7 @@ def section_methods(ctx: Any) -> List[Flowable]:
         f"tens of thousands of policy evaluations the optimisers require — "
         f"tractable on a single core."))
     out.append(ctx.p(
-        f"Correctness is enforced by {facts.n_tests} unit tests. The "
+        f"Correctness is enforced by {f.n_tests} unit tests. The "
         f"load-bearing ones "
         f"are equivalence tests: the path-dependent engine used for flexible "
         f"retirement and conditional saving must reproduce the fixed-date "
@@ -4262,7 +4265,7 @@ def appendix_software(ctx: Any) -> List[Flowable]:
 
     out.append(ctx.h2("D.3 Verification"))
     out.append(ctx.p(
-        f"The suite contains {facts.n_tests} tests. The ones that carry the "
+        f"The suite contains {ctx_f.n_tests} tests. The ones that carry the "
         f"most weight "
         f"are equivalence tests between simulators, because every extension in "
         f"this paper is built on an engine that must agree with the one that "

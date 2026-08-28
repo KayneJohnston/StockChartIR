@@ -4576,6 +4576,15 @@ def write_doc_14(
         floatfmt="{:.0f}") if len(recovered) else "_Nothing to recover._"
     n_recovered = int(recovered["observed_years"].sum()) if len(recovered) \
         else 0
+    # Named from the data: which recovered series stop before the panel does,
+    # and when. Asserting a country here would go stale the moment the set of
+    # recovered countries changes.
+    early = recovered[recovered["last_year"] < int(cfg["data"]["end_year"])] \
+        if len(recovered) else recovered
+    clio_end_note = ("; ".join(
+        f"{row.country} {row.series} ends {int(row.last_year)}"
+        for row in early.itertuples()) if len(early)
+        else "no recovered series stops early")
     recovered_countries = sorted(set(recovered["country"])) if len(recovered) \
         else []
 
@@ -4587,6 +4596,55 @@ def write_doc_14(
          "sd": "s.d. (as published)", "autocorrelation": "Autocorrelation",
          "sd_desmoothed": "s.d. de-smoothed", "equity_sd": "Equity s.d."}),
         floatfmt="{:.3f}") if len(housing) else "_Not audited._"
+
+    # Built ahead of the prose so the whole subsection can be omitted rather
+    # than rendered as a row of zeros when the audit has nothing to report.
+    housing_section = ""
+    if len(housing) and house.get("countries"):
+        housing_section = f"""### 3.2 The asset class nobody here invests in
+
+The macro file carries a fourth asset the "Rate of Return on Everything"
+project measured and nothing in this pipeline reads: **housing total returns**,
+empirical for all {int(house.get('countries', 0))} observed countries over
+{int(house.get('country_years', 0)):,} country-years
+({int(house.get('first_year', 0))}-{int(house.get('last_year', 0))}). That is
+the largest block of genuine data in the sources that no result in this project
+uses, so it is audited here rather than left unmentioned.
+
+{housing_tbl}
+
+The headline comparison is the one the source project is known for. Median real
+housing returns are **{float(house.get('mean', float('nan'))):.1%}** against
+**{float(house.get('equity_mean', float('nan'))):.1%}** for the same countries'
+equity -- indistinguishable -- at a published standard deviation of
+{float(house.get('sd', float('nan'))):.1%} versus
+{float(house.get('equity_sd', float('nan'))):.1%} -- a ratio of
+{float(house.get('sd', float('nan'))) / float(house.get('equity_sd', float('nan'))):.2f}.
+Equity-like returns at that volatility would look dominant in any
+mean-variance comparison in this project, which is exactly why the series
+earns scrutiny rather than adoption.
+
+**It is not added to the investable set, and the table says why.** A house price
+index is built from appraisals and sparse transactions, which smooths it: the
+median lag-one autocorrelation of housing returns is
+{float(house.get('autocorrelation', float('nan'))):+.2f} against
+{float(house.get('equity_autocorrelation', float('nan'))):+.2f} for equity, and
+housing is the more autocorrelated series in
+{int(house.get('n_more_autocorrelated', 0))} of
+{int(house.get('countries', 0))} countries. Undoing that smoothing to first
+order -- ``r*_t = (r_t − a·r_{{t-1}}) / (1 − a)`` with each country's own
+``a`` -- raises the median standard deviation from
+{float(house.get('sd', float('nan'))):.1%} to
+{float(house.get('sd_desmoothed', float('nan'))):.1%}. Most of the apparent
+free lunch is a measurement artefact.
+
+Even de-smoothed the series is not investable as written: it is an unlevered,
+untaxed, frictionless total return on the national housing stock, with no
+transaction costs, no vacancy, no maintenance and no concentration in a single
+property. Treating it as a fourth sleeve would overstate what a household can
+actually buy, and it would change the headline result. So it is measured,
+recorded, and left out — deliberately, and on the record.
+"""
 
     adv38 = float(notes["advantage_dev38"])
     adv16 = float(notes["advantage_jst16"])
@@ -4665,8 +4723,10 @@ Three constraints were imposed on the recovery, and each one costs coverage:
 
 * **A real return needs a real deflator.** A genuine nominal yield divided by a
   drawn price index is not an observation, so a country-year is marked observed
-  only where its inflation is itself empirical. That is what limits New Zealand
-  to {int(recovered[(recovered['iso'] == 'NZL')]['observed_years'].iloc[0]) if (recovered['iso'] == 'NZL').any() else 0} years rather than its full yield history.
+  only where that country's own inflation is empirical too. The Clio-Infra
+  price indices end before the panel does, and the years past their end are
+  dropped here rather than deflated by a factor-model estimate --
+  {clio_end_note}.
 * **No equity was recovered**, because no source available here carries an
   equity return for these countries. Their equity remains simulated, which is
   why they are Tier B and not Tier A, and why section 7 below is unchanged by
@@ -4683,47 +4743,7 @@ itself along with every other bulk macro-data provider tested, and guessing at
 redistributed mirrors would have reproduced exactly the unverifiable provenance
 this document exists to warn about.
 
-### 3.2 The asset class nobody here invests in
-
-The macro file carries a fourth asset the "Rate of Return on Everything"
-project measured and nothing in this pipeline reads: **housing total returns**,
-empirical for all {int(house.get('countries', 0))} observed countries over
-{int(house.get('country_years', 0)):,} country-years
-({int(house.get('first_year', 0))}-{int(house.get('last_year', 0))}). That is
-the largest block of genuine data in the sources that no result in this project
-uses, so it is audited here rather than left unmentioned.
-
-{housing_tbl}
-
-The headline comparison is the one the source project is known for. Median real
-housing returns are **{float(house.get('mean', float('nan'))):.1%}** against
-**{float(house.get('equity_mean', float('nan'))):.1%}** for the same countries'
-equity -- indistinguishable -- at a published standard deviation of
-{float(house.get('sd', float('nan'))):.1%} versus
-{float(house.get('equity_sd', float('nan'))):.1%}. Equity-like returns at
-two-fifths the volatility would dominate every portfolio in this project.
-
-**It is not added to the investable set, and the table says why.** A house price
-index is built from appraisals and sparse transactions, which smooths it: the
-median lag-one autocorrelation of housing returns is
-{float(house.get('autocorrelation', float('nan'))):+.2f} against
-{float(house.get('equity_autocorrelation', float('nan'))):+.2f} for equity, and
-housing is the more autocorrelated series in
-{int(house.get('n_more_autocorrelated', 0))} of
-{int(house.get('countries', 0))} countries. Undoing that smoothing to first
-order -- ``r*_t = (r_t − a·r_{{t-1}}) / (1 − a)`` with each country's own
-``a`` -- raises the median standard deviation from
-{float(house.get('sd', float('nan'))):.1%} to
-{float(house.get('sd_desmoothed', float('nan'))):.1%}. Most of the apparent
-free lunch is a measurement artefact.
-
-Even de-smoothed the series is not investable as written: it is an unlevered,
-untaxed, frictionless total return on the national housing stock, with no
-transaction costs, no vacancy, no maintenance and no concentration in a single
-property. Treating it as a fourth sleeve would overstate what a household can
-actually buy, and it would change the headline result. So it is measured,
-recorded, and left out — deliberately, and on the record.
-
+{housing_section}
 ## 4. Is the workbook genuine?
 
 The file was obtained from a redistributed copy rather than downloaded from
