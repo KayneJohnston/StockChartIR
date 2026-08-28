@@ -44,6 +44,12 @@ data:
   # the raw series; docs/01 lists every affected observation.
   international_winsor_pct: 0.1
 
+  # Share of the international equity sleeve held currency-hedged, and the
+  # annual cost of holding it that way.  Both default to 0 so the headline
+  # results are the unhedged case; docs/08 sweeps them.
+  hedge_ratio: 0.0
+  hedge_cost: 0.0
+
   # Modified-duration proxy used to translate a Tier-B bond *yield* into a
   # bond *total return* (see docs/01, section 4.3).
   bond_duration_years: 7.0
@@ -217,3 +223,139 @@ report:
   robustness_panels: [jst16]
   robustness_country_draw: [per_block]
   robustness_country_weighting: [uniform]
+
+# ---------------------------------------------------------------------------
+# Step 5 - sensitivity analysis
+# ---------------------------------------------------------------------------
+sensitivity:
+  enabled: true
+  # Fewer paths than the headline run: every sweep point reuses the same
+  # draws (common random numbers), so cross-setting differences are the
+  # parameter's effect rather than Monte Carlo noise, and precision on the
+  # *difference* is far higher than the path count alone suggests.
+  n_paths: 50000
+  # Paths are drawn once at the longest horizon any sweep needs.
+  max_horizon_years: 78      # age_start 25 -> age_death 103
+  max_working_years: 48      # age_start 25 -> age_retire 73
+  # Coarser path count for sweeps that must redraw the bootstrap.
+  redraw_n_paths: 25000
+  # Target ruin probability used to define the "safe" withdrawal rate.
+  safe_withdrawal_target_ruin: 0.05
+
+  grids:
+    domestic_share: [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+    equity_share: [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+    risk_aversion: [1.0, 1.5, 2.0, 3.0, 4.0, 5.0, 6.0, 8.0, 10.0, 12.0, 15.0, 20.0]
+    ies: [0.2, 0.3, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 2.5]
+    bequest_weight: [0.0, 0.5, 1.0, 2.0, 5.0, 10.0]
+    age_death: [83, 88, 93, 98, 103]
+    age_retire: [58, 60, 63, 65, 67, 70]
+    savings_rate: [0.05, 0.075, 0.10, 0.15, 0.20]
+    withdrawal_rate: [0.010, 0.015, 0.020, 0.025, 0.030, 0.035, 0.040,
+                      0.045, 0.050, 0.055, 0.060, 0.070, 0.080]
+    mean_block_years: [1.0, 3.0, 5.0, 10.0, 15.0, 20.0]
+
+# ---------------------------------------------------------------------------
+# Step 6 - retirement spending rules
+# ---------------------------------------------------------------------------
+spending:
+  enabled: true
+  # The portfolio the rules are compared on.  The rule choice and the
+  # allocation choice are close to separable, which section 5 of docs/06
+  # checks directly.
+  strategy: balanced_all_equity
+  # Rate grid for the rules that have a rate to set.  Horizon-based rules
+  # (life expectancy, Gompertz, amortisation) derive their level from the
+  # planning horizon and are evaluated once each.
+  rate_grid: [0.020, 0.025, 0.030, 0.035, 0.040, 0.045, 0.050,
+              0.055, 0.060, 0.065, 0.070, 0.080, 0.090, 0.100]
+  # How many of the best rules to cross with every asset allocation.
+  n_rules_by_strategy: 5
+
+  rules:
+    - key: constant_real
+    - key: constant_percent
+    - key: guyton_klinger
+    - key: guyton_klinger
+      params: {guardrail: 0.10, adjustment: 0.10}
+      suffix: tight band
+    - key: guyton_klinger
+      params: {apply_inflation_rule: false}
+      suffix: no inflation rule
+    - key: vanguard_dynamic
+    - key: vanguard_dynamic
+      params: {ceiling: 0.025, floor: -0.05}
+      suffix: asymmetric
+    - key: endowment
+      params: {smoothing: 0.7}
+    - key: endowment
+      params: {smoothing: 0.3}
+      suffix: light smoothing
+    - key: life_expectancy
+    - key: life_expectancy
+      params: {buffer_years: 5}
+      suffix: +5y buffer
+    - key: gompertz
+    - key: gompertz
+      params: {buffer_years: 5.0}
+      suffix: +5y buffer
+    - key: amortisation
+      params: {assumed_return: 0.0}
+      suffix: 0% assumed return
+    - key: amortisation
+      params: {assumed_return: 0.02}
+      suffix: 2% assumed return
+    - key: amortisation
+      params: {assumed_return: 0.04}
+      suffix: 4% assumed return
+
+# ---------------------------------------------------------------------------
+# Step 7 - solving for the optimal glide path
+# ---------------------------------------------------------------------------
+glide_path:
+  enabled: true
+  # Fewer paths than the headline run: the optimiser compares candidates that
+  # share the same draws, so precision on the *difference* is what matters.
+  # The winning schedules are re-scored at the full path count afterwards.
+  n_paths: 20000
+  bond_share: 0.7
+
+  # Free-form search: one equity share per age, domestic split on bands.
+  equity_grid: [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+  domestic_grid: [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+  domestic_band_years: 5
+  n_sweeps: 2
+
+  # Parametric search: piecewise-linear equity share through free knots.
+  parametric_knot_ages: [25, 40, 55, 63, 75, 92]
+  parametric_grid: [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+  parametric_sweeps: 4
+
+  # Local-optimum check: restart the free-form search from these flat
+  # starting equity shares and confirm it lands in the same place.
+  restart_equity_starts: [0.2, 0.6, 1.0]
+  restart_risk_aversion: 5.0
+
+  # The free-form optimum dips right at the retirement date under the 4%
+  # rule, which anchors spending on wealth at that one date.  Re-solving
+  # under spending rules that carry no such anchor tests whether the dip is
+  # a property of the withdrawal policy or of the investment problem.
+  anchor_check:
+    enabled: true
+    risk_aversion: 5.0
+    rules:
+      - {key: constant_percent, params: {rate: 0.07}}
+      - {key: life_expectancy}
+
+# ---------------------------------------------------------------------------
+# Step 8 - currency hedging the international sleeve
+# ---------------------------------------------------------------------------
+hedging:
+  enabled: true
+  n_paths: 50000
+  # Share of the international equity sleeve held in a hedged share class.
+  ratios: [0.0, 0.25, 0.5, 0.75, 1.0]
+  # Annual cost of holding it hedged.  The grid is dense near zero because
+  # that is where the break-even turns out to sit.
+  costs: [0.0, 0.001, 0.002, 0.003, 0.005, 0.0075, 0.010, 0.015, 0.020]
+  strategies: [balanced_all_equity, international_equity]

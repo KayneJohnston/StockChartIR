@@ -16,16 +16,20 @@ import argparse
 import logging
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Sequence
+from typing import Any, Dict, List, Mapping, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
 
 from src import bootstrap as bs
 from src import data_loader as dl
+from src import glidepath as gp
+from src import hedging as hg
 from src import lifecycle as lc
 from src import plots
 from src import report as rp
+from src import sensitivity as sn
+from src import spending as spg
 from src import utility as ut
 
 LOGGER = logging.getLogger("main")
@@ -56,6 +60,15 @@ def _apply_quick(cfg: Dict[str, Any]) -> Dict[str, Any]:
     cfg["bootstrap"]["n_paths"] = 5000
     cfg["bootstrap"]["chunk_size"] = 2500
     cfg["bootstrap"]["diagnostics"]["n_paths"] = 4000
+    if "sensitivity" in cfg:
+        cfg["sensitivity"]["n_paths"] = 4000
+        cfg["sensitivity"]["redraw_n_paths"] = 2000
+    if "hedging" in cfg:
+        cfg["hedging"]["n_paths"] = 4000
+    if "glide_path" in cfg:
+        cfg["glide_path"]["n_paths"] = 2000
+        cfg["glide_path"]["n_sweeps"] = 1
+        cfg["glide_path"]["restart_equity_starts"] = [0.6]
     LOGGER.warning("quick mode: n_paths reduced to %s",
                    cfg["bootstrap"]["n_paths"])
     return cfg
@@ -497,13 +510,475 @@ def step4_report(cfg: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Step 5
+# ---------------------------------------------------------------------------
+def step5_sensitivity(cfg: Dict[str, Any], state: Dict[str, Any]
+                      ) -> Dict[str, Any]:
+    """Sweep every parameter that could move the conclusion; write docs/05."""
+    sens = cfg.get("sensitivity", {})
+    if not sens.get("enabled", False):
+        LOGGER.info("sensitivity analysis disabled in config; skipping step 5")
+        return state
+    LOGGER.info("=== STEP 5: sensitivity analysis ===")
+    started = time.perf_counter()
+
+    panel = state["panel"]
+    spec = state.get("spec") or lc.spec_from_config(cfg)
+    grids = sens["grids"]
+    gammas = [float(g) for g in cfg["utility"]["risk_aversions"]]
+    n_paths = int(sens["n_paths"])
+    redraw_paths = int(sens["redraw_n_paths"])
+    target_ruin = float(sens["safe_withdrawal_target_ruin"])
+
+    ctx = sn.SweepContext.build(
+        cfg, panel, n_paths=n_paths,
+        max_horizon=int(sens["max_horizon_years"]),
+        max_working=int(sens["max_working_years"]),
+    )
+    strategies = ctx.strategies_from_config()
+    core = {k: v for k, v in strategies.items() if k in sn.CORE_STRATEGIES}
+
+    sweeps: Dict[str, pd.DataFrame] = {}
+    LOGGER.info("sweeping allocation dials")
+    sweeps["domestic_share"] = sn.sweep_domestic_share(
+        ctx, grids["domestic_share"], gammas)
+    sweeps["equity_share"] = sn.sweep_equity_share(
+        ctx, grids["equity_share"], gammas)
+
+    LOGGER.info("sweeping preferences")
+    sweeps["risk_aversion"] = sn.sweep_risk_aversion(
+        ctx, core, grids["risk_aversion"])
+    sweeps["ies"] = sn.sweep_ies(ctx, core, grids["ies"])
+    sweeps["bequest_weight"] = sn.sweep_bequest_weight(
+        ctx, core, grids["bequest_weight"])
+
+    LOGGER.info("sweeping planning parameters")
+    for field, key in (("age_death", "age_death"),
+                       ("age_retire", "age_retire"),
+                       ("savings_rate", "savings_rate"),
+                       ("rule_rate", "withdrawal_rate")):
+        sweeps[key] = sn.sweep_lifecycle_field(
+            ctx, core, field, grids[key], gammas)
+    sweeps["social_security"] = sn.sweep_social_security(ctx, core, gammas)
+
+    LOGGER.info("sweeping sampling assumptions")
+    sweeps["mean_block_years"] = sn.sweep_bootstrap_field(
+        cfg, panel, core, spec, "mean_block_years",
+        grids["mean_block_years"], redraw_paths, gammas)
+    panels = {name: p for name, p in state.get("panels", {}).items()}
+    if len(panels) > 1:
+        sweeps["panel"] = sn.sweep_panels(cfg, panels, core, spec,
+                                          redraw_paths, gammas)
+
+    baseline_cec = f"cec_crra_gamma{float(cfg['utility']['baseline_risk_aversion']):g}"
+    derived: Dict[str, pd.DataFrame] = {
+        "domestic_optimum": sn.optimal_allocation(
+            sweeps["domestic_share"], "domestic_share", gammas),
+        "equity_optimum": sn.optimal_allocation(
+            sweeps["equity_share"], "equity_share", gammas),
+        "crossover": sn.crossover_risk_aversion(sweeps["risk_aversion"]),
+        "safe_withdrawal_rates": sn.safe_withdrawal_rates(
+            sweeps["withdrawal_rate"], target_ruin),
+    }
+
+    # Dimensions that carry a per-strategy CEC and so can enter the tornado.
+    tornado_inputs = {
+        "Longevity (age at death)": (sweeps["age_death"], "age_death"),
+        "Retirement age": (sweeps["age_retire"], "age_retire"),
+        "Savings rate": (sweeps["savings_rate"], "savings_rate"),
+        "Withdrawal rate": (sweeps["withdrawal_rate"], "withdrawal_rate"),
+        "Social security design": (sweeps["social_security"], "social_security"),
+        "Bootstrap block length": (sweeps["mean_block_years"],
+                                   "mean_block_years"),
+    }
+    if "panel" in sweeps:
+        tornado_inputs["Return panel"] = (sweeps["panel"], "panel")
+    tornado = sn.tornado(tornado_inputs, baseline_cec)
+
+    # The preference sweeps report a bare `cec` column, so they are folded in
+    # through the same machinery after a rename.
+    for name, key in (("Risk aversion", "risk_aversion"),
+                      ("Elasticity of substitution", "ies"),
+                      ("Bequest weight", "bequest_weight")):
+        frame = sweeps[key].rename(columns={"cec": baseline_cec})
+        column = {"risk_aversion": "risk_aversion", "ies": "ies",
+                  "bequest_weight": "bequest_weight"}[key]
+        extra = sn.tornado({name: (frame, column)}, baseline_cec)
+        tornado = pd.concat([tornado, extra], ignore_index=True)
+    tornado = tornado.sort_values("range_pp", ascending=False)
+    verdict = sn.overall_verdict(tornado)
+
+    tables = cfg["run"]["table_dir"]
+    for name, frame in sweeps.items():
+        _save_table(frame, tables, f"sensitivity_{name}")
+    for name, frame in derived.items():
+        _save_table(frame, tables, f"sensitivity_{name}")
+    _save_table(tornado, tables, "sensitivity_tornado")
+
+    figure_dir = cfg["run"]["figure_dir"]
+    figures = [
+        str(plots.plot_allocation_frontier(
+            sweeps["domestic_share"], sweeps["equity_share"], gammas,
+            figure_dir)),
+        str(plots.plot_risk_aversion_sweep(sweeps["risk_aversion"], figure_dir)),
+        str(plots.plot_withdrawal_sensitivity(
+            sweeps["withdrawal_rate"], derived["safe_withdrawal_rates"],
+            target_ruin, figure_dir)),
+        str(plots.plot_planning_sweeps({
+            "Age at death": (sweeps["age_death"], "age_death"),
+            "Retirement age": (sweeps["age_retire"], "age_retire"),
+            "Savings rate": (sweeps["savings_rate"], "savings_rate"),
+            "Withdrawal rate": (sweeps["withdrawal_rate"], "withdrawal_rate"),
+            "Bootstrap block length": (sweeps["mean_block_years"],
+                                       "mean_block_years"),
+        }, figure_dir, metric=baseline_cec)),
+        str(plots.plot_tornado(tornado, figure_dir)),
+    ]
+
+    elapsed = time.perf_counter() - started
+    runtime_notes = {
+        "n_simulations": int(
+            len(grids["domestic_share"]) + len(grids["equity_share"])
+            + len(core) * (len(grids["age_death"]) + len(grids["age_retire"])
+                           + len(grids["savings_rate"])
+                           + len(grids["withdrawal_rate"]) + 4
+                           + len(grids["mean_block_years"]))),
+        "elapsed_seconds": elapsed,
+    }
+    rp.write_doc_05(
+        Path("docs") / "05_sensitivity_analysis.md",
+        cfg, sweeps, derived, tornado, verdict, figures, runtime_notes,
+    )
+    LOGGER.info("docs/05 written (%.0fs, %s settings, %s reversals)",
+                elapsed, verdict.get("n_settings"), verdict.get("n_lost"))
+    state.update({"sweeps": sweeps, "sensitivity_derived": derived,
+                  "tornado": tornado, "verdict": verdict,
+                  "sweep_context": ctx})
+    return state
+
+
+# ---------------------------------------------------------------------------
+# Step 6
+# ---------------------------------------------------------------------------
+def step6_spending(cfg: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
+    """Compare retirement spending rules; write docs/06."""
+    spend_cfg = cfg.get("spending", {})
+    if not spend_cfg.get("enabled", False):
+        LOGGER.info("spending-rule analysis disabled in config; skipping step 6")
+        return state
+    LOGGER.info("=== STEP 6: retirement spending rules ===")
+    started = time.perf_counter()
+
+    sens = cfg["sensitivity"]
+    panel = state["panel"]
+    gammas = [float(g) for g in cfg["utility"]["risk_aversions"]]
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    metric = f"cec_gamma{gamma:g}"
+    n_paths = int(sens["n_paths"])
+
+    ctx = state.get("sweep_context") or sn.SweepContext.build(
+        cfg, panel, n_paths=n_paths,
+        max_horizon=int(sens["max_horizon_years"]),
+        max_working=int(sens["max_working_years"]),
+    )
+
+    rule_specs = spend_cfg["rules"]
+    rate_grid = spend_cfg["rate_grid"]
+    LOGGER.info("sweeping %s rule variants over %s rates",
+                len(rule_specs), len(rate_grid))
+    sweep = sn.sweep_spending_rules(ctx, rule_specs, rate_grid,
+                                    strategy_key=str(spend_cfg["strategy"]),
+                                    gammas=gammas)
+    best = sn.best_spending_rules(sweep, metric)
+
+    # One representative per rule *family*, not the top N overall: the top of
+    # the ranking is crowded with high-spending horizon rules, and a shortlist
+    # drawn from it could not show the family crossover in section 6.
+    per_family = sn.best_spending_rules(sweep, metric, group="rule")
+    shortlist = sn.rules_from_config(cfg, per_family)
+    by_strategy = sn.spending_by_strategy(ctx, shortlist, gammas=gammas)
+    bequest_pivot = sn.spending_bequest_sensitivity(
+        ctx, shortlist, cfg["sensitivity"]["grids"]["bequest_weight"],
+        strategy_key=str(spend_cfg["strategy"]))
+    paths = sn.spending_paths(ctx, shortlist,
+                              strategy_key=str(spend_cfg["strategy"]))
+
+    catalogue = pd.DataFrame.from_records([
+        {**spg.build(str(entry["key"]),
+                     **dict(entry.get("params", {}) or {})).describe(),
+         "variant_suffix": entry.get("suffix") or "-"}
+        for entry in rule_specs
+    ]).drop_duplicates("key")[["key", "label"]]
+    catalogue["rate_parameterised"] = catalogue["key"].isin(
+        spg.RATE_PARAMETERISED)
+    catalogue["can_deplete_portfolio"] = ~catalogue["key"].isin(
+        {"constant_percent", "life_expectancy", "gompertz"})
+    rank_by_gamma = sn.spending_rank_by_risk_aversion(sweep, gammas)
+
+    tables = cfg["run"]["table_dir"]
+    _save_table(sweep, tables, "spending_rule_sweep")
+    _save_table(best, tables, "spending_rule_best")
+    _save_table(by_strategy, tables, "spending_rule_by_strategy")
+    _save_table(bequest_pivot, tables, "spending_rule_bequest_pivot")
+    _save_table(paths, tables, "spending_rule_paths")
+    _save_table(catalogue, tables, "spending_rule_catalogue")
+    _save_table(per_family, tables, "spending_rule_best_per_family")
+    _save_table(rank_by_gamma, tables, "spending_rule_rank_by_risk_aversion")
+
+    figure_dir = cfg["run"]["figure_dir"]
+    figures = [
+        str(plots.plot_spending_rate_curves(sweep, best, figure_dir, metric)),
+        str(plots.plot_spending_paths(paths, per_family, figure_dir, metric)),
+        str(plots.plot_spending_bequest_pivot(bequest_pivot, figure_dir)),
+    ]
+
+    elapsed = time.perf_counter() - started
+    runtime_notes = {
+        "n_paths": n_paths,
+        "n_variants": len(rule_specs),
+        "n_simulations": int(len(sweep) + len(by_strategy)
+                             + 2 * len(shortlist)),
+        "elapsed_seconds": elapsed,
+    }
+    rp.write_doc_06(
+        Path("docs") / "06_retirement_spending_rules.md",
+        cfg, sweep, best, by_strategy, bequest_pivot, catalogue,
+        rank_by_gamma, figures, runtime_notes,
+    )
+    LOGGER.info("docs/06 written (%.0fs, best rule: %s)",
+                elapsed, best.iloc[0]["variant"])
+    state.update({"spending_sweep": sweep, "spending_best": best,
+                  "sweep_context": ctx})
+    return state
+
+
+# ---------------------------------------------------------------------------
+# Step 7
+# ---------------------------------------------------------------------------
+def step7_glide_path(cfg: Dict[str, Any], state: Dict[str, Any]
+                     ) -> Dict[str, Any]:
+    """Solve for the optimal age-by-asset schedule; write docs/07."""
+    glide_cfg = cfg.get("glide_path", {})
+    if not glide_cfg.get("enabled", False):
+        LOGGER.info("glide-path search disabled in config; skipping step 7")
+        return state
+    LOGGER.info("=== STEP 7: solving for the optimal glide path ===")
+    started = time.perf_counter()
+
+    panel = state["panel"]
+    spec = state.get("spec") or lc.spec_from_config(cfg)
+    gammas = [float(g) for g in cfg["utility"]["risk_aversions"]]
+    baseline_gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    n_paths = int(glide_cfg["n_paths"])
+    bond_share = float(glide_cfg["bond_share"])
+    equity_grid = glide_cfg["equity_grid"]
+    domestic_grid = glide_cfg["domestic_grid"]
+
+    sampler = bs.from_config(panel, cfg, horizon_years=spec.horizon)
+    paths = sampler.sample(n_paths, chunk_size=int(cfg["bootstrap"]["chunk_size"]))
+    rng = np.random.default_rng(int(cfg["run"]["seed"]))
+    income = lc.simulate_income(
+        spec, n_paths, shocks=lc.draw_income_shocks(n_paths, spec.n_working, rng))
+    evaluator = gp.BatchEvaluator(paths, spec, income, cfg)
+    benchmarks = lc.build_strategies(cfg, spec)
+
+    trace = gp.OptimisationTrace()
+    schedules: List[pd.DataFrame] = []
+    comparisons: List[pd.DataFrame] = []
+    profiles: List[pd.DataFrame] = []
+    n_evaluations = 0
+
+    parameterisation = gp.GlideParameterisation(
+        knot_ages=tuple(int(a) for a in glide_cfg["parametric_knot_ages"]),
+        domestic_share=0.15, bond_share=bond_share)
+
+    for gamma in gammas:
+        LOGGER.info("solving free-form schedule for gamma=%.1f", gamma)
+        equity, domestic, cec = gp.optimise_free_form_banded(
+            evaluator, gamma, equity_grid, domestic_grid,
+            bond_share=bond_share,
+            domestic_band_years=int(glide_cfg["domestic_band_years"]),
+            n_sweeps=int(glide_cfg["n_sweeps"]), trace=trace)
+        n_evaluations += (spec.horizon * len(equity_grid)
+                          + len(domestic_grid) * (spec.horizon
+                                                  // int(glide_cfg["domestic_band_years"]) + 1)
+                          ) * int(glide_cfg["n_sweeps"])
+        schedules.append(gp.schedule_frame(equity, domestic, spec, gamma,
+                                           "free_form"))
+
+        knots, pcec = gp.optimise_parametric(
+            evaluator, gamma, parameterisation, glide_cfg["parametric_grid"],
+            n_sweeps=int(glide_cfg["parametric_sweeps"]))
+        n_evaluations += (len(parameterisation.knot_ages)
+                          * len(glide_cfg["parametric_grid"])
+                          * int(glide_cfg["parametric_sweeps"]))
+        p_weights = parameterisation.build(knots, spec)
+        schedules.append(gp.schedule_frame(
+            p_weights[:, 0] + p_weights[:, 1],
+            np.divide(p_weights[:, 0], np.maximum(p_weights[:, 0] + p_weights[:, 1], 1e-12)),
+            spec, gamma, "parametric"))
+
+        profiles.append(gp.deviation_profile(
+            evaluator, equity, domestic, gamma, bond_share=bond_share))
+        comparisons.append(gp.compare_to_benchmarks(
+            evaluator,
+            {"free_form_optimal": gp.weights_from_shares(equity, domestic,
+                                                         bond_share),
+             "parametric_optimal": p_weights},
+            benchmarks, gamma))
+
+    schedule_frame = pd.concat(schedules, ignore_index=True)
+    comparison = pd.concat(comparisons, ignore_index=True)
+    deviation = pd.concat(profiles, ignore_index=True)
+
+    # --- local-optimum check ---------------------------------------------
+    restart_rows: List[Dict[str, Any]] = []
+    restart_gamma = float(glide_cfg["restart_risk_aversion"])
+    for start in glide_cfg["restart_equity_starts"]:
+        eq, dom, cec = gp.optimise_free_form_banded(
+            evaluator, restart_gamma, equity_grid, domestic_grid,
+            start_equity=float(start), bond_share=bond_share,
+            domestic_band_years=int(glide_cfg["domestic_band_years"]),
+            n_sweeps=int(glide_cfg["n_sweeps"]))
+        restart_rows.append({
+            "start_equity_share": float(start),
+            "solved_cec": cec,
+            "mean_equity_share": float(eq.mean()),
+            "share_of_ages_at_100pct": float((eq >= 0.999).mean()),
+        })
+    restarts = pd.DataFrame.from_records(restart_rows)
+    if len(restarts):
+        restarts["gap_to_best_pct"] = (
+            restarts["solved_cec"] / restarts["solved_cec"].max() - 1.0) * 100.0
+
+    # --- retirement-anchor check ------------------------------------------
+    anchor_rows: List[pd.DataFrame] = []
+    anchor_summary_rows: List[Dict[str, Any]] = []
+    anchor_cfg = glide_cfg.get("anchor_check", {})
+    if anchor_cfg.get("enabled", False):
+        anchor_gamma = float(anchor_cfg["risk_aversion"])
+        variants: List[Tuple[str, Any]] = [
+            (f"4% rule (anchors on wealth at {spec.age_retire})", None)]
+        for entry in anchor_cfg["rules"]:
+            rule = spg.build(str(entry["key"]),
+                             **dict(entry.get("params", {}) or {}))
+            variants.append((rule.label, rule))
+        for label, rule in variants:
+            local = gp.BatchEvaluator(paths, spec, income, cfg, rule)
+            eq, dom, cec = gp.optimise_free_form_banded(
+                local, anchor_gamma, equity_grid, domestic_grid,
+                bond_share=bond_share,
+                domestic_band_years=int(glide_cfg["domestic_band_years"]),
+                n_sweeps=int(glide_cfg["n_sweeps"]))
+            frame = gp.schedule_frame(eq, dom, spec, anchor_gamma, "anchor")
+            frame["rule"] = label
+            anchor_rows.append(frame)
+            window = (spec.ages >= spec.age_retire - 1) &                 (spec.ages <= spec.age_retire + 2)
+            anchor_summary_rows.append({
+                "rule": label,
+                "min_equity_share_at_retirement": float(eq[window].min()),
+                "mean_equity_share_elsewhere": float(eq[~window].mean()),
+                "dip_size_pp": float((eq[~window].mean() - eq[window].min())
+                                     * 100.0),
+                "solved_cec": cec,
+            })
+    anchor = pd.concat(anchor_rows, ignore_index=True) if anchor_rows         else pd.DataFrame()
+    anchor_summary = pd.DataFrame.from_records(anchor_summary_rows)
+
+    tables = cfg["run"]["table_dir"]
+    _save_table(schedule_frame, tables, "glide_solved_schedules")
+    _save_table(comparison, tables, "glide_comparison")
+    _save_table(trace.frame(), tables, "glide_convergence")
+    _save_table(restarts, tables, "glide_restarts")
+    _save_table(deviation, tables, "glide_deviation_profile")
+    if len(anchor):
+        _save_table(anchor, tables, "glide_retirement_anchor")
+        _save_table(anchor_summary, tables, "glide_retirement_anchor_summary")
+
+    figure_dir = cfg["run"]["figure_dir"]
+    industry = lc.glide_path_table(benchmarks, spec)
+    figures = [
+        str(plots.plot_optimal_glide(schedule_frame, industry, deviation,
+                                     figure_dir)),
+        str(plots.plot_glide_comparison(comparison, trace.frame(), figure_dir)),
+    ]
+    if len(anchor):
+        figures.append(str(plots.plot_retirement_anchor(
+            anchor, spec.age_retire, figure_dir)))
+
+    elapsed = time.perf_counter() - started
+    rp.write_doc_07(
+        Path("docs") / "07_optimal_glide_path.md",
+        cfg, schedule_frame, comparison, trace.frame(), restarts, anchor,
+        anchor_summary, deviation, figures,
+        {"n_evaluations": n_evaluations, "elapsed_seconds": elapsed,
+         "horizon": spec.horizon},
+    )
+    LOGGER.info("docs/07 written (%.0fs, %s evaluations)", elapsed,
+                f"{n_evaluations:,}")
+    state.update({"glide_schedules": schedule_frame,
+                  "glide_comparison": comparison})
+    return state
+
+
+# ---------------------------------------------------------------------------
+# Step 8
+# ---------------------------------------------------------------------------
+def step8_hedging(cfg: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
+    """Sweep the currency-hedge ratio against its annual cost; write docs/08."""
+    hedge_cfg = cfg.get("hedging", {})
+    if not hedge_cfg.get("enabled", False):
+        LOGGER.info("hedging analysis disabled in config; skipping step 8")
+        return state
+    LOGGER.info("=== STEP 8: currency hedging ===")
+    started = time.perf_counter()
+
+    spec = state.get("spec") or lc.spec_from_config(cfg)
+    strategies = state.get("strategies") or lc.build_strategies(cfg, spec)
+    gammas = [float(g) for g in cfg["utility"]["risk_aversions"]]
+    metric = f"cec_gamma{float(cfg['utility']['baseline_risk_aversion']):g}"
+
+    sweep = hg.sweep_hedging(
+        cfg, spec, strategies,
+        ratios=[float(r) for r in hedge_cfg["ratios"]],
+        costs=[float(c) for c in hedge_cfg["costs"]],
+        n_paths=int(hedge_cfg["n_paths"]),
+        gammas=gammas,
+        strategy_keys=tuple(hedge_cfg["strategies"]),
+    )
+    break_even = hg.break_even_costs(sweep, metric)
+    optimal = hg.optimal_ratio_by_cost(sweep, metric)
+
+    tables = cfg["run"]["table_dir"]
+    _save_table(sweep, tables, "hedging_sweep")
+    _save_table(break_even, tables, "hedging_break_even")
+    _save_table(optimal, tables, "hedging_optimal_ratio")
+
+    figures = [str(plots.plot_hedging(sweep, break_even,
+                                      cfg["run"]["figure_dir"], metric))]
+
+    elapsed = time.perf_counter() - started
+    rp.write_doc_08(
+        Path("docs") / "08_currency_hedging.md",
+        cfg, sweep, break_even, optimal, figures,
+        {"elapsed_seconds": elapsed,
+         "n_countries": state["panel"].n_countries},
+    )
+    LOGGER.info("docs/08 written (%.0fs)", elapsed)
+    state.update({"hedging_sweep": sweep, "hedging_break_even": break_even})
+    return state
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
-         4: step4_report}
+         4: step4_report, 5: step5_sensitivity, 6: step6_spending,
+         7: step7_glide_path, 8: step8_hedging}
 
 
-def run(config_path: str = "config.yaml", steps: Sequence[int] = (1, 2, 3, 4),
+def run(config_path: str = "config.yaml",
+        steps: Sequence[int] = (1, 2, 3, 4, 5, 6, 7, 8),
         quick: bool = False) -> Dict[str, Any]:
     """Execute the pipeline and return the accumulated state."""
     cfg = dl.load_config(config_path)
@@ -532,8 +1007,9 @@ def run(config_path: str = "config.yaml", steps: Sequence[int] = (1, 2, 3, 4),
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config.yaml")
-    parser.add_argument("--steps", nargs="+", type=int, default=[1, 2, 3, 4],
-                        choices=[1, 2, 3, 4])
+    parser.add_argument("--steps", nargs="+", type=int,
+                        default=[1, 2, 3, 4, 5, 6, 7, 8],
+                        choices=[1, 2, 3, 4, 5, 6, 7, 8])
     parser.add_argument("--quick", action="store_true",
                         help="small N for smoke tests")
     parser.add_argument("--verbose", action="store_true")

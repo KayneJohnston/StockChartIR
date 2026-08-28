@@ -22,10 +22,16 @@ class TestMarkdownTable:
         rendered = rp.md_table(frame, floatfmt="{:.2f}")
         assert "| 1.23 | yes |" in rendered
 
-    def test_non_finite_values_render_as_a_dash(self) -> None:
-        frame = pd.DataFrame({"x": [np.nan, np.inf]})
-        rendered = rp.md_table(frame)
-        assert rendered.count("| -- |") == 2
+    def test_nan_renders_as_a_dash(self) -> None:
+        rendered = rp.md_table(pd.DataFrame({"x": [np.nan]}))
+        assert "| -- |" in rendered
+
+    def test_positive_infinity_renders_as_never(self) -> None:
+        # An infinite crossover means the rival never overtakes, which is a
+        # different statement from "not available".
+        rendered = rp.md_table(pd.DataFrame({"x": [np.inf, -np.inf]}))
+        assert "| never |" in rendered
+        assert "| -inf |" in rendered
 
     def test_truncation_is_announced(self) -> None:
         frame = pd.DataFrame({"x": range(10)})

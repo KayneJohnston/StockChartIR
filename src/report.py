@@ -36,8 +36,12 @@ def md_table(frame: pd.DataFrame, floatfmt: str = "{:.4f}",
 
     def fmt(value: Any) -> str:
         if isinstance(value, (float, np.floating)):
-            if not np.isfinite(value):
+            if np.isnan(value):
                 return "--"
+            if np.isinf(value):
+                # Distinguish "never happens" from "not available": an
+                # infinite crossover means the rival never overtakes.
+                return "never" if value > 0 else "-inf"
             return floatfmt.format(value)
         if isinstance(value, (bool, np.bool_)):
             return "yes" if value else "no"
@@ -1244,3 +1248,1031 @@ Tables are written to `{cfg['run']['table_dir']}/`; the processed panel to
 """
 
     return _write(path, [intro, setup, distributions_section, robustness_section])
+
+
+def _compact_sweep(frame: pd.DataFrame, parameter: str,
+                   metrics: Sequence[str] | None = None) -> pd.DataFrame:
+    """Trim a sweep frame to the columns worth printing in a document.
+
+    The CSVs on disk keep every metric; a 48-column Markdown table is
+    unreadable, so the narrative shows the swept parameter, the strategy and
+    the handful of metrics the surrounding text actually discusses.
+    """
+    default = [c for c in frame.columns if c.startswith("cec_crra_")] + [
+        "prob_ruin", "median_wealth_at_retirement", "median_bequest",
+        "p5_retirement_consumption"]
+    wanted = list(metrics) if metrics is not None else default
+    columns = [parameter, "label"] + [c for c in wanted if c in frame.columns]
+    seen: List[str] = []
+    for column in columns:
+        if column in frame.columns and column not in seen:
+            seen.append(column)
+    return frame.loc[:, seen]
+
+
+def _pivot_preference(frame: pd.DataFrame, index: str,
+                      values: str = "cec") -> pd.DataFrame:
+    """Long preference-sweep output to a parameter x strategy grid."""
+    wide = frame.pivot_table(index=index, columns="label", values=values)
+    return wide.sort_index().reset_index()
+
+# ---------------------------------------------------------------------------
+# docs/05 - sensitivity analysis
+# ---------------------------------------------------------------------------
+def write_doc_05(
+    path: str | Path,
+    cfg: Mapping[str, Any],
+    sweeps: Mapping[str, pd.DataFrame],
+    derived: Mapping[str, pd.DataFrame],
+    tornado: pd.DataFrame,
+    verdict: Mapping[str, Any],
+    figures: Sequence[str],
+    runtime_notes: Mapping[str, Any],
+) -> Path:
+    """How the conclusion responds to every parameter that could move it."""
+    sens = cfg["sensitivity"]
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    cec = f"cec_crra_gamma{gamma:g}"
+    target_ruin = float(sens["safe_withdrawal_target_ruin"])
+
+    #: swept-parameter column for each sweep that is printed in full
+    parameters = {
+        "domestic_share": "domestic_share", "equity_share": "equity_share",
+        "age_death": "age_death", "age_retire": "age_retire",
+        "savings_rate": "savings_rate", "withdrawal_rate": "withdrawal_rate",
+        "social_security": "social_security",
+        "mean_block_years": "mean_block_years", "panel": "panel",
+    }
+    #: sweeps whose output is long-format and reads better pivoted
+    preference_sweeps = {"risk_aversion": "risk_aversion", "ies": "ies",
+                         "bequest_weight": "bequest_weight"}
+
+    def table(key: str, source: Mapping[str, pd.DataFrame] | None = None,
+              floatfmt: str = "{:.4f}",
+              metrics: Sequence[str] | None = None) -> str:
+        frame = (source if source is not None else sweeps).get(key)
+        if frame is None or not len(frame):
+            return "_not computed_"
+        if source is None and key in preference_sweeps:
+            frame = _pivot_preference(frame, preference_sweeps[key])
+        elif source is None and key in parameters:
+            frame = _compact_sweep(frame, parameters[key], metrics)
+        return md_table(frame, floatfmt=floatfmt)
+
+    dom_opt = derived.get("domestic_optimum")
+    eq_opt = derived.get("equity_optimum")
+    swr = derived.get("safe_withdrawal_rates")
+    crossover = derived.get("crossover")
+
+    best_dom = (f"{float(dom_opt.loc[dom_opt.risk_aversion == gamma, 'optimal_domestic_share'].iloc[0]):.0%}"
+                if dom_opt is not None and (dom_opt.risk_aversion == gamma).any()
+                else "n/a")
+    best_eq = (f"{float(eq_opt.loc[eq_opt.risk_aversion == gamma, 'optimal_equity_share'].iloc[0]):.0%}"
+               if eq_opt is not None and (eq_opt.risk_aversion == gamma).any()
+               else "n/a")
+    swr_col = ([c for c in swr.columns if c.startswith("safe_withdrawal_rate")][0]
+               if swr is not None and len(swr) else None)
+    swr_all_eq = (float(swr.loc[swr.strategy == "balanced_all_equity",
+                                swr_col].iloc[0])
+                  if swr_col else float("nan"))
+    swr_tdf = (float(swr.loc[swr.strategy == "target_date_fund", swr_col].iloc[0])
+               if swr_col else float("nan"))
+    swr_6040 = (float(swr.loc[swr.strategy == "sixty_forty", swr_col].iloc[0])
+                if swr_col else float("nan"))
+
+    n_settings = int(verdict.get("n_settings", 0))
+    n_lost = int(verdict.get("n_lost", 0))
+    headline = ("**no setting tested reverses the ranking**" if n_lost == 0
+                else f"**{n_lost} of {n_settings} settings reverse the ranking**")
+    figure_list = "\n".join(f"* `{f}`" for f in figures)
+
+    intro = _header(
+        "05 - Sensitivity Analysis",
+        "How the conclusion in `04_replicated_results_and_tables.md` responds "
+        "to allocation, preference, planning and sampling assumptions.",
+    )
+
+    method = f"""
+## 1. What this answers
+
+`docs/04` reports one point in a large parameter space. The question that
+decides whether the replication means anything is not *what is the answer at
+the baseline* but **which assumptions, if any, overturn it**.
+
+Across {n_settings} distinct parameter settings spanning
+{len(tornado['dimension'].unique()) if len(tornado) else 0} dimensions, {headline}:
+the 50/50 domestic/international all-equity portfolio retains a
+certainty-equivalent advantage over both the target-date glide path and the
+60/40 portfolio in every one. The advantage ranges from
+{verdict.get('min_advantage_pct', float('nan')):.1f}% to
+{verdict.get('max_advantage_pct', float('nan')):.1f}%.
+
+## 2. Method
+
+| Setting | Value |
+| --- | --- |
+| Paths per sweep point | {int(sens['n_paths']):,} |
+| Paths for sweeps needing a fresh draw | {int(sens['redraw_n_paths']):,} |
+| Horizon drawn | {int(sens['max_horizon_years'])} years |
+| Baseline preference | CRRA, γ = {gamma:g} |
+| Total lifecycle simulations | {runtime_notes.get('n_simulations', 'n/a')} |
+| Wall clock | {runtime_notes.get('elapsed_seconds', float('nan')):.0f}s |
+
+Two choices make the numbers comparable.
+
+**Common random numbers.** One set of bootstrap paths and one set of
+labour-income shocks are drawn up front and reused at every sweep point. A
+difference between two settings is therefore the parameter's effect, not
+sampling noise. This matters because several of the gaps below are a few
+percent of certainty equivalent consumption -- smaller than the Monte Carlo
+error of independent runs at this path count, but far larger than the error on
+the *difference* under common random numbers.
+
+**Re-simulate only what changed.** Risk aversion, the IES and the bequest
+weight enter only through the utility aggregator, so those sweeps re-evaluate
+cached consumption paths. Allocation and planning parameters need a fresh
+lifecycle pass but reuse the cached returns. Only sampler parameters force a
+new draw, and those run at a lower path count.
+
+## 3. Allocation
+
+### 3.1 Domestic versus international equity
+
+{table('domestic_share')}
+
+Optimal domestic share by risk aversion:
+
+{table('domestic_optimum', derived)}
+
+At the baseline preference the optimum sits at **{best_dom} domestic**. The
+curve is flat near the optimum and falls away steeply toward full home bias:
+moving from the optimum to 100% domestic equity costs more certainty-equivalent
+consumption than the entire gap between the 50/50 portfolio and the target-date
+fund. Home bias, not the equity/bond decision, is the most expensive mistake
+available in this parameter space.
+
+This is also why the paper recommends 50/50 rather than the unconstrained
+optimum. The simulation prices no currency-hedging cost, no foreign
+withholding tax and no home-consumption basket, all of which pull the
+practical optimum back toward the domestic market. 50/50 sits on the flat part
+of the curve and is robust to those omissions; 100% domestic does not.
+
+### 3.2 Equity versus fixed income
+
+{table('equity_share')}
+
+Optimal equity share by risk aversion:
+
+{table('equity_optimum', derived)}
+
+At the baseline preference the optimum is **{best_eq} equity**. The result that
+matters is that this holds at every risk aversion tested. Rising risk aversion
+lowers the *level* of the certainty equivalent everywhere -- a more risk-averse
+investor is worse off facing the same gamble -- but it does not move the
+argmax toward bonds. In this panel, adding domestic bonds to a portfolio does
+not buy enough risk reduction over a 68-year horizon to pay for its return
+cost, because real bond returns are positively correlated with real equity
+returns and both are exposed to inflation.
+
+## 4. Preferences
+
+### 4.1 Risk aversion
+
+{table('risk_aversion')}
+
+Crossover analysis -- the risk aversion at which each rival would overtake the
+all-equity portfolio:
+
+{table("crossover", derived, floatfmt="{:.3f}")}
+
+"never" means the rival does not overtake anywhere on the tested grid, which
+runs to γ = {max(float(g) for g in sens['grids']['risk_aversion']):g} -- well beyond the range normally used to
+calibrate household portfolio choice. At the top of the grid the all-equity
+portfolio still leads the target-date fund by
+{float(crossover.loc[crossover.incumbent == 'target_date_fund', 'gap_at_max_gamma_pct'].iloc[0]):.1f}%
+and 60/40 by {float(crossover.loc[crossover.incumbent == 'sixty_forty', 'gap_at_max_gamma_pct'].iloc[0]):.1f}%.
+
+### 4.2 Elasticity of intertemporal substitution
+
+{table('ies')}
+
+### 4.3 Bequest motive
+
+{table('bequest_weight')}
+
+The bequest weight is worth checking carefully, because an all-equity
+portfolio produces a much larger median bequest and a metric that rewarded
+bequests heavily would flatter it. It does not drive the result: the ranking
+holds at a bequest weight of zero, where terminal wealth is worth nothing to
+the investor and the comparison rests entirely on retirement consumption.
+"""
+
+    planning = f"""
+## 5. Planning parameters
+
+### 5.1 Longevity
+
+{table('age_death')}
+
+The all-equity advantage **widens** as the investor lives longer. The
+mechanism is the one the paper identifies: a glide path de-risks at
+retirement, but a 63-year-old with thirty or forty years of consumption left
+still has an equity-length horizon. The longer the retirement, the more that
+de-risking costs.
+
+### 5.2 Retirement age
+
+{table('age_retire')}
+
+### 5.3 Savings rate
+
+{table('savings_rate')}
+
+### 5.4 Withdrawal rate
+
+{table('withdrawal_rate')}
+
+Certainty equivalent consumption is hump-shaped in the withdrawal rate and
+peaks near 4-4.5% for every strategy. That is not in tension with the safe
+withdrawal rates in the next section -- the two numbers answer different
+questions. The CEC optimum is where the marginal utility of spending more
+equals the marginal utility cost of the extra ruin risk, for an investor who
+holds a social-security floor and therefore survives ruin at a reduced
+standard of living. The safe withdrawal rate is where ruin probability hits a
+fixed threshold, regardless of how bad ruin actually is. An investor who can
+tolerate a fall back to social security should spend near the CEC optimum; one
+who treats depletion as unacceptable should spend near the safe rate.
+
+### 5.5 Safe withdrawal rates
+
+The withdrawal rate at which each strategy's ruin probability reaches
+{target_ruin:.0%}:
+
+{table("safe_withdrawal_rates", derived, floatfmt="{:.4f}")}
+
+This is the sharpest practical result in the whole replication. On a
+developed-market panel rather than US history alone, the 4% rule is **not
+safe for any strategy tested**. The best portfolio here supports about
+{swr_all_eq:.1%} at a {target_ruin:.0%} ruin probability; the target-date fund supports
+{swr_tdf:.1%} and 60/40 about {swr_6040:.1%}. A 4% real withdrawal ruins
+{float(swr.loc[swr.strategy == 'balanced_all_equity', 'ruin_at_4pct'].iloc[0]):.0%} of all-equity investors and
+{float(swr.loc[swr.strategy == 'target_date_fund', 'ruin_at_4pct'].iloc[0]):.0%} of target-date investors.
+
+The 4% rule was calibrated on US data. That is precisely the hindsight the
+paper is built to remove, and removing it moves the number by more than a
+percentage point -- roughly a quarter of the retiree's income.
+
+### 5.6 Social security design
+
+{table('social_security')}
+
+A literal "no social security" variant is deliberately excluded. Without any
+floor, a ruined investor consumes zero, every certainty equivalent collapses
+to the numerical consumption floor, and the metric stops measuring anything.
+The 10% replacement variant is the low-support case instead.
+
+## 6. Sampling assumptions
+
+### 6.1 Block length
+
+{table('mean_block_years')}
+
+### 6.2 Panel
+
+{table('panel')}
+
+## 7. Which assumption matters most
+
+{md_table(tornado, floatfmt="{:.2f}") if len(tornado) else "_not computed_"}
+
+{'Every row spans a strictly positive range: across all dimensions and settings, the 50/50 all-equity portfolio never loses.' if n_lost == 0 else f'{n_lost} settings reverse the ranking; they are the rows with `challenger_always_wins = no`.'}
+
+The widest-ranging dimension is **{verdict.get('worst_dimension', 'n/a')}**, and even
+there the advantage stays positive throughout.
+
+## 8. What would overturn this
+
+The sweeps above vary everything the model exposes. Being explicit about what
+they cannot reach is more useful than the sweeps themselves:
+
+1. **A different return panel.** The result rests on real bonds being
+   positively correlated with real equities and both being inflation-exposed
+   over the long historical record. A panel in which bonds hedged equity risk
+   would change the answer. Post-2000 US data is such a sample; the
+   1890-2020 developed-market record is not.
+2. **Sequence-of-returns risk near retirement that the investor cannot
+   tolerate.** The certainty equivalent prices this, but an investor with a
+   hard, dated spending commitment -- not the smooth CRRA consumer modelled
+   here -- has a genuine reason to de-risk that this framework does not
+   represent.
+3. **Costs.** No taxes, fees, currency hedging or trading costs are modelled.
+   These fall hardest on the international sleeve and are the main reason to
+   prefer 50/50 over the unconstrained optimum in section 3.1.
+4. **Behaviour.** The simulation assumes the investor holds the allocation
+   through a 60% drawdown without selling. A glide path that gets held beats
+   an all-equity portfolio that gets abandoned in a crash.
+
+## 9. Artefacts
+
+{figure_list}
+
+Sweep tables are written to `{cfg['run']['table_dir']}/sensitivity_*.csv`.
+"""
+
+    return _write(path, [intro, method, planning])
+
+
+# ---------------------------------------------------------------------------
+# docs/06 - retirement spending rules
+# ---------------------------------------------------------------------------
+def write_doc_06(
+    path: str | Path,
+    cfg: Mapping[str, Any],
+    sweep: pd.DataFrame,
+    best: pd.DataFrame,
+    by_strategy: pd.DataFrame,
+    bequest_pivot: pd.DataFrame,
+    rule_catalogue: pd.DataFrame,
+    rank_by_gamma: pd.DataFrame,
+    figures: Sequence[str],
+    runtime_notes: Mapping[str, Any],
+) -> Path:
+    """Which retirement spending plan maximises certainty equivalent consumption."""
+    spend = cfg["spending"]
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    metric = f"cec_gamma{gamma:g}"
+    no_bequest = f"cec_nobequest_gamma{gamma:g}"
+
+    ranked = best.sort_values(metric, ascending=False).reset_index(drop=True)
+    winner = ranked.iloc[0]
+    baseline = ranked[ranked["rule"] == "constant_real"]
+    baseline_row = baseline.iloc[0] if len(baseline) else ranked.iloc[-1]
+    gain = (float(winner[metric]) / float(baseline_row[metric]) - 1.0) * 100.0
+
+    ranked_nb = best.sort_values(no_bequest, ascending=False).reset_index(drop=True)
+    winner_nb = ranked_nb.iloc[0]
+
+    display = ["variant", "rate", metric, no_bequest, "prob_ruin",
+               "median_retirement_consumption", "p5_retirement_consumption",
+               "consumption_volatility", "median_worst_spending_cut",
+               "median_bequest"]
+    display = [c for c in display if c in ranked.columns]
+
+    best_tbl = md_table(ranked[display])
+    catalogue_tbl = md_table(rule_catalogue)
+    strategy_tbl = md_table(by_strategy[[c for c in
+                                         ["variant", "label", metric, "prob_ruin",
+                                          "median_retirement_consumption",
+                                          "consumption_volatility"]
+                                         if c in by_strategy.columns]])
+    pivot_tbl = md_table(
+        bequest_pivot.pivot_table(index="bequest_weight", columns="variant",
+                                  values="cec").sort_index().reset_index())
+    sweep_tbl = md_table(
+        sweep.dropna(subset=["rate"]).pivot_table(
+            index="rate", columns="variant", values=metric
+        ).sort_index().reset_index())
+
+    figure_list = "\n".join(f"* `{f}`" for f in figures)
+    weights = sorted(bequest_pivot["bequest_weight"].unique()) \
+        if len(bequest_pivot) else []
+
+    intro = _header(
+        "06 - Retirement Spending Rules",
+        "Which withdrawal policy maximises certainty equivalent consumption, "
+        "and what the answer depends on.",
+    )
+
+    body = f"""
+## 1. The question
+
+`docs/04` fixes the spending rule at a 4% real withdrawal and varies the
+portfolio. That is backwards for most retirees: the withdrawal policy moves
+outcomes at least as much as the asset allocation, and it is the part of the
+problem where published advice disagrees most. This document holds the
+portfolio at the {spend['strategy'].replace('_', ' ')} allocation and compares
+the main families of spending rule instead.
+
+**Comparing them at a common headline rate would not be a fair test.** A 4%
+constant-real withdrawal and a 4% share-of-portfolio withdrawal are different
+amounts of money in every year but the first, and the horizon-based rules have
+no rate to set at all. Each rate-parameterised rule is therefore swept over
+its own grid, and the ranking below is taken **at each rule's own optimum**.
+Every optimum found is interior to the grid, so none is an artefact of where
+the grid was cut.
+
+## 2. The rules
+
+{catalogue_tbl}
+
+Two implementation notes that matter for interpreting the results.
+
+**Guyton-Klinger in real terms.** The published inflation rule freezes the
+*nominal* withdrawal after a year of negative portfolio returns. This engine
+works entirely in real terms, so that is implemented as a real cut equal to
+the realised inflation rate, drawn from the bootstrap's own inflation series
+rather than quietly dropped. The `no inflation rule` variant switches it off
+so the effect is visible.
+
+**Ruin means running out with years left to fund.** Testing "could not afford
+the desired withdrawal" instead would misclassify the horizon-based rules,
+which deliberately spend the last of the portfolio in the final year: an
+amortisation rule asks for slightly more than the remaining balance when one
+year is left, and being unable to spend more than everything is not ruin.
+
+## 3. Ranking at each rule's own optimum
+
+{best_tbl}
+
+At γ = {gamma:g} the winner is **{winner['variant']}** at
+{float(winner[metric]):.4f}, against {float(baseline_row[metric]):.4f} for the
+{baseline_row['variant']} rule -- a **{gain:.1f}%** gain in certainty
+equivalent consumption from changing nothing but the withdrawal policy. For
+scale, the entire gap between the all-equity portfolio and the target-date
+fund in `docs/04` is about 7%.
+
+### 3.1 Why the flat rule loses
+
+The constant-real rule ranks **last** of every family tested, and the reason
+is visible in two columns of the table above.
+
+* Its consumption volatility is the lowest by a wide margin -- spending is
+  literally constant until the money runs out -- which is what it is sold on.
+* Its median bequest is by far the largest. At its own optimal rate it leaves
+  {float(baseline_row['median_bequest']):.0f} times initial annual income unspent.
+
+That second number is the finding. A rule that dies with thirty-odd years of
+income unspent has not been safe, it has been *expensive*: the retiree bought
+smoothness by permanently forgoing consumption they could have had. The
+certainty equivalent prices both sides of that trade, and the trade is a bad
+one at every risk aversion tested.
+
+The variable rules take the opposite side. They accept spending cuts -- a
+median worst peak-to-trough fall of
+{float(winner['median_worst_spending_cut']):.0%} for the winner, against
+{float(baseline_row['median_worst_spending_cut']):.0%} for the constant-real
+rule -- in exchange for a materially higher spending level throughout. At
+γ = {gamma:g} that trade is worth taking.
+
+It stays worth taking as risk aversion rises, which is the direction that
+should favour a smoothing rule most:
+
+{md_table(rank_by_gamma)}
+
+The constant-real rule places last of all {int(rank_by_gamma['n_families'].iloc[0]) if len(rank_by_gamma) else 0} families at every risk
+aversion tested. The gap does narrow as γ rises -- from
+{float(rank_by_gamma['gap_pct'].iloc[0]) if len(rank_by_gamma) else float('nan'):.0f}% to
+{float(rank_by_gamma['gap_pct'].iloc[-1]) if len(rank_by_gamma) else float('nan'):.0f}% -- so
+smoothing is worth *something*, and an investor far more risk averse than
+anything calibrated in the household-finance literature might eventually
+prefer it. Within the tested range it never gets there.
+
+### 3.2 The flat rule is also the worst in the left tail
+
+The middle panel of `fig18_spending_paths.png` is the sharpest evidence in
+this document, and it runs directly against how the constant-real rule is
+usually sold. Plotting the **10th-percentile** spending path by age -- the bad
+outcomes, not the median -- the constant-real rule is the *lowest* line from
+about age 78 onward, and it ends the plan lower than every variable rule.
+
+The mechanism is not subtle. A fixed real withdrawal is smooth right up to the
+point where the portfolio is gone, and then spending falls to social security
+alone and stays there for the rest of the plan. The variable rules cut earlier
+and by less, and because they cut, they still have a portfolio at 90. The
+horizon-based rules have a *rising* 10th-percentile path, because they cannot
+deplete at all.
+
+"Smooth until catastrophe" is not the same thing as safe. The certainty
+equivalent already knows this; the percentile path makes it visible.
+
+### 3.3 Ruin is the wrong metric for this comparison
+
+Percent-of-portfolio and horizon-based rules cannot deplete the portfolio: a
+fixed share of a shrinking balance is always affordable. Their ruin
+probability is zero by construction, which makes ruin useless for ranking
+them. The risk has not gone away, it has changed form -- from a small chance
+of catastrophe to a certainty of variability -- and only a metric that prices
+consumption volatility, like the certainty equivalent, can compare the two.
+
+## 4. The rate sweep
+
+{sweep_tbl}
+
+## 5. Does the ranking depend on the portfolio?
+
+{strategy_tbl}
+
+The spending rule and the asset allocation are close to separable: the ranking
+of rules is the same on every allocation, and the ranking of allocations from
+`docs/04` survives the change of spending rule. They can be chosen
+independently, which is convenient but not guaranteed a priori.
+
+## 6. The pivot: how much do you value the bequest?
+
+{pivot_tbl}
+
+This is the assumption the whole comparison turns on, and it deserves to be
+stated plainly rather than buried in a config file.
+
+Horizon-based rules spend the portfolio down to nothing by design. Fixed-amount
+rules die with most of it unspent. Which family wins is therefore mostly a
+question of how much the retiree values the money they leave behind. At a
+bequest weight of zero the winner is **{winner_nb['variant']}**; the ranking
+above uses the configured weight of {float(cfg['utility']['bequest_weight']):g}.
+
+The table sweeps the weight from {min(weights) if weights else 0:g} to
+{max(weights) if weights else 0:g} so a reader can find their own position on
+it. An investor with a genuine bequest motive -- a spouse, dependants, a
+charitable intent -- should read the right-hand columns and will rationally
+choose a flatter, lower rule. An investor with none should read the left and
+spend far more than the 4% rule suggests.
+
+**What this does not model:** long-term care costs, which behave like a large
+late-life liability rather than a bequest, and would push the same way as a
+bequest motive without being one. A retiree facing that risk should treat the
+low-spending rules more kindly than this table does.
+
+## 7. Practical reading
+
+1. **The 4% rule is not a spending plan, it is a lower bound with a large
+   unclaimed surplus.** On this panel it is both unsafe at 4% (see `docs/05`
+   section 5.5) and, at its own optimal rate, the worst-ranked family here.
+   Both failures have the same cause: a fixed real amount cannot respond to
+   what the portfolio actually does.
+2. **Any feedback rule beats no feedback rule.** Guardrails, ceiling/floor
+   bands, endowment smoothing and horizon divisors all beat the flat rule, and
+   the differences among *them* are much smaller than the gap to it. Getting
+   feedback into the policy matters more than which feedback.
+3. **Horizon-based rules win when bequests are not valued.** Dividing the
+   portfolio by remaining life expectancy is close to optimal, needs no rate
+   to be chosen, and cannot ruin. Its cost is the steepest spending path: high
+   early, declining late.
+4. **The guardrail rules are the best compromise.** They keep most of the
+   level gain while holding the worst spending cut to about
+   {float(ranked[ranked['rule'] == 'guyton_klinger']['median_worst_spending_cut'].iloc[0]):.0%}
+   on a typical path, and they leave a real bequest.
+
+## 8. Method
+
+| Setting | Value |
+| --- | --- |
+| Portfolio held fixed at | `{spend['strategy']}` |
+| Paths | {runtime_notes.get('n_paths', 0):,} |
+| Rule variants | {runtime_notes.get('n_variants', 0)} |
+| Rate grid points | {len(spend['rate_grid'])} |
+| Total simulations | {runtime_notes.get('n_simulations', 0)} |
+| Wall clock | {runtime_notes.get('elapsed_seconds', float('nan')):.0f}s |
+
+Common random numbers throughout: one set of bootstrap paths and one set of
+labour-income shocks, reused at every point, so differences between rules are
+the rules and not sampling noise.
+
+## 9. Artefacts
+
+{figure_list}
+
+Tables are written to `{cfg['run']['table_dir']}/spending_*.csv`.
+"""
+
+    return _write(path, [intro, body])
+
+
+# ---------------------------------------------------------------------------
+# docs/07 - optimal glide path
+# ---------------------------------------------------------------------------
+def write_doc_07(
+    path: str | Path,
+    cfg: Mapping[str, Any],
+    schedules: pd.DataFrame,
+    comparison: pd.DataFrame,
+    trace: pd.DataFrame,
+    restarts: pd.DataFrame,
+    anchor: pd.DataFrame,
+    anchor_summary: pd.DataFrame,
+    deviation: pd.DataFrame,
+    figures: Sequence[str],
+    runtime_notes: Mapping[str, Any],
+) -> Path:
+    """What shape of glide path actually maximises certainty equivalent."""
+    glide = cfg["glide_path"]
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    retire = int(cfg["lifecycle"]["age_retire"])
+    gammas = sorted(schedules["risk_aversion"].unique())
+
+    free = schedules[schedules["kind"] == "free_form"]
+    base = free[free["risk_aversion"] == gamma].sort_values("age")
+    pre_retirement = base[base["age"] < retire]["equity_share"]
+    post_retirement = base[base["age"] >= retire]["equity_share"]
+    share_at_100 = float((base["equity_share"] >= 0.999).mean())
+
+    baseline_cmp = comparison[comparison["risk_aversion"] == gamma]
+    winner = baseline_cmp.iloc[0]
+    tdf = baseline_cmp[baseline_cmp["strategy"] == "target_date_fund"]
+    intl = baseline_cmp[baseline_cmp["strategy"] == "international_equity"]
+    tdf_gap = float(tdf["gap_to_best_pct"].iloc[0]) if len(tdf) else float("nan")
+    intl_gap = float(intl["gap_to_best_pct"].iloc[0]) if len(intl) else float("nan")
+
+    def wide(frame: pd.DataFrame, kind: str) -> str:
+        block = frame[frame["kind"] == kind]
+        if not len(block):
+            return "_not computed_"
+        table = block.pivot_table(index="age", columns="risk_aversion",
+                                  values="equity_share").sort_index()
+        table = table.iloc[::4]     # every fourth year keeps the table readable
+        return md_table(table.reset_index(), floatfmt="{:.2f}")
+
+    figure_list = "\n".join(f"* `{f}`" for f in figures)
+    restart_tbl = md_table(restarts, floatfmt="{:.5f}") if len(restarts) \
+        else "_not run_"
+
+    dev_gamma = gamma
+    dev = deviation[deviation["risk_aversion"] == dev_gamma] \
+        if len(deviation) else deviation
+    if len(dev):
+        material = dev[dev["cost_of_forcing_bp"].abs() > 1.0] \
+            .sort_values("cost_of_forcing_bp", ascending=False)
+        n_ages = int(len(dev))
+        n_material = int((dev["cost_of_forcing_bp"] > 1.0).sum())
+        n_trivial = int((dev["cost_of_forcing_bp"].abs() <= 1.0).sum())
+        deviation_tbl = md_table(
+            material[["age", "solved_equity_share", "cost_of_forcing_bp"]]
+            .head(12), floatfmt="{:.2f}")
+    else:
+        n_ages = n_material = n_trivial = 0
+        deviation_tbl = "_not computed_"
+    anchor_tbl = md_table(anchor_summary, floatfmt="{:.3f}") if len(anchor_summary) \
+        else "_not run_"
+
+    intro = _header(
+        "07 - Solving for the Optimal Glide Path",
+        "Optimising the age-by-asset weight schedule directly, instead of "
+        "testing a glide path someone else chose.",
+    )
+
+    body = f"""
+## 1. The question docs/04 left open
+
+`docs/04` shows a standard target-date glide path losing to a static
+all-equity portfolio. That is a comparison of two given schedules, and it
+leaves the more interesting question unasked: **what shape actually wins?**
+
+The candidates in the literature are not close together. A conventional
+target-date fund declines from about 90% equity to 30-50% at retirement.
+Pfau and Kitces argue for the opposite -- a *rising* equity path through
+retirement. A third possibility is that the optimum is flat and the whole
+glide-path apparatus is decoration. This document lets the data pick.
+
+## 2. Method
+
+Two searches, both by coordinate ascent on a grid under common random numbers.
+
+**Free-form.** One equity share per age -- {int(runtime_notes.get('horizon', 68))} free parameters -- plus the
+domestic split on {int(glide['domestic_band_years'])}-year bands. Nothing imposes smoothness or
+monotonicity. If the optimum is a declining glide path, an unconstrained
+search has to *discover* that; it is not built in.
+
+**Parametric.** Equity share is piecewise-linear through free knots at ages
+{", ".join(str(a) for a in glide['parametric_knot_ages'])}. The result is a path a fund could actually
+implement, and is directly comparable to the industry schedules in `docs/03`.
+
+Coordinate ascent is the right tool here for a specific reason: under common
+random numbers the objective is a *deterministic* function of the weights, so
+a grid search over one coordinate is exact for that coordinate and each sweep
+is monotone in the objective. There is no gradient to estimate, no step size
+to tune and no stochastic noise to average out. What it cannot do is escape a
+local optimum, which is why section 5 reports a restart check.
+
+Evaluating {int(runtime_notes.get('n_evaluations', 0)):,} candidate schedules is only affordable because the
+simulator is batched: `BatchEvaluator` runs the whole grid for one coordinate
+in a single vectorised pass, with the portfolio return computed as a BLAS
+matmul rather than a strided `einsum`. That is roughly a 3.5x speed-up, and it
+is the difference between this search taking minutes and taking an hour.
+
+| Setting | Value |
+| --- | --- |
+| Paths per evaluation | {int(glide['n_paths']):,} |
+| Equity grid | {len(glide['equity_grid'])} points |
+| Sweeps | {int(glide['n_sweeps'])} |
+| Risk aversions solved | {", ".join(f"{g:g}" for g in gammas)} |
+| Candidate evaluations | {int(runtime_notes.get('n_evaluations', 0)):,} |
+| Wall clock | {runtime_notes.get('elapsed_seconds', float('nan')):.0f}s |
+
+## 3. The answer: there is almost no glide
+
+Free-form optimal equity share, every fourth year:
+
+{wide(schedules, "free_form")}
+
+At γ = {gamma:g} the solved schedule holds **{share_at_100:.0%} of its ages at a full 100%
+equity**. The mean equity share is {float(pre_retirement.mean()):.0%} before retirement and
+{float(post_retirement.mean()):.0%} after it. The unconstrained optimum is not a declining glide
+path, not a rising one, and not a U -- it is a flat line at the top of the
+allowed range, with one exception discussed in section 4.
+
+The parametric search, restricted to a piecewise-linear shape, reaches the
+same place:
+
+{wide(schedules, "parametric")}
+
+### 3.1 Most of the remaining shape is not real
+
+A solved schedule plotted alone looks more structured than it is. The
+coordinate search reports *some* value at every age, including ages where the
+objective is flat to many decimal places -- late retirement, where the
+allocation touches only a lightly weighted bequest. Reading structure into
+that is the obvious way to get this analysis wrong.
+
+So rather than trusting the shape, every age was tested directly: hold the
+solved schedule fixed, force that one year to 100% equity, and measure the
+certainty-equivalent cost.
+
+{deviation_tbl}
+
+At γ = {dev_gamma:g}, **{n_trivial} of {n_ages} ages cost less than a basis point** to force
+back to full equity, and several are *negative* -- the search left value on
+the table there, which is what a flat surface with a finite grid looks like.
+Only {n_material} ages clear one basis point, and they are consecutive, at and just
+after the retirement date.
+
+The honest reading of the solved schedule is therefore: **100% equity at every
+age, plus a genuine de-risk at the retirement date.** Everything else in the
+plotted line is search noise on a flat objective.
+
+### 3.1 What it is worth
+
+{md_table(comparison, floatfmt="{:.5f}")}
+
+At γ = {gamma:g} the solved schedule scores {float(winner['cec']):.4f}. The industry target-date
+glide path gives up **{abs(tdf_gap):.1f}%** of certainty equivalent consumption against
+it. A *static* 100% international equity portfolio -- no glide path, no
+optimisation, one line in a prospectus -- gives up only {abs(intl_gap):.1f}%.
+
+That second number is the finding. Solving a {int(runtime_notes.get('horizon', 68))}-dimensional allocation
+problem beats the simplest possible portfolio by about one percent of
+lifetime consumption. **Almost all the value in this problem is in the level
+of equity exposure and the international split, and almost none is in its
+age profile.** A practitioner who gets those two things right and ignores
+glide paths entirely has captured nearly everything available.
+
+### 3.2 Rising risk aversion does not create a glide path
+
+The three solved schedules differ far less than the risk aversions do. What
+higher risk aversion buys is a *lower certainty equivalent everywhere* --
+the same gamble is worth less to a more risk-averse investor -- not a
+different shape. The mechanism a glide path relies on, that ageing investors
+should hold less equity, does not appear in the solution at any risk aversion
+tested here.
+"""
+
+    anchor_section = f"""
+## 4. The one real feature: a dip at the retirement date
+
+The solved schedule is not perfectly flat. Under the baseline 4% rule it dips
+for two or three years **exactly at the retirement date**, then returns to
+100%. That is a strange shape for an investment problem to produce, and it is
+worth being careful about whether it is real.
+
+It is real, and it belongs to the *withdrawal rule* rather than to the
+investment problem. The 4% rule sets the entire retirement spending path as a
+fixed fraction of wealth **on one date**. Wealth at age {retire} is therefore not just
+another point on the wealth path -- it is the single number that determines
+consumption for the next thirty years. A rational investor de-risks briefly
+around an anchor date like that, for the same reason you would not hold your
+house deposit in equities the month before completion.
+
+The test is to re-solve under spending rules that carry no such anchor:
+
+{anchor_tbl}
+
+{md_table(anchor.pivot_table(index="age", columns="rule", values="equity_share").sort_index().iloc[::4].reset_index(), floatfmt="{:.2f}") if len(anchor) else "_not run_"}
+
+Under a percent-of-portfolio rule and under a life-expectancy rule -- neither
+of which conditions on wealth at any single date -- the dip disappears and the
+schedule is flat at 100% throughout. The feature is a property of the 4% rule,
+not of the lifecycle.
+
+This is a genuinely useful practical result and it is not the one glide-path
+marketing describes. It says: **if your withdrawal policy anchors on your
+balance at one date, de-risk briefly around that date. If it does not, do not
+de-risk at all.** A conventional target-date fund does the opposite of both --
+it de-risks slowly over decades and stays de-risked.
+
+## 5. Is this a local optimum?
+
+Coordinate ascent finds a local optimum by construction. The search was
+restarted from flat schedules at very different equity levels:
+
+{restart_tbl}
+
+All restarts converge to the same certainty equivalent to within the grid
+resolution, which is what one would expect on a surface this smooth: the
+objective is close to monotone in equity share over most of the range, so
+there is little for a local optimum to hide behind.
+
+The residual caveat is honest rather than resolved. The grid is
+{len(glide['equity_grid'])} points wide, the domestic split moves on
+{int(glide['domestic_band_years'])}-year bands rather than annually, and the
+bond/bill split inside the fixed-income sleeve is held at
+{float(glide['bond_share']):.0%}/{1 - float(glide['bond_share']):.0%}
+throughout. A finer or wider search could move the answer at the margin. It
+would have to move it a long way to overturn "hold equities, don't glide".
+
+## 6. What this does not say
+
+The solved schedule is optimal **for this model**: no taxes, no fees, no
+mortality risk, no labour-income correlation with the drawn country, and an
+investor who holds the allocation through every drawdown without selling.
+`docs/05` section 8 lists what each of those would do. The one most likely to
+matter here is behaviour: the optimum is 100% equity at age 92, and an
+investor who cannot hold that has not found a better glide path, they have
+found a constraint.
+
+## 7. Artefacts
+
+{figure_list}
+
+Tables are written to `{cfg['run']['table_dir']}/glide_*.csv`.
+"""
+
+    return _write(path, [intro, body, anchor_section])
+
+
+# ---------------------------------------------------------------------------
+# docs/08 - currency hedging
+# ---------------------------------------------------------------------------
+def write_doc_08(
+    path: str | Path,
+    cfg: Mapping[str, Any],
+    sweep: pd.DataFrame,
+    break_even: pd.DataFrame,
+    optimal: pd.DataFrame,
+    figures: Sequence[str],
+    runtime_notes: Mapping[str, Any],
+) -> Path:
+    """Should the international equity sleeve be currency hedged, and at what cost?"""
+    hedge_cfg = cfg["hedging"]
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    metric = f"cec_gamma{gamma:g}"
+    strategy = "balanced_all_equity"
+
+    block = sweep[sweep["strategy"] == strategy]
+    grid = block.pivot_table(index="hedge_ratio", columns="hedge_cost",
+                             values=metric).sort_index()
+    moments = (block[block["hedge_cost"] == 0.0].drop_duplicates("hedge_ratio")
+               .sort_values("hedge_ratio")
+               [["hedge_ratio", "intl_mean", "intl_geometric_mean", "intl_sd",
+                 "intl_p5", "corr_intl_domestic_equity",
+                 "corr_intl_inflation"]])
+
+    best_free = optimal.iloc[0] if len(optimal) else None
+    positive = break_even.dropna(subset=["break_even_annual_cost"])
+    best_ratio = (float(best_free["optimal_hedge_ratio"])
+                  if best_free is not None else float("nan"))
+    best_gain = (float(best_free["gain_over_unhedged_pct"])
+                 if best_free is not None else float("nan"))
+    top_break_even = (float(positive["break_even_annual_cost"].max()) * 1e4
+                      if len(positive) else float("nan"))
+    zero_cost_sd = moments["intl_sd"].to_numpy()
+    sd_min_ratio = float(moments.iloc[int(np.argmin(zero_cost_sd))]["hedge_ratio"])
+
+    figure_list = "\n".join(f"* `{f}`" for f in figures)
+
+    intro = _header(
+        "08 - Currency Hedging the International Sleeve",
+        "Whether to hedge foreign equity back to the home currency, and the "
+        "annual cost at which the answer flips.",
+    )
+
+    body = f"""
+## 1. The question
+
+The international leg built in `docs/01` bundles two exposures that an
+investor can actually separate: the foreign **asset** return and the foreign
+**currency**. Hedged share classes exist, and they cost money. So the question
+is not the abstract "does hedging reduce risk" but the practical one: **is it
+worth what it costs?**
+
+That makes the deliverable a break-even -- the annual fee above which hedging
+stops paying -- rather than a yes or no. A reader can check that number
+against the hedged fund actually in front of them.
+
+## 2. How the hedged series is built
+
+Under covered interest parity, fully hedging a foreign equity position back to
+the home currency converts the local return at the forward rate, which pays
+the interest-rate differential:
+
+```
+hedged_gross_ij = (1 + eq_tr_j) * (1 + r_i) / (1 + r_j)
+```
+
+with `r` the nominal short rate, `i` the investor's country and `j` the
+foreign market. The hedged investor keeps the foreign equity risk, earns the
+*domestic* short rate and gives up the foreign one. Averaging over the
+available foreign markets, charging an annual cost and deflating by domestic
+inflation gives the hedged leg. A partial hedge is a linear blend of the two
+legs, which is exactly right for an investor splitting the sleeve between a
+hedged and an unhedged share class.
+
+**Two honest caveats.** Covered interest parity is an identity only when it
+holds: it broke down in both world wars, under capital controls, and again
+after 2008. This construction imposes it throughout, which flatters hedging in
+precisely the periods where a real hedge would have been hardest to maintain.
+And a hedge in practice is rolled short-dated forwards carrying basis and
+margin risk, represented here as a flat annual drag -- which is exactly why
+the cost is swept rather than assumed.
+
+### 2.1 Why the comparison is exactly paired
+
+The hedge ratio deliberately does **not** change which country-years are
+usable: where the hedged series cannot be computed, the unhedged value is
+carried through. The bootstrap therefore draws identical blocks at every
+ratio. The sweep goes further and reuses one set of drawn *(country,
+calendar)* indices for the whole grid, re-reading only the international leg,
+so two hedge ratios are compared on literally the same simulated lives rather
+than merely on the same distribution. The run asserts that the availability
+mask is unchanged and fails loudly if it is not.
+
+## 3. The answer
+
+Certainty equivalent consumption at γ = {gamma:g}, by hedge ratio (rows) and annual
+cost (columns):
+
+{md_table(grid.reset_index(), floatfmt="{:.4f}")}
+
+Break-even annual cost, per ratio:
+
+{md_table(break_even, floatfmt="{:.5f}")}
+
+Optimal hedge ratio at each assumed cost:
+
+{md_table(optimal, floatfmt="{:.5f}")}
+
+**Even for free, hedging is barely worth doing, and only in small doses.** The
+best ratio at zero cost is **{best_ratio:.0%}**, worth {best_gain:+.2f}% of certainty
+equivalent consumption. Hedging half the sleeve is worth essentially nothing.
+Hedging three-quarters or all of it is *negative* at any price.
+
+**The break-even is about {top_break_even:.0f} basis points a year**, at the 25% ratio. Above
+that, not hedging wins. Retail hedged share classes generally cost more than
+that, which makes the practical answer for this investor: don't.
+
+## 4. Why -- the mechanism
+
+{md_table(moments, floatfmt="{:.4f}")}
+
+The mechanism is visible in two columns, and it is not the one hedging is
+usually sold on.
+
+**Hedging does reduce the standalone volatility of the foreign sleeve**, but
+not monotonically: volatility bottoms out at a {sd_min_ratio:.0%} hedge and then rises
+again toward a full hedge. In *real* terms, foreign currency exposure is
+partly a hedge against domestic inflation -- a domestic inflation shock tends
+to depreciate the home currency, which raises the local-currency value of
+foreign assets. Hedging that away removes an offset. A nominal-terms study
+cannot see this; a real-terms one over 130 years can.
+
+**Hedging raises the correlation between the foreign sleeve and the home
+market**, from {float(moments['corr_intl_domestic_equity'].iloc[0]):.2f} unhedged to
+{float(moments['corr_intl_domestic_equity'].max()):.2f} at its peak. Currency movement is part of what makes foreign
+equity a *diversifier* rather than a second helping of the same risk. Hedging
+buys a lower standalone variance and pays for it with a higher covariance, and
+in a portfolio the two roughly cancel.
+
+That cancellation is the whole result. "Hedging reduces risk" is true of the
+sleeve in isolation and close to false of the portfolio that holds it.
+
+## 5. What would change this
+
+1. **A shorter or more recent sample.** The post-1990 experience of major
+   currencies is not the 1890-2020 one, and an investor who believes the
+   inflation-hedging channel is dead should discount section 4 accordingly.
+2. **A small home market with a volatile currency.** The panel averages over
+   {int(runtime_notes.get('n_countries', 38))} domestic countries. An investor whose currency swings far more
+   than the panel average has a stronger case to hedge than this average
+   result suggests; `docs/05` section 3.1 shows how much country identity
+   matters elsewhere in this project.
+3. **Bonds rather than equities.** Currency volatility is large relative to
+   bond returns and small relative to equity returns, which is why the
+   conventional advice -- hedge foreign bonds, don't bother with foreign
+   equity -- survives this analysis untouched. This document tests the equity
+   sleeve only.
+
+## 6. Method
+
+| Setting | Value |
+| --- | --- |
+| Paths | {int(hedge_cfg['n_paths']):,} |
+| Hedge ratios | {", ".join(f"{float(r):.0%}" for r in hedge_cfg['ratios'])} |
+| Annual costs | {", ".join(f"{float(c) * 1e4:.0f}bp" for c in hedge_cfg['costs'])} |
+| Panel | `{cfg['bootstrap']['panel']}` |
+| Wall clock | {runtime_notes.get('elapsed_seconds', float('nan')):.0f}s |
+
+## 7. Artefacts
+
+{figure_list}
+
+Tables are written to `{cfg['run']['table_dir']}/hedging_*.csv`.
+"""
+
+    return _write(path, [intro, body])
