@@ -50,6 +50,18 @@ class LifecycleSpec:
     permanent_shock_sd: float = 0.10
     transitory_shock_sd: float = 0.25
     income_shocks_enabled: bool = True
+    # Floor on labour income, as a multiple of economy-wide average earnings,
+    # standing in for unemployment insurance and in-work benefits.  Default 0
+    # (no floor), which leaves every existing result unchanged.
+    #
+    # It matters in exactly one place.  Retirement carries a real consumption
+    # floor through the progressive social-security schedule; working life, at
+    # zero, carries none.  Wherever compared strategies share the same
+    # working-life consumption that asymmetry cancels, so it is invisible.  It
+    # does *not* cancel when the comparison is over *when to retire*, where it
+    # would otherwise reward retiring early purely for reaching the floor
+    # sooner.  See docs/09.
+    working_income_floor: float = 0.0
 
     social_security_enabled: bool = True
     replacement_rate: float = 0.45
@@ -196,6 +208,7 @@ def spec_from_config(cfg: Mapping[str, Any]) -> LifecycleSpec:
         permanent_shock_sd=float(income["permanent_shock_sd"]),
         transitory_shock_sd=float(income["transitory_shock_sd"]),
         income_shocks_enabled=bool(income["shocks_enabled"]),
+        working_income_floor=float(income.get("working_income_floor", 0.0)),
         social_security_enabled=bool(ss["enabled"]),
         replacement_rate=float(ss["replacement_rate"]),
         social_security_formula=str(ss.get("formula", "progressive")),
@@ -242,8 +255,10 @@ def simulate_income(spec: LifecycleSpec, n_paths: int,
     independent draw.
     """
     profile = spec.deterministic_income()[None, :]
+    floor = spec.working_income_floor * float(
+        spec.deterministic_income().mean())
     if not spec.income_shocks_enabled:
-        return np.repeat(profile, n_paths, axis=0)
+        return np.maximum(np.repeat(profile, n_paths, axis=0), floor)
     n_work = spec.n_working
     if shocks is None:
         if rng is None:
@@ -260,7 +275,7 @@ def simulate_income(spec: LifecycleSpec, n_paths: int,
     tran = -0.5 * spec.transitory_shock_sd ** 2 + spec.transitory_shock_sd * z_tran
     permanent = np.exp(np.cumsum(perm, axis=1))
     transitory = np.exp(tran)
-    return profile * permanent * transitory
+    return np.maximum(profile * permanent * transitory, floor)
 
 
 # ---------------------------------------------------------------------------

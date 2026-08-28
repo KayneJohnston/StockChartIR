@@ -13,6 +13,7 @@ the project promises.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import logging
 import time
 from pathlib import Path
@@ -28,6 +29,7 @@ from src import hedging as hg
 from src import lifecycle as lc
 from src import plots
 from src import report as rp
+from src import retirement as rt
 from src import sensitivity as sn
 from src import spending as spg
 from src import utility as ut
@@ -63,6 +65,8 @@ def _apply_quick(cfg: Dict[str, Any]) -> Dict[str, Any]:
     if "sensitivity" in cfg:
         cfg["sensitivity"]["n_paths"] = 4000
         cfg["sensitivity"]["redraw_n_paths"] = 2000
+    if "retirement_timing" in cfg:
+        cfg["retirement_timing"]["n_paths"] = 4000
     if "hedging" in cfg:
         cfg["hedging"]["n_paths"] = 4000
     if "glide_path" in cfg:
@@ -970,15 +974,100 @@ def step8_hedging(cfg: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Step 9
+# ---------------------------------------------------------------------------
+def step9_retirement_timing(cfg: Dict[str, Any], state: Dict[str, Any]
+                            ) -> Dict[str, Any]:
+    """Make the retirement date a decision; write docs/09."""
+    timing_cfg = cfg.get("retirement_timing", {})
+    if not timing_cfg.get("enabled", False):
+        LOGGER.info("retirement-timing analysis disabled; skipping step 9")
+        return state
+    LOGGER.info("=== STEP 9: endogenous retirement timing ===")
+    started = time.perf_counter()
+
+    panel = state["panel"]
+    base_spec = state.get("spec") or lc.spec_from_config(cfg)
+    gammas = [float(g) for g in cfg["utility"]["risk_aversions"]]
+    metric = f"cec_gamma{float(cfg['utility']['baseline_risk_aversion']):g}"
+    n_paths = int(timing_cfg["n_paths"])
+    floor = float(timing_cfg["working_income_floor"])
+
+    sampler = bs.from_config(panel, cfg, horizon_years=base_spec.horizon)
+    paths = sampler.sample(n_paths, chunk_size=int(cfg["bootstrap"]["chunk_size"]))
+    rng = np.random.default_rng(int(cfg["run"]["seed"]))
+    shocks = lc.draw_income_shocks(n_paths, base_spec.horizon, rng)
+    strategy = lc.build_strategies(cfg, base_spec)[str(timing_cfg["strategy"])]
+
+    rules = [(str(entry["label"]),
+              rt.build(str(entry["key"]), **dict(entry.get("params", {}) or {})))
+             for entry in timing_cfg["rules"]]
+
+    floors = [floor] + ([0.0] if timing_cfg.get("compare_without_floor", False)
+                        and floor != 0.0 else [])
+    rows: List[Dict[str, Any]] = []
+    ages: Dict[str, np.ndarray] = {}
+    lottery = pd.DataFrame()
+    lottery_stats: Dict[str, float] = {}
+    bull: Dict[str, float] = {}
+
+    for active_floor in floors:
+        spec = dataclasses.replace(base_spec, working_income_floor=active_floor)
+        income = rt.extended_income(spec, n_paths, shocks=shocks)
+        for label, rule in rules:
+            outcome = rt.simulate_flexible(paths, strategy, spec, income, rule)
+            rows.append(rt.evaluate(
+                outcome, cfg, spec, gammas,
+                extra={"variant": label, "working_income_floor": active_floor}))
+            if active_floor == floor:
+                ages[label] = outcome.retire_age
+                if label == str(timing_cfg["lottery_rule"]):
+                    lottery, lottery_stats = rt.retirement_lottery(
+                        outcome, spec,
+                        before=int(timing_cfg["window_before"]),
+                        after=int(timing_cfg["window_after"]),
+                        n_buckets=int(timing_cfg["n_buckets"]))
+                    bull = rt.bull_market_test(
+                        outcome, spec, before=int(timing_cfg["window_before"]))
+        LOGGER.info("retirement timing: floor %.2f done", active_floor)
+
+    summary = pd.DataFrame.from_records(rows)
+    conditioning = pd.concat(
+        [rt.value_of_conditioning(summary[summary["working_income_floor"] == f],
+                                  metric).assign(working_income_floor=f)
+         for f in floors], ignore_index=True)
+
+    tables = cfg["run"]["table_dir"]
+    _save_table(summary, tables, "retirement_timing_summary")
+    _save_table(conditioning, tables, "retirement_value_of_conditioning")
+    _save_table(lottery, tables, "retirement_lottery_deciles")
+    _save_table(pd.DataFrame([lottery_stats]), tables, "retirement_lottery_stats")
+    _save_table(pd.DataFrame([bull]), tables, "retirement_bull_market_test")
+
+    figures = [str(plots.plot_retirement_timing(
+        summary, ages, lottery, cfg["run"]["figure_dir"], metric))]
+
+    elapsed = time.perf_counter() - started
+    rp.write_doc_09(
+        Path("docs") / "09_retirement_timing.md",
+        cfg, summary, conditioning, lottery, lottery_stats, bull, figures,
+        {"elapsed_seconds": elapsed},
+    )
+    LOGGER.info("docs/09 written (%.0fs)", elapsed)
+    state.update({"retirement_summary": summary, "retirement_lottery": lottery})
+    return state
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
          4: step4_report, 5: step5_sensitivity, 6: step6_spending,
-         7: step7_glide_path, 8: step8_hedging}
+         7: step7_glide_path, 8: step8_hedging, 9: step9_retirement_timing}
 
 
 def run(config_path: str = "config.yaml",
-        steps: Sequence[int] = (1, 2, 3, 4, 5, 6, 7, 8),
+        steps: Sequence[int] = (1, 2, 3, 4, 5, 6, 7, 8, 9),
         quick: bool = False) -> Dict[str, Any]:
     """Execute the pipeline and return the accumulated state."""
     cfg = dl.load_config(config_path)
@@ -1008,8 +1097,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--steps", nargs="+", type=int,
-                        default=[1, 2, 3, 4, 5, 6, 7, 8],
-                        choices=[1, 2, 3, 4, 5, 6, 7, 8])
+                        default=[1, 2, 3, 4, 5, 6, 7, 8, 9],
+                        choices=[1, 2, 3, 4, 5, 6, 7, 8, 9])
     parser.add_argument("--quick", action="store_true",
                         help="small N for smoke tests")
     parser.add_argument("--verbose", action="store_true")
