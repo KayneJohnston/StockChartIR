@@ -390,6 +390,9 @@ class Facts:
             "highest": float(audit["geometric_mean"].max()),
             "lowest_country": str(
                 audit.loc[audit["geometric_mean"].idxmin(), "country"]),
+            "lowest_ex_war": float(
+                audit.loc[audit["geometric_mean"].idxmin(),
+                          "geometric_mean_ex_war"]),
             "highest_country": str(
                 audit.loc[audit["geometric_mean"].idxmax(), "country"]),
             "career_years": span,

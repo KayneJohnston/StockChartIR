@@ -882,10 +882,13 @@ def section_data(ctx: Any) -> List[Flowable]:
             f"is measuring those at least as much as it is measuring wages. "
             f"Dropping {wg.get('war_years', 'the war years')} lifts the median "
             f"to {pc(wg['measured_ex_war'], 2)} "
-            f"({wg['war_shifted_by'] * 100:+.2f} percentage points). We keep "
-            f"them in the headline number, because a worker alive then lived "
-            f"through them, and note that excluding them only widens the gap "
-            f"we are about to describe."))
+            f"({wg['war_shifted_by'] * 100:+.2f} percentage points) and moves "
+            f"the lowest country, {wg['lowest_country']}, from "
+            f"{pc(wg['lowest'], 2)} to {pc(wg['lowest_ex_war'], 2)} — from an "
+            f"implausible claim about a century of that country's wages to an "
+            f"unremarkable one. We keep them in the headline number, because a "
+            f"worker alive then lived through them, and note that excluding "
+            f"them only widens the gap we are about to describe."))
         out.append(ctx.p(
             f"<b>Our income profile has no term for it.</b> Section 4.3 sets "
             f"real labour income as a deterministic hump peaking at age "

@@ -4648,8 +4648,10 @@ measuring those at least as much as it is measuring wages. Dropping
 {float(wage.get('measured_ex_war', float('nan'))):.2%}
 ({float(wage.get('war_shifted_by', float('nan'))) * 100:+.2f} percentage
 points) and moves the lowest country, {wage.get('lowest_country', '')}, from
-{float(wage.get('lowest', float('nan'))):.2%} to a figure an economic
-historian would recognise. The headline number keeps them, because a worker
+{float(wage.get('lowest', float('nan'))):.2%} to
+{float(wage.get('lowest_ex_war', float('nan'))):.2%} -- from an implausible
+claim about a century of that country's wages to an unremarkable one. The
+headline number keeps them, because a worker
 alive then lived through them; the comparison below is only strengthened by
 excluding them, so nothing here rests on the choice.
 

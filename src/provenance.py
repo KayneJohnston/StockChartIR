@@ -389,6 +389,10 @@ def wage_summary(audit: pd.DataFrame, cfg: Mapping[str, Any]) -> Dict[str, Any]:
         "highest": float(audit["geometric_mean"].max()),
         "lowest_country": str(audit.loc[audit["geometric_mean"].idxmin(),
                                         "country"]),
+        # The same country measured without the war years, which is the
+        # comparison that shows how much of its figure those years carry.
+        "lowest_ex_war": float(audit.loc[audit["geometric_mean"].idxmin(),
+                                         "geometric_mean_ex_war"]),
         "highest_country": str(audit.loc[audit["geometric_mean"].idxmax(),
                                          "country"]),
         "career_multiple": float((1.0 + measured) ** model["career_years"]),
