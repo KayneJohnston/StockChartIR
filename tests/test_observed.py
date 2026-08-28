@@ -173,6 +173,66 @@ def test_housing_returns_are_deflated_and_shaped(jst_rates):
 
 
 # ---------------------------------------------------------------------------
+# smoothing
+# ---------------------------------------------------------------------------
+def test_autocorrelation_of_a_short_series_is_nan():
+    assert np.isnan(obs.first_order_autocorrelation(np.arange(5.0)))
+
+
+def test_autocorrelation_ignores_gaps_rather_than_failing():
+    values = np.array([0.1, np.nan, 0.2, 0.1, 0.2, 0.1, 0.2,
+                       0.1, 0.2, 0.1, 0.2, 0.1])
+    assert np.isfinite(obs.first_order_autocorrelation(values))
+
+
+def test_desmoothing_raises_the_volatility_of_a_smoothed_series():
+    """Build a series with known smoothing and check the inverse recovers it."""
+    rng = np.random.default_rng(7)
+    true = rng.normal(0.06, 0.20, size=400)
+    a = 0.4
+    smoothed = np.empty_like(true)
+    smoothed[0] = true[0]
+    for t in range(1, true.size):
+        smoothed[t] = (1 - a) * true[t] + a * smoothed[t - 1]
+    recovered = obs.desmooth(smoothed, a)
+    assert np.nanstd(smoothed, ddof=1) < np.nanstd(true, ddof=1)
+    assert np.nanstd(recovered[1:], ddof=1) == pytest.approx(
+        np.nanstd(true[1:], ddof=1), rel=0.15)
+
+
+def test_desmoothing_leaves_the_mean_alone():
+    rng = np.random.default_rng(11)
+    values = rng.normal(0.06, 0.10, size=200)
+    got = obs.desmooth(values, 0.3)
+    assert np.nanmean(got) == pytest.approx(np.nanmean(values), abs=0.01)
+
+
+def test_a_series_with_no_smoothing_is_returned_unchanged():
+    values = np.array([0.1, -0.2, 0.3, -0.1, 0.2])
+    assert np.allclose(obs.desmooth(values, -0.3), values)
+    assert np.allclose(obs.desmooth(values, 0.0), values)
+
+
+def test_desmoothing_uses_the_series_own_autocorrelation_by_default():
+    rng = np.random.default_rng(3)
+    values = rng.normal(0.05, 0.1, size=200)
+    for t in range(1, values.size):
+        values[t] = 0.5 * values[t] + 0.5 * values[t - 1]
+    explicit = obs.desmooth(values, obs.first_order_autocorrelation(values))
+    assert np.allclose(obs.desmooth(values), explicit, equal_nan=True)
+
+
+# ---------------------------------------------------------------------------
+# housing -- the silent-NaN trap
+# ---------------------------------------------------------------------------
+def test_housing_without_the_column_raises_rather_than_returning_nan():
+    """The frame that `load_jst` used to return had no housing column."""
+    frame = pd.DataFrame({"iso": ["XXX"], "year": [1990], "cpi": [100.0]})
+    with pytest.raises(KeyError, match="housing_tr"):
+        obs.housing_returns(frame, ["XXX"], np.array([1990]))
+
+
+# ---------------------------------------------------------------------------
 # summarise
 # ---------------------------------------------------------------------------
 def test_summarise_names_the_source_per_country():

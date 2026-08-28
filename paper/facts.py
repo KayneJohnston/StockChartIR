@@ -10,6 +10,9 @@ from __future__ import annotations
 
 import dataclasses
 import functools
+import re
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Dict, Mapping
 
@@ -83,6 +86,31 @@ class Facts:
         """Percentage certainty-equivalent advantage of one strategy over another."""
         return (self.cec(challenger, gamma) / self.cec(incumbent, gamma) - 1.0) * 100.0
 
+    @functools.cached_property
+    def n_tests(self) -> int:
+        """How many tests the suite actually collects.
+
+        Asked of pytest rather than hard-coded, because a number quoted in the
+        paper as evidence of correctness should not be able to go stale. Test
+        functions are not counted by hand: parametrised cases expand to several
+        tests each, so the file count would understate the suite. Falls back to
+        counting ``def test_`` if pytest cannot be run wherever the paper is
+        being built.
+        """
+        try:
+            proc = subprocess.run(
+                [sys.executable, "-m", "pytest", "--collect-only", "-q"],
+                cwd=Path(__file__).resolve().parent.parent,
+                capture_output=True, text=True, timeout=300, check=False)
+            found = re.search(r"(\d+) tests? collected", proc.stdout)
+            if found:
+                return int(found.group(1))
+        except (OSError, subprocess.SubprocessError):    # pragma: no cover
+            pass
+        root = Path(__file__).resolve().parent.parent / "tests"
+        return sum(text.count("def test_")
+                   for text in (f.read_text() for f in root.glob("test_*.py")))
+
     # -- panel -------------------------------------------------------------
     @functools.cached_property
     def panel(self) -> Dict[str, Any]:
@@ -93,6 +121,10 @@ class Facts:
             "n_countries": int(countries["iso"].nunique()),
             "n_tier_a": int((countries["tier"] == "A").sum()),
             "n_tier_b": int((countries["tier"] == "B").sum()),
+            "n_tier_c": int((countries["tier"] == "C").sum()),
+            # Every country whose equity had to be generated, which is the
+            # split the paper's provenance discussion actually turns on.
+            "n_simulated_equity": int((countries["tier"] != "A").sum()),
             "first_year": int(summary["first_year"].min()),
             "last_year": int(summary["last_year"].max()),
             "country_years": int(equity["n_years"].sum()),
@@ -251,8 +283,15 @@ class Facts:
         tail = self.table("provenance_tail_variance")
         comparison = self.table("provenance_panel_comparison")
 
+        # Cells, not countries: one country, one year, one return series. It
+        # is the unit the bootstrap draws, and the only one that can describe a
+        # country whose bonds are observed while its equity is generated.
+        cells_observed = int(countries["returns_empirical_years"].sum())
+        cells_total = cells_observed + int(
+            countries["returns_simulated_years"].sum())
+        recovered = countries[countries["tier"] == "B"]
         available_simulated = int(
-            countries[countries["tier"] == "B"]["usable_years"].sum())
+            countries[countries["tier"] != "A"]["usable_years"].sum())
         total = int(countries["usable_years"].sum())
         whole = contamination[contamination["era"] == "whole panel"]
         recent = contamination[contamination["era"] != "whole panel"].iloc[-1]
@@ -265,11 +304,19 @@ class Facts:
                             / 2.0 ** n_tail)) if n_tail else float("nan")
         return {
             "n_countries": int(len(countries)),
-            "n_simulated": int((countries["tier"] == "B").sum()),
+            "n_simulated": int((countries["tier"] == "C").sum()),
+            "n_partial": int(len(recovered)),
+            "n_simulated_equity": int((countries["tier"] != "A").sum()),
             "n_observed": int((countries["tier"] == "A").sum()),
             "country_years": total,
             "country_years_simulated": available_simulated,
             "share_simulated": available_simulated / total if total else 0.0,
+            "cells": cells_total,
+            "cells_simulated": cells_total - cells_observed,
+            "share_cells_simulated": (cells_total - cells_observed)
+            / cells_total if cells_total else 0.0,
+            "recovered_countries": [str(c) for c in recovered["country"]],
+            "recovered_years": int(recovered["returns_empirical_years"].sum()),
             "share_simulated_recent": float(era["share_simulated"].iloc[-1]),
             "recent_era": str(era["era"].iloc[-1]),
             "intl_simulated": float(
@@ -285,6 +332,34 @@ class Facts:
             "tail_median_ratio": float(tail["ratio"].median()),
             "tail_p_value": p_value,
             "comparison": comparison,
+            "housing": self._housing(),
+        }
+
+    def _housing(self) -> Dict[str, Any]:
+        """The observed asset class the paper measures but does not invest in."""
+        try:
+            audit = self.table("provenance_housing_audit")
+        except FileNotFoundError:                       # pragma: no cover
+            return {"countries": 0}
+        if audit.empty:
+            return {"countries": 0}
+        return {
+            "countries": int(len(audit)),
+            "country_years": int(audit["years"].sum()),
+            "first_year": int(audit["first_year"].min()),
+            "last_year": int(audit["last_year"].max()),
+            "mean": float(audit["mean"].median()),
+            "sd": float(audit["sd"].median()),
+            "sd_desmoothed": float(audit["sd_desmoothed"].median()),
+            "autocorrelation": float(audit["autocorrelation"].median()),
+            "equity_mean": float(audit["equity_mean"].median()),
+            "equity_sd": float(audit["equity_sd"].median()),
+            "equity_autocorrelation": float(
+                audit["equity_autocorrelation"].median()),
+            "n_more_autocorrelated": int(
+                (audit["autocorrelation"]
+                 > audit["equity_autocorrelation"]).sum()),
+            "frame": audit,
         }
 
     @functools.cached_property

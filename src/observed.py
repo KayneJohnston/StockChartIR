@@ -149,6 +149,12 @@ def housing_returns(jst: pd.DataFrame, isos: Sequence[str],
     housing series is not comparable with a traded one until it has been
     de-smoothed.
     """
+    if "housing_tr" not in jst.columns:
+        raise KeyError(
+            "the frame has no 'housing_tr' column, so this would return "
+            "nothing but NaN; pass the workbook frame from "
+            "`data_loader.load_jst`, which retains it"
+        )
     out = np.full((years.size, len(isos)), np.nan)
     for j, iso in enumerate(isos):
         block = jst[jst["iso"] == iso].sort_values("year")
@@ -159,6 +165,37 @@ def housing_returns(jst: pd.DataFrame, isos: Sequence[str],
             inflation = cpi / np.roll(cpi, 1) - 1.0
         inflation[0] = np.nan
         out[:, j] = _real(_aligned(block, "housing_tr", years), inflation)
+    return out
+
+
+def first_order_autocorrelation(series: np.ndarray) -> float:
+    """Lag-one autocorrelation of a series, ignoring gaps."""
+    values = np.asarray(series, dtype=float)
+    values = values[np.isfinite(values)]
+    if values.size < 10:
+        return float("nan")
+    return float(np.corrcoef(values[:-1], values[1:])[0, 1])
+
+
+def desmooth(series: np.ndarray, rho: float | None = None) -> np.ndarray:
+    """Undo first-order appraisal smoothing, Geltner-style.
+
+    An appraisal-based index reports ``r_t = (1 − a)·r*_t + a·r_{t-1}``, where
+    ``r*`` is the return a traded market would have shown. Inverting that gives
+    ``r*_t = (r_t − a·r_{t-1}) / (1 − a)``, which restores the volatility the
+    smoothing removed while leaving the mean essentially untouched.
+
+    ``rho`` defaults to the series' own lag-one autocorrelation. A series that
+    is not positively autocorrelated is returned unchanged, since there is no
+    smoothing to undo.
+    """
+    values = np.asarray(series, dtype=float)
+    if rho is None:
+        rho = first_order_autocorrelation(values)
+    if not np.isfinite(rho) or rho <= 0.0:
+        return values.copy()
+    out = np.full_like(values, np.nan)
+    out[1:] = (values[1:] - rho * values[:-1]) / (1.0 - rho)
     return out
 
 

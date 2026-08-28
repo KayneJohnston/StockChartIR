@@ -38,6 +38,7 @@ import numpy as np
 import pandas as pd
 
 from . import data_loader as dl
+from . import observed as obs
 
 LOGGER = logging.getLogger(__name__)
 
@@ -171,6 +172,75 @@ def country_provenance(panel: dl.Panel) -> pd.DataFrame:
             "note": note,
         })
     return pd.DataFrame.from_records(rows)
+
+
+def housing_audit(jst: pd.DataFrame, panel: dl.Panel) -> pd.DataFrame:
+    """Audit the housing total returns the panel holds but does not invest in.
+
+    Housing is the fourth asset of the "Rate of Return on Everything" project
+    and is fully empirical for all sixteen observed countries -- the largest
+    block of genuine data in the sources that no part of this pipeline reads.
+    It is audited here rather than added to the investable set, because an
+    appraisal-based index is not comparable with a traded one until it has been
+    de-smoothed, and the de-smoothing is itself an assumption.
+
+    One row per country: coverage, the raw moments, the lag-one
+    autocorrelation that measures the smoothing, and the standard deviation
+    that survives undoing it. The equity column is the same country's own
+    domestic equity over the same calendar, so the comparison is like for like.
+    """
+    years = np.asarray(panel.years)
+    isos = [iso for iso, tier in zip(panel.countries, panel.tier)
+            if tier == "A"]
+    if not isos:
+        return pd.DataFrame()
+    housing = obs.housing_returns(jst, isos, years)
+    rows: List[Dict[str, Any]] = []
+    for j, iso in enumerate(isos):
+        column = housing[:, j]
+        finite = np.isfinite(column)
+        if finite.sum() < 10:
+            continue
+        equity = panel.dom_eq[:, panel.country_index(iso)]
+        rho = obs.first_order_autocorrelation(column)
+        smoothed = obs.desmooth(column, rho)
+        rows.append({
+            "iso": iso,
+            "country": dl.ISO_TO_NAME.get(iso, iso),
+            "years": int(finite.sum()),
+            "first_year": int(years[finite].min()),
+            "last_year": int(years[finite].max()),
+            "mean": float(np.nanmean(column)),
+            "sd": float(np.nanstd(column, ddof=1)),
+            "autocorrelation": rho,
+            "sd_desmoothed": float(np.nanstd(smoothed, ddof=1)),
+            "equity_mean": float(np.nanmean(equity)),
+            "equity_sd": float(np.nanstd(equity, ddof=1)),
+            "equity_autocorrelation": obs.first_order_autocorrelation(equity),
+        })
+    return pd.DataFrame.from_records(rows)
+
+
+def housing_summary(audit: pd.DataFrame) -> Dict[str, Any]:
+    """Headline numbers from :func:`housing_audit`, for the prose to quote."""
+    if audit.empty:
+        return {"countries": 0, "country_years": 0}
+    return {
+        "countries": int(len(audit)),
+        "country_years": int(audit["years"].sum()),
+        "first_year": int(audit["first_year"].min()),
+        "last_year": int(audit["last_year"].max()),
+        "mean": float(audit["mean"].median()),
+        "sd": float(audit["sd"].median()),
+        "sd_desmoothed": float(audit["sd_desmoothed"].median()),
+        "autocorrelation": float(audit["autocorrelation"].median()),
+        "equity_mean": float(audit["equity_mean"].median()),
+        "equity_sd": float(audit["equity_sd"].median()),
+        "equity_autocorrelation": float(
+            audit["equity_autocorrelation"].median()),
+        "n_more_autocorrelated": int(
+            (audit["autocorrelation"] > audit["equity_autocorrelation"]).sum()),
+    }
 
 
 def recovered_series(panel: dl.Panel) -> pd.DataFrame:

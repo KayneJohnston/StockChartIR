@@ -160,6 +160,58 @@ class TestRecoveredSeries:
         assert int(frame.loc["bond", "last_year"]) == int(years[column].max())
 
 
+class TestHousingAudit:
+    @pytest.fixture()
+    def jst_with_housing(self, observed_panel) -> pd.DataFrame:
+        """A workbook block carrying a deliberately smoothed housing series."""
+        rng = np.random.default_rng(19)
+        rows = []
+        for iso in observed_panel.countries:
+            level, smoothed = 100.0, 0.06
+            for year in observed_panel.years:
+                shock = float(rng.normal(0.06, 0.18))
+                smoothed = 0.5 * smoothed + 0.5 * shock
+                level *= 1.02
+                rows.append({"iso": iso, "year": int(year), "cpi": level,
+                             "housing_tr": (1 + smoothed) * 1.02 - 1.0})
+        return pd.DataFrame.from_records(rows)
+
+    def test_it_audits_only_the_observed_countries(self, jst_with_housing,
+                                                   mixed_panel) -> None:
+        frame = pv.housing_audit(jst_with_housing, mixed_panel)
+        assert set(frame["iso"]) == {
+            iso for iso, t in zip(mixed_panel.countries, mixed_panel.tier)
+            if t == "A"}
+
+    def test_it_reports_the_smoothing_it_undoes(self, jst_with_housing,
+                                                observed_panel) -> None:
+        frame = pv.housing_audit(jst_with_housing, observed_panel)
+        assert (frame["autocorrelation"] > 0).all(), (
+            "the fixture series is smoothed by construction"
+        )
+        assert (frame["sd_desmoothed"] > frame["sd"]).all(), (
+            "undoing smoothing must restore volatility, never remove it"
+        )
+
+    def test_a_panel_with_no_observed_countries_audits_nothing(
+            self, jst_with_housing, mixed_panel) -> None:
+        allsim = _retier(mixed_panel, ("C",) * len(mixed_panel.countries),
+                         mixed_panel.provenance)
+        assert pv.housing_audit(jst_with_housing, allsim).empty
+
+    def test_the_summary_of_an_empty_audit_is_safe_to_read(self) -> None:
+        got = pv.housing_summary(pd.DataFrame())
+        assert got["countries"] == 0 and got["country_years"] == 0
+
+    def test_the_summary_medians_match_the_audit(self, jst_with_housing,
+                                                 observed_panel) -> None:
+        frame = pv.housing_audit(jst_with_housing, observed_panel)
+        got = pv.housing_summary(frame)
+        assert got["countries"] == len(frame)
+        assert got["country_years"] == int(frame["years"].sum())
+        assert got["sd"] == pytest.approx(float(frame["sd"].median()))
+
+
 class TestPanelShares:
     def test_shares_are_consistent_with_the_availability_mask(self, mixed_panel
                                                               ) -> None:

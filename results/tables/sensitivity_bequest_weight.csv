@@ -17,21 +17,21 @@ bequest_weight,strategy,label,cec
 2.0,international_equity,100% International Equity,1.0446254363936025
 5.0,international_equity,100% International Equity,1.055124198658898
 10.0,international_equity,100% International Equity,1.0716448821639522
-0.0,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.8665223832470026
-0.5,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.8680451771257155
-1.0,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.869556182890981
-2.0,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.8725435072685855
-5.0,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.8812395231485444
-10.0,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.8949159640018777
-0.0,target_date_fund,Target-Date Fund (glide path),0.9273665461618616
-0.5,target_date_fund,Target-Date Fund (glide path),0.9289279918037778
-1.0,target_date_fund,Target-Date Fund (glide path),0.9304767816827674
-2.0,target_date_fund,Target-Date Fund (glide path),0.9335371304345791
-5.0,target_date_fund,Target-Date Fund (glide path),0.9424328747984205
-10.0,target_date_fund,Target-Date Fund (glide path),0.9563837720994661
-0.0,bills_only,100% Bills (cash),0.730292002259426
-0.5,bills_only,100% Bills (cash),0.7315183245291125
-1.0,bills_only,100% Bills (cash),0.7327346798639026
-2.0,bills_only,100% Bills (cash),0.7351380700828921
-5.0,bills_only,100% Bills (cash),0.7421235662194036
-10.0,bills_only,100% Bills (cash),0.7530767826126609
+0.0,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.8688527734990276
+0.5,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.8703816782307612
+1.0,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.871898765087507
+2.0,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.8748981638344984
+5.0,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.8836297253898089
+10.0,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.8973633023007408
+0.0,target_date_fund,Target-Date Fund (glide path),0.9302479305385409
+0.5,target_date_fund,Target-Date Fund (glide path),0.9318140988511417
+1.0,target_date_fund,Target-Date Fund (glide path),0.933367572050546
+2.0,target_date_fund,Target-Date Fund (glide path),0.936437171701132
+5.0,target_date_fund,Target-Date Fund (glide path),0.9453597821629944
+10.0,target_date_fund,Target-Date Fund (glide path),0.9593527381714388
+0.0,bills_only,100% Bills (cash),0.731137689595265
+0.5,bills_only,100% Bills (cash),0.7323643346639085
+1.0,bills_only,100% Bills (cash),0.7335810010737747
+2.0,bills_only,100% Bills (cash),0.7359849791218606
+5.0,bills_only,100% Bills (cash),0.7429719786461426
+10.0,bills_only,100% Bills (cash),0.7539269206364982

@@ -1679,19 +1679,22 @@ def plot_provenance(era: pd.DataFrame, contamination: pd.DataFrame,
         ax = axes[0]
         block = era.copy()
         x = np.arange(len(block))
-        empirical = (block["country_years"] - block["simulated"]).to_numpy(float)
+        # Cells, not country-years: one country, one year, one return series.
+        # Mixing the two units here would understate the observed bar.
+        total = block.get("return_cells", block["country_years"]).to_numpy(float)
         simulated = block["simulated"].to_numpy(float)
+        empirical = total - simulated
         ax.bar(x, empirical, color=_colour(0), width=0.62,
                label="observed (Jordà–Schularick–Taylor)")
         ax.bar(x, simulated, bottom=empirical, color=_colour(1), width=0.62,
                label="simulated (factor model)")
         for i, row in enumerate(block.itertuples()):
-            ax.text(i, row.country_years * 1.02,
+            ax.text(i, total[i] * 1.02,
                     f"{row.share_simulated:.0%}", ha="center", fontsize=8,
                     color=_colour(1))
         ax.set_xticks(x)
         ax.set_xticklabels(block["era"], fontsize=8)
-        ax.set_ylabel("Country-years in the panel")
+        ax.set_ylabel("Return cells in the panel (country x year x series)")
         ax.set_title("The simulated share grows over time\n"
                      "(label = share simulated)", fontsize=10)
         ax.legend(fontsize=8, loc="upper left")

@@ -176,10 +176,10 @@ label therefore cannot drift away from the data it describes.
 
 Tier B exists because four countries have real interest-rate histories in the
 sources but no equity return series. Simulating a series a source can supply
-would be indefensible, so those cells are rebuilt and recorded --
-{len(tier_b)} countries, and the count of recovered country-years is in
-`14_data_provenance_and_trust.md`. Their equity is still generated, which is
-why they are not Tier A.
+would be indefensible, so those cells are rebuilt from the published rates and
+recorded as observations. `14_data_provenance.md` section 3.1 lists what was
+recovered and over which years. Their equity is still generated, which is why
+they are not Tier A.
 
 Read the headline results on the understanding that the Tier-A countries carry
 the empirical content. Section 5 of `04_replicated_results_and_tables.md`
@@ -269,7 +269,10 @@ the panel -- rather than bolting it on during simulation -- is what lets the
 bootstrap preserve domestic/international correlation for free: a drawn
 country-year carries both legs together.
 
-### 4.3 Tier-B calibration
+### 4.3 Calibrating the extension, and recovering what can be recovered
+
+The {len(tier_b) + len(tier_c)} countries outside Tier A are built in four
+steps, and then a fifth step takes back everything a source can supply.
 
 1. **Inflation** is empirical wherever a source exists: JST CPI for Canada and
    Ireland, Clio-Infra CPI inflation elsewhere. Clio-Infra ends in 2010, so
@@ -277,7 +280,7 @@ country-year carries both legs together.
 2. **Equity, bond and bill real returns** come from a single-factor model
    estimated on the Tier-A cross-section, `x_it = alpha_i + beta_i * f_t +
    eps_it`, where `f_t` is the equally weighted cross-country mean of that
-   series. Each Tier-B country draws a *donor* Tier-A country and inherits its
+   series. Each country draws a *donor* Tier-A country and inherits its
    `(alpha, beta)` and its full residual covariance across equity/bond/bill,
    so the synthetic market has a realistic cross-asset correlation structure
    rather than an assumed one.
@@ -286,13 +289,46 @@ country-year carries both legs together.
    Slovenia 1990, ...) instead of pretending every market has 131 years of
    history.
 4. The nominal CPI level and USD rate are cumulated from the inflation series
-   under a PPP-consistent rule, which is what folds Tier-B countries into other
+   under a PPP-consistent rule, which is what folds these countries into other
    countries' international leg.
+5. **Simulated cells are overwritten wherever a source carries the real
+   thing.** Four countries have interest-rate histories the return databases
+   lack, and generating a series a source can supply would be indefensible.
+   This is what separates Tier B from Tier C.
 
-Tier-B countries with short histories inherit short-sample noise: Poland,
-Slovenia and Malta post extreme geometric means over 25-30 year windows drawn
-from a strong era for the world equity factor. That is precisely why the
-headline bootstrap weights the domestic-country draw by usable history (see
+**The recovery arithmetic.** A long-term yield gives a bond total return under
+a constant-maturity assumption,
+
+```
+r_t = y_{{t-1}} + D * (y_{{t-1}} - y_t)
+```
+
+-- one year of carry at last year's yield, plus the capital gain a
+duration-`D` bond makes when the yield falls -- with `D` set to
+{float(data_cfg.get('bond_duration_years', 7.0)):g} years
+(`data.bond_duration_years`). A bill return is the *lagged* short rate, since
+a bill bought at `t-1` earns the rate quoted then. Both are deflated by the
+country's own price index. The first year of each series is undefined and is
+left missing rather than filled.
+
+Three constraints bound this, and each costs coverage:
+
+* **A real return needs a real deflator.** A genuine nominal yield divided by a
+  drawn price index is not an observation, so a cell counts as observed only
+  where that country's inflation is itself empirical.
+* **No equity is recovered**, because no available source carries an equity
+  return for these countries. That is why they are Tier B and not Tier A, and
+  why the international-leg contamination in `14_data_provenance.md` is
+  unchanged by the exercise.
+* **The reconstruction is first-order.** It ignores convexity and holds
+  duration constant, so the recovered series are smoother than a true
+  total-return index. They understate bond volatility; they do not invent bond
+  returns.
+
+Countries with short histories inherit short-sample noise: Poland, Slovenia
+and Malta post extreme geometric means over 25-30 year windows drawn from a
+strong era for the world equity factor. That is precisely why the headline
+bootstrap weights the domestic-country draw by usable history (see
 `02_multicountry_block_bootstrap.md`, section 3.2) and why the Tier-A-only
 replication is reported alongside.
 
@@ -4473,7 +4509,9 @@ def write_doc_14(
     tail = frames["tail"]
     comparison = frames["panel_comparison"]
     recovered = frames.get("recovered", pd.DataFrame())
+    housing = frames.get("housing", pd.DataFrame())
     summary = notes["summary"]
+    house = notes.get("housing", {})
     verdict = notes["tail_verdict"]
 
     digest_tbl = md_table(_compact(
@@ -4540,6 +4578,15 @@ def write_doc_14(
         else 0
     recovered_countries = sorted(set(recovered["country"])) if len(recovered) \
         else []
+
+    housing_tbl = md_table(_compact(
+        housing, ["country", "years", "first_year", "last_year", "mean", "sd",
+                  "autocorrelation", "sd_desmoothed", "equity_sd"],
+        {"country": "Country", "years": "Years", "first_year": "From",
+         "last_year": "To", "mean": "Mean real return",
+         "sd": "s.d. (as published)", "autocorrelation": "Autocorrelation",
+         "sd_desmoothed": "s.d. de-smoothed", "equity_sd": "Equity s.d."}),
+        floatfmt="{:.3f}") if len(housing) else "_Not audited._"
 
     adv38 = float(notes["advantage_dev38"])
     adv16 = float(notes["advantage_jst16"])
@@ -4635,6 +4682,47 @@ environment is governed by an egress policy that denies the macrohistory host
 itself along with every other bulk macro-data provider tested, and guessing at
 redistributed mirrors would have reproduced exactly the unverifiable provenance
 this document exists to warn about.
+
+### 3.2 The asset class nobody here invests in
+
+The macro file carries a fourth asset the "Rate of Return on Everything"
+project measured and nothing in this pipeline reads: **housing total returns**,
+empirical for all {int(house.get('countries', 0))} observed countries over
+{int(house.get('country_years', 0)):,} country-years
+({int(house.get('first_year', 0))}-{int(house.get('last_year', 0))}). That is
+the largest block of genuine data in the sources that no result in this project
+uses, so it is audited here rather than left unmentioned.
+
+{housing_tbl}
+
+The headline comparison is the one the source project is known for. Median real
+housing returns are **{float(house.get('mean', float('nan'))):.1%}** against
+**{float(house.get('equity_mean', float('nan'))):.1%}** for the same countries'
+equity -- indistinguishable -- at a published standard deviation of
+{float(house.get('sd', float('nan'))):.1%} versus
+{float(house.get('equity_sd', float('nan'))):.1%}. Equity-like returns at
+two-fifths the volatility would dominate every portfolio in this project.
+
+**It is not added to the investable set, and the table says why.** A house price
+index is built from appraisals and sparse transactions, which smooths it: the
+median lag-one autocorrelation of housing returns is
+{float(house.get('autocorrelation', float('nan'))):+.2f} against
+{float(house.get('equity_autocorrelation', float('nan'))):+.2f} for equity, and
+housing is the more autocorrelated series in
+{int(house.get('n_more_autocorrelated', 0))} of
+{int(house.get('countries', 0))} countries. Undoing that smoothing to first
+order -- ``r*_t = (r_t − a·r_{{t-1}}) / (1 − a)`` with each country's own
+``a`` -- raises the median standard deviation from
+{float(house.get('sd', float('nan'))):.1%} to
+{float(house.get('sd_desmoothed', float('nan'))):.1%}. Most of the apparent
+free lunch is a measurement artefact.
+
+Even de-smoothed the series is not investable as written: it is an unlevered,
+untaxed, frictionless total return on the national housing stock, with no
+transaction costs, no vacancy, no maintenance and no concentration in a single
+property. Treating it as a fourth sleeve would overstate what a household can
+actually buy, and it would change the headline result. So it is measured,
+recorded, and left out — deliberately, and on the record.
 
 ## 4. Is the workbook genuine?
 
