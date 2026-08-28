@@ -978,3 +978,63 @@ def plot_retirement_timing(summary: pd.DataFrame, ages: Mapping[str, np.ndarray]
         ax.legend(handles, labs, fontsize=8, loc="upper left")
         fig.tight_layout()
     return _save(fig, directory, name)
+
+
+# ---------------------------------------------------------------------------
+# Step 10 - conditioning the savings rate
+# ---------------------------------------------------------------------------
+def plot_saving(profiles: pd.DataFrame, frontier: pd.DataFrame,
+                conditioning: pd.DataFrame, directory: str | Path,
+                target_mean: float = 0.10,
+                name: str = "fig25_savings_rate") -> Path:
+    """The solved savings hump, the level question, and what conditioning adds."""
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(1, 3, figsize=(16.5, 5.0))
+
+        ax = axes[0]
+        for i, gamma in enumerate(sorted(profiles["risk_aversion"].unique())):
+            block = profiles[profiles["risk_aversion"] == gamma] \
+                .sort_values("age")
+            ax.plot(block["age"], block["savings_rate"] * 100, "-o",
+                    markersize=3, color=_colour(i), linewidth=1.8,
+                    label=f"solved, γ = {gamma:g}")
+        ax.axhline(target_mean * 100, color="black", linestyle="--",
+                   linewidth=1.4, label=f"flat {target_mean:.0%} (same average)")
+        ax.set_xlabel("Age")
+        ax.set_ylabel("Savings rate (% of labour income)")
+        ax.set_title("Save least when young, most in peak-earning years",
+                     fontsize=10)
+        ax.legend(fontsize=8)
+
+        ax = axes[1]
+        cec_cols = [c for c in frontier.columns if c.startswith("cec_gamma")]
+        for i, col in enumerate(cec_cols):
+            ax.plot(frontier["savings_rate"] * 100, frontier[col], "-o",
+                    markersize=4, color=_colour(i),
+                    label=col.replace("cec_gamma", "γ = "))
+            peak = frontier.loc[frontier[col].idxmax()]
+            ax.scatter([peak["savings_rate"] * 100], [peak[col]],
+                       color=_colour(i), s=70, zorder=4, edgecolor="white",
+                       linewidth=1.2)
+        ax.set_xlabel("Constant savings rate (%)")
+        ax.set_ylabel("Certainty equivalent consumption")
+        ax.set_title("The model cannot identify the level\n"
+                     "(dots mark each optimum)", fontsize=10)
+        ax.legend(fontsize=8)
+
+        ax = axes[2]
+        for i, rule in enumerate(sorted(conditioning["rule"].unique())):
+            block = conditioning[conditioning["rule"] == rule] \
+                .sort_values("sensitivity")
+            ax.plot(block["sensitivity"], block["vs_base_pct"], "-o",
+                    markersize=4, color=_colour(i), linewidth=1.8, label=rule)
+        ax.axhline(0, color="black", linewidth=1.2)
+        ax.axvline(0, color="grey", linewidth=0.8, linestyle=":")
+        ax.set_xscale("symlog", linthresh=0.005)
+        ax.set_xlabel("Sensitivity of the savings rate to the signal")
+        ax.set_ylabel("CEC vs the same rule with no conditioning (%)")
+        ax.set_title("Conditioning on your own position beats\n"
+                     "conditioning on the market", fontsize=10)
+        ax.legend(fontsize=8)
+        fig.tight_layout()
+    return _save(fig, directory, name)

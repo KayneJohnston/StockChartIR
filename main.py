@@ -30,6 +30,7 @@ from src import lifecycle as lc
 from src import plots
 from src import report as rp
 from src import retirement as rt
+from src import saving as sav
 from src import sensitivity as sn
 from src import spending as spg
 from src import utility as ut
@@ -65,6 +66,9 @@ def _apply_quick(cfg: Dict[str, Any]) -> Dict[str, Any]:
     if "sensitivity" in cfg:
         cfg["sensitivity"]["n_paths"] = 4000
         cfg["sensitivity"]["redraw_n_paths"] = 2000
+    if "saving" in cfg:
+        cfg["saving"]["n_paths"] = 2000
+        cfg["saving"]["shape_sweeps"] = 1
     if "retirement_timing" in cfg:
         cfg["retirement_timing"]["n_paths"] = 4000
     if "hedging" in cfg:
@@ -1059,15 +1063,193 @@ def step9_retirement_timing(cfg: Dict[str, Any], state: Dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
+# Step 10
+# ---------------------------------------------------------------------------
+def step10_saving(cfg: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
+    """Solve the savings profile and test conditioning; write docs/10."""
+    save_cfg = cfg.get("saving", {})
+    if not save_cfg.get("enabled", False):
+        LOGGER.info("savings-rate analysis disabled; skipping step 10")
+        return state
+    LOGGER.info("=== STEP 10: conditioning the savings rate ===")
+    started = time.perf_counter()
+
+    panel = state["panel"]
+    spec = dataclasses.replace(
+        state.get("spec") or lc.spec_from_config(cfg),
+        working_income_floor=float(save_cfg["working_income_floor"]))
+    gammas = [float(g) for g in cfg["utility"]["risk_aversions"]]
+    baseline_gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    metric = f"cec_gamma{baseline_gamma:g}"
+    n_paths = int(save_cfg["n_paths"])
+    target_mean = float(save_cfg["target_mean_rate"])
+    floor, cap = float(save_cfg["rate_floor"]), float(save_cfg["rate_cap"])
+
+    sampler = bs.from_config(panel, cfg, horizon_years=spec.horizon)
+    paths = sampler.sample(n_paths, chunk_size=int(cfg["bootstrap"]["chunk_size"]))
+    rng = np.random.default_rng(int(cfg["run"]["seed"]))
+    income = rt.extended_income(
+        spec, n_paths, shocks=lc.draw_income_shocks(n_paths, spec.horizon, rng))
+    strategy = lc.build_strategies(cfg, spec)[str(save_cfg["strategy"])]
+    fixed_retirement = rt.FixedAgeRule(age=spec.age_retire)
+
+    def simulate(saving_rule, retirement_rule=None):
+        return rt.simulate_flexible(
+            paths, strategy, spec, income,
+            retirement_rule or fixed_retirement, saving=saving_rule)
+
+    def cec_of(saving_rule, gamma, retirement_rule=None):
+        outcome = simulate(saving_rule, retirement_rule)
+        return rt.evaluate(outcome, cfg, spec, [gamma])[f"cec_gamma{gamma:g}"]
+
+    # --- level: the constant-rate frontier --------------------------------
+    frontier_rows: List[Dict[str, Any]] = []
+    for rate in save_cfg["constant_rate_grid"]:
+        outcome = simulate(sav.ConstantRateRule(rate_value=float(rate)))
+        row = rt.evaluate(outcome, cfg, spec, gammas,
+                          extra={"variant": f"Constant {float(rate):.0%}",
+                                 "savings_rate": float(rate)})
+        frontier_rows.append(row)
+    frontier = pd.DataFrame.from_records(frontier_rows)
+
+    flat = np.full(spec.horizon, target_mean)
+    baseline_outcome = simulate(sav.AgeProfileRule(flat))
+    target = sav.wealth_to_income_target(baseline_outcome, income, spec.horizon)
+
+    # --- shape: solved at a pinned average rate ---------------------------
+    profiles: List[pd.DataFrame] = []
+    shape_rows: List[Dict[str, Any]] = []
+    solved: Dict[float, np.ndarray] = {}
+    for gamma in gammas:
+        flat_cec = cec_of(sav.AgeProfileRule(flat), gamma)
+        schedule, best = sav.optimise_shape_at_fixed_mean(
+            lambda sched, g=gamma: cec_of(sav.AgeProfileRule(sched), g),
+            spec.n_working, spec.horizon, target_mean,
+            save_cfg["shape_multiplier_grid"], floor=floor, cap=cap,
+            n_sweeps=int(save_cfg["shape_sweeps"]))
+        solved[gamma] = schedule
+        frame = sav.profile_frame(schedule, spec, f"solved γ={gamma:g}")
+        frame["risk_aversion"] = gamma
+        profiles.append(frame)
+        shape_rows.append({
+            "risk_aversion": gamma,
+            "flat_cec": flat_cec,
+            "solved_cec": best,
+            "gain_vs_flat_pct": (best / flat_cec - 1.0) * 100.0,
+            "realised_mean_rate": float(schedule[:spec.n_working].mean()),
+            "peak_age": int(spec.ages[int(np.argmax(schedule[:spec.n_working]))]),
+            "peak_rate": float(schedule[:spec.n_working].max()),
+        })
+        LOGGER.info("saving shape solved for gamma=%.1f: CEC %.5f (%+.2f%%)",
+                    gamma, best, shape_rows[-1]["gain_vs_flat_pct"])
+    profile_frame = pd.concat(profiles, ignore_index=True)
+    shape_summary = pd.DataFrame.from_records(shape_rows)
+
+    deviation = sav.deviation_profile(
+        lambda sched: cec_of(sav.AgeProfileRule(sched), baseline_gamma),
+        solved[baseline_gamma], spec.n_working, spec.ages)
+
+    # --- conditioning, layered on the solved shape ------------------------
+    base_schedule = solved[baseline_gamma]
+    base_cec = cec_of(sav.AgeProfileRule(base_schedule), baseline_gamma)
+    conditioning_rows: List[Dict[str, Any]] = []
+    variants: List[Dict[str, Any]] = []
+    for k in save_cfg["on_track_sensitivity"]:
+        rule = sav.OnTrackRule(target=target, base=base_schedule,
+                               sensitivity=float(k), floor=floor, cap=cap)
+        outcome = simulate(rule)
+        row = rt.evaluate(outcome, cfg, spec, gammas,
+                          extra={"variant": f"On-track k={float(k):g}"})
+        variants.append(row)
+        conditioning_rows.append({
+            "rule": "On-track (wealth vs age target)",
+            "sensitivity": float(k), "cec": row[metric],
+            "vs_base_pct": (row[metric] / base_cec - 1.0) * 100.0,
+            "mean_savings_rate": row["mean_savings_rate"]})
+    for k in save_cfg["return_sensitivity"]:
+        rule = sav.ReturnResponsiveRule(base=base_schedule,
+                                        sensitivity=float(k),
+                                        floor=floor, cap=cap)
+        outcome = simulate(rule)
+        row = rt.evaluate(outcome, cfg, spec, gammas,
+                          extra={"variant": f"Return-responsive k={float(k):g}"})
+        variants.append(row)
+        conditioning_rows.append({
+            "rule": "Return-responsive (last year's return)",
+            "sensitivity": float(k), "cec": row[metric],
+            "vs_base_pct": (row[metric] / base_cec - 1.0) * 100.0,
+            "mean_savings_rate": row["mean_savings_rate"]})
+    conditioning = pd.DataFrame.from_records(conditioning_rows)
+
+    shape_row = rt.evaluate(simulate(sav.AgeProfileRule(base_schedule)), cfg,
+                            spec, gammas, extra={"variant": "Solved shape"})
+    matched = sav.matched_rate_comparison(
+        pd.concat([frontier, pd.DataFrame([shape_row] + variants)],
+                  ignore_index=True), metric)
+
+    # --- does it stack with retirement-side conditioning? -----------------
+    combined = pd.DataFrame()
+    if save_cfg.get("combine_with_retirement", False):
+        entry = save_cfg["retirement_rule"]
+        flexible_retirement = rt.build(str(entry["key"]),
+                                       **dict(entry.get("params", {}) or {}))
+        best_k = float(conditioning.loc[
+            conditioning[conditioning["rule"].str.contains("track")]
+            ["vs_base_pct"].idxmax(), "sensitivity"])
+        best_saving = sav.OnTrackRule(target=target, base=base_schedule,
+                                      sensitivity=best_k, floor=floor, cap=cap)
+        rows = []
+        for label, srule, rrule in (
+            ("Neither", sav.ConstantRateRule(target_mean), fixed_retirement),
+            ("Savings conditioning only", best_saving, fixed_retirement),
+            ("Retirement conditioning only", sav.ConstantRateRule(target_mean),
+             flexible_retirement),
+            ("Both", best_saving, flexible_retirement),
+        ):
+            outcome = simulate(srule, rrule)
+            rows.append(rt.evaluate(outcome, cfg, spec, gammas,
+                                    extra={"variant": label}))
+        combined = pd.DataFrame.from_records(rows)
+        neither = float(combined.loc[combined.variant == "Neither", metric].iloc[0])
+        combined["vs_neither_pct"] = (combined[metric] / neither - 1.0) * 100.0
+
+    tables = cfg["run"]["table_dir"]
+    _save_table(frontier, tables, "saving_constant_rate_frontier")
+    _save_table(profile_frame, tables, "saving_solved_profiles")
+    _save_table(shape_summary, tables, "saving_shape_summary")
+    _save_table(conditioning, tables, "saving_conditioning")
+    _save_table(deviation, tables, "saving_deviation_profile")
+    if len(matched):
+        _save_table(matched, tables, "saving_matched_rate")
+    if len(combined):
+        _save_table(combined, tables, "saving_combined_with_retirement")
+
+    figures = [str(plots.plot_saving(profile_frame, frontier, conditioning,
+                                     cfg["run"]["figure_dir"], target_mean))]
+
+    elapsed = time.perf_counter() - started
+    rp.write_doc_10(
+        Path("docs") / "10_savings_rate.md",
+        cfg, frontier, profile_frame, shape_summary, conditioning, matched,
+        deviation, combined, figures, {"elapsed_seconds": elapsed},
+    )
+    LOGGER.info("docs/10 written (%.0fs)", elapsed)
+    state.update({"saving_profiles": profile_frame,
+                  "saving_conditioning": conditioning})
+    return state
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
          4: step4_report, 5: step5_sensitivity, 6: step6_spending,
-         7: step7_glide_path, 8: step8_hedging, 9: step9_retirement_timing}
+         7: step7_glide_path, 8: step8_hedging, 9: step9_retirement_timing,
+         10: step10_saving}
 
 
 def run(config_path: str = "config.yaml",
-        steps: Sequence[int] = (1, 2, 3, 4, 5, 6, 7, 8, 9),
+        steps: Sequence[int] = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10),
         quick: bool = False) -> Dict[str, Any]:
     """Execute the pipeline and return the accumulated state."""
     cfg = dl.load_config(config_path)
@@ -1097,8 +1279,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--steps", nargs="+", type=int,
-                        default=[1, 2, 3, 4, 5, 6, 7, 8, 9],
-                        choices=[1, 2, 3, 4, 5, 6, 7, 8, 9])
+                        default=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+                        choices=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
     parser.add_argument("--quick", action="store_true",
                         help="small N for smoke tests")
     parser.add_argument("--verbose", action="store_true")

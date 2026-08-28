@@ -402,3 +402,40 @@ retirement_timing:
     - {key: wealth_multiple, params: {multiple: 30, min_age: 55, max_age: 70},
        label: "Wealth trigger 30x income"}
   lottery_rule: "Wealth trigger 25x income"
+
+# ---------------------------------------------------------------------------
+# Step 10 - conditioning the savings rate
+# ---------------------------------------------------------------------------
+saving:
+  enabled: true
+  n_paths: 20000
+  strategy: balanced_all_equity
+  # Same working-income floor as step 9, and for the same reason: this
+  # analysis changes working-life consumption, so the asymmetry between a
+  # floored retirement and an unfloored working life does not cancel.
+  working_income_floor: 0.25
+
+  # The model cannot identify the *level* of the savings rate -- that is set
+  # by the discount factor and risk aversion, which the return panel has no
+  # view on.  The shape search therefore pins the average rate here and asks
+  # only *when* to save it.  The constant-rate frontier is reported so the
+  # level question is visible rather than hidden.
+  target_mean_rate: 0.10
+  constant_rate_grid: [0.0, 0.05, 0.10, 0.15, 0.20, 0.30, 0.40]
+
+  shape_multiplier_grid: [0.0, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0]
+  shape_sweeps: 2
+  rate_floor: 0.0
+  rate_cap: 0.40
+
+  # Conditioning sensitivities.  Negative values are included deliberately:
+  # "save less when you are behind" should be strongly negative, and if it is
+  # not, the machinery is wrong.
+  on_track_sensitivity: [-0.005, 0.0, 0.005, 0.010, 0.020, 0.050]
+  return_sensitivity: [-0.25, 0.0, 0.25, 0.50, 1.00]
+
+  # Do the savings-side and retirement-side conditioning gains add up?
+  combine_with_retirement: true
+  retirement_rule:
+    key: wealth_multiple
+    params: {multiple: 25, min_age: 55, max_age: 70}

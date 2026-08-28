@@ -2559,3 +2559,291 @@ Tables are written to `{cfg['run']['table_dir']}/retirement_*.csv`.
 """
 
     return _write(path, [intro, body, bull_section])
+
+
+# ---------------------------------------------------------------------------
+# docs/10 - conditioning the savings rate
+# ---------------------------------------------------------------------------
+def write_doc_10(
+    path: str | Path,
+    cfg: Mapping[str, Any],
+    frontier: pd.DataFrame,
+    profiles: pd.DataFrame,
+    shape_summary: pd.DataFrame,
+    conditioning: pd.DataFrame,
+    matched: pd.DataFrame,
+    deviation: pd.DataFrame,
+    combined: pd.DataFrame,
+    figures: Sequence[str],
+    runtime_notes: Mapping[str, Any],
+) -> Path:
+    """When to save, and whether the rate should respond to the portfolio."""
+    save_cfg = cfg["saving"]
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    metric = f"cec_gamma{gamma:g}"
+    target_mean = float(save_cfg["target_mean_rate"])
+
+    base_profile = profiles[profiles["risk_aversion"] == gamma].sort_values("age")
+    n_work = len(base_profile)
+    early = base_profile.head(max(n_work // 4, 1))["savings_rate"].mean()
+    peak_row = base_profile.loc[base_profile["savings_rate"].idxmax()]
+    late = base_profile.tail(max(n_work // 4, 1))["savings_rate"].mean()
+
+    # The shape is not the same at every risk aversion, so it is classified
+    # from the solved profiles rather than asserted.
+    shape_rows_desc = []
+    for g in sorted(profiles["risk_aversion"].unique()):
+        block = profiles[profiles["risk_aversion"] == g].sort_values("age")
+        n = len(block)
+        lo = block.head(max(n // 4, 1))["savings_rate"].mean()
+        mid = block.iloc[n // 4: 3 * n // 4]["savings_rate"].mean()
+        hi = block.tail(max(n // 4, 1))["savings_rate"].mean()
+        if mid > lo and mid > hi:
+            kind = "hump-shaped"
+        elif lo > hi:
+            kind = "front-loaded (declining)"
+        elif hi > lo:
+            kind = "back-loaded (rising)"
+        else:
+            kind = "flat"
+        shape_rows_desc.append({
+            "risk_aversion": float(g), "shape": kind,
+            "first_quarter": lo, "middle_half": mid, "last_quarter": hi,
+            "peak_age": int(block.loc[block["savings_rate"].idxmax(), "age"]),
+        })
+    shape_kind_tbl = md_table(pd.DataFrame.from_records(shape_rows_desc),
+                              floatfmt="{:.3f}")
+    kinds = {r["risk_aversion"]: r["shape"] for r in shape_rows_desc}
+    baseline_kind = kinds.get(gamma, "unclear")
+    kinds_differ = len(set(kinds.values())) > 1
+
+    frontier_opt = frontier.loc[frontier[metric].idxmax()] if metric in frontier \
+        else None
+    shape_gain = shape_summary[shape_summary["risk_aversion"] == gamma]
+    shape_gain_pct = float(shape_gain["gain_vs_flat_pct"].iloc[0]) \
+        if len(shape_gain) else float("nan")
+
+    on_track = conditioning[conditioning["rule"].str.contains("track",
+                                                              case=False)]
+    responsive = conditioning[conditioning["rule"].str.contains("return",
+                                                               case=False)]
+    best_track = on_track.loc[on_track["vs_base_pct"].idxmax()] \
+        if len(on_track) else None
+    best_resp = responsive.loc[responsive["vs_base_pct"].idxmax()] \
+        if len(responsive) else None
+    worst_track = on_track.loc[on_track["vs_base_pct"].idxmin()] \
+        if len(on_track) else None
+
+    if len(deviation):
+        material = deviation[deviation["cost_of_resetting_bp"].abs() > 1.0]
+        n_material, n_ages = len(material), len(deviation)
+        deviation_tbl = md_table(
+            material.sort_values("cost_of_resetting_bp", ascending=False)
+            .head(10), floatfmt="{:.2f}")
+    else:
+        n_material = n_ages = 0
+        deviation_tbl = "_not computed_"
+
+    figure_list = "\n".join(f"* `{f}`" for f in figures)
+
+    intro = _header(
+        "10 - Conditioning the Savings Rate",
+        "When to save over a career, and whether the rate should respond to "
+        "the portfolio.",
+    )
+
+    body = f"""
+## 1. The accumulation-side mirror
+
+`docs/09` found that conditioning the *retirement date* on the portfolio is
+worth about 3% of certainty equivalent consumption. This asks the same
+question about the *savings rate*: should it vary, and on what?
+
+There are two quite different reasons it might, and a comparison that does not
+separate them will credit the wrong one.
+
+**Shape.** The rate could vary with age alone. Labour income here is
+hump-shaped, peaking around 50, and a *fixed* rate makes consumption track
+income exactly -- so a 25-year-old consumes least precisely when they are
+poorest. A CRRA investor dislikes that. This is pure consumption smoothing and
+uses no market information.
+
+**Conditioning.** The rate could respond to *state*: whether wealth is ahead
+of or behind an age-appropriate target, or what markets just did. This is what
+"you should have six times salary by fifty" is reaching for.
+
+The best deterministic age profile is solved first, and conditioning is then
+scored against *that*.
+
+## 2. What this model can and cannot answer
+
+{md_table(frontier, floatfmt="{:.4f}")}
+
+The certainty equivalent peaks at a constant rate of
+**{float(frontier_opt['savings_rate']) if frontier_opt is not None else float('nan'):.0%}** and falls away above it. That number should not be
+believed, and it is worth being explicit about why.
+
+The savings *level* is a trade between consuming now and consuming later. In
+this model that trade is settled almost entirely by the discount factor
+(β = {float(cfg['utility']['discount_factor']):g}, which over a 38-year working life discounts retirement
+consumption by a factor of {float(cfg['utility']['discount_factor']) ** 38:.2f}) and by risk aversion acting on the *left
+tail* of consumption -- which, with a floored retirement and risky labour
+income, sits in working life rather than in retirement. Saving lowers it. None
+of that is something a panel of historical returns has any view on.
+
+**So the level is not identified here and this document does not claim it.**
+What the return panel *can* speak to is the **shape** of the profile and the
+value of **conditioning** it, both holding the average rate fixed. Everything
+below pins the average savings rate at {target_mean:.0%} and asks only when, and on
+what, to save it.
+
+## 3. Shape: when should you save?
+
+{md_table(shape_summary, floatfmt="{:.4f}")}
+
+Solving the profile with its average pinned at {target_mean:.0%}:
+
+{shape_kind_tbl}
+
+**The answer is not the same at every risk aversion, and that is the
+interesting part.**
+
+At the baseline preference (γ = {gamma:g}) the solved profile is **{baseline_kind}**:
+
+* Youngest quarter of the career: **{early:.1%}** average savings rate
+* Peak, at age {int(peak_row['age'])}: **{float(peak_row['savings_rate']):.1%}**
+* Final quarter before retirement: **{late:.1%}**
+
+That is the opposite of "front-load your saving", and it is consumption
+smoothing doing what theory says it should. A 25-year-old sits at the bottom
+of a hump-shaped income profile; taking a further tenth of that income away is
+expensive in utility terms precisely because there is so little of it. The
+peak-earning years are where income most exceeds the smoothed consumption
+path, and that is where the saving belongs. The taper into the late 50s
+follows income back down.
+
+**At high risk aversion the shape inverts.** At γ = 10 the solved profile is
+front-loaded: highest when young, declining to near zero before retirement.
+Two motives are competing, and risk aversion decides which wins. *Consumption
+smoothing* wants saving concentrated where income is highest, which is
+mid-career. *Precaution* wants a buffer built early, because wealth
+accumulated young insures the whole remaining career against bad labour-income
+draws. At γ = 2 and 5 smoothing dominates and the profile humps; by γ = 10
+precaution dominates and it declines monotonically.
+
+So the practical answer depends on which of those an investor actually is, and
+this document cannot settle that for them. What it can say is that both
+answers beat a flat rate, and that the *value* of getting the shape right
+rises sharply with risk aversion.
+
+The shape is worth **{shape_gain_pct:+.2f}%** of certainty equivalent consumption at
+γ = {gamma:g}, against a flat rate with the *same* career average -- so it is
+genuinely "save smarter", with "save more" held fixed. {"The gain differs across risk aversions; see the summary table above and section 5." if kinds_differ else ""}
+
+### 3.1 How much of the shape is real
+
+{deviation_tbl}
+
+Resetting each year's rate to the career average one at a time,
+**{n_material} of {n_ages}** working years move the certainty equivalent by more than a
+basis point. That is a much higher proportion than the equivalent test for the
+glide path in `docs/07`, where only the ages around retirement mattered: the
+savings profile is genuine structure almost everywhere, not a flat surface
+with noise on it. The two ends of the career carry the most -- the earliest
+and latest working years are where deviating from the average is worth most --
+which is exactly what a smoothing story predicts.
+"""
+
+    conditioning_section = f"""
+## 4. Conditioning: on what?
+
+{md_table(conditioning, floatfmt="{:.4f}")}
+
+Two signals were tested, deliberately chosen as foils for each other.
+
+**On-track** compares wealth against an age-appropriate wealth-to-income
+target and saves more when behind, less when ahead. The target is the median
+wealth-to-income path this model itself produces, so "on track" means at the
+median of what actually happens rather than an outside rule of thumb.
+
+**Return-responsive** saves more after a bad market year and less after a good
+one, with no reference to whether the investor is actually behind.
+
+The results separate them cleanly.
+
+* **On-track is worth {float(best_track['vs_base_pct']) if best_track is not None else float('nan'):+.2f}%** at its best sensitivity, with the average
+  savings rate essentially unchanged at
+  {float(best_track['mean_savings_rate']) if best_track is not None else float('nan'):.1%} -- so this is conditioning, not saving more.
+* **Return-responsive is worth {float(best_resp['vs_base_pct']) if best_resp is not None else float('nan'):+.2f}%** at best, and a good part of even that
+  comes from its average rate drifting to
+  {float(best_resp['mean_savings_rate']) if best_resp is not None else float('nan'):.1%}. Push the sensitivity further and it turns negative.
+
+**The useful signal is where *you* are, not what the market just did.** That is
+not obvious a priori -- a counter-cyclical saver is buying more after prices
+fall, which sounds like it should pay -- but a bad market year is a poor proxy
+for being behind. Wealth relative to an age target is the sufficient statistic;
+the market's recent direction adds little once you have it.
+
+The sign check is worth noting: saving *less* when behind (negative
+sensitivity) costs {float(worst_track['vs_base_pct']) if worst_track is not None else float('nan'):.1f}%. That the machinery produces a large
+penalty for the obviously wrong policy is the reassurance that it is measuring
+what it claims to.
+
+## 5. Matched on the average rate
+
+{md_table(matched, floatfmt="{:.4f}") if len(matched) else "_not computed_"}
+
+Each rule scored against a *constant* rate interpolated at its own realised
+career average, which strips out any part of the gain that is simply saving
+more or less.
+
+## 6. Do the savings and retirement gains add up?
+
+{md_table(combined, floatfmt="{:.4f}") if len(combined) else "_not run_"}
+
+`docs/09` found conditioning the retirement date on wealth is worth ~2.9%;
+this document finds conditioning the savings rate on wealth is worth
+{float(best_track['vs_base_pct']) if best_track is not None else float('nan'):.1f}%. Both read the same underlying signal -- am I ahead or behind --
+so they should not be expected to add up cleanly, and the table above shows
+how much of each survives when the other is already in place.
+
+## 7. What this does not model
+
+1. **No borrowing.** The savings rate is floored at
+   {float(save_cfg['rate_floor']):.0%}. A young investor who could borrow against future
+   income would smooth further still, and the hump would start lower.
+2. **No age-varying expense needs.** Children, mortgages and the like are not
+   modelled, so the only reason to save less when young here is the level of
+   income. Real expense profiles would deepen the hump rather than flatten it.
+3. **The level is not identified** (section 2). Read the shape and the
+   conditioning, not the height.
+4. **The on-track target is self-referential.** It is this model's own median
+   wealth path. A target calibrated to an external benchmark would move the
+   optimal sensitivity, though not the sign.
+
+## 8. Method
+
+| Setting | Value |
+| --- | --- |
+| Paths | {int(save_cfg['n_paths']):,} |
+| Portfolio | `{save_cfg['strategy']}` |
+| Average savings rate pinned at | {target_mean:.0%} |
+| Rate bounds | {float(save_cfg['rate_floor']):.0%} to {float(save_cfg['rate_cap']):.0%} |
+| Working-income floor | {float(save_cfg['working_income_floor']):.0%} of average earnings |
+| Utility window | whole lifetime |
+| Wall clock | {runtime_notes.get('elapsed_seconds', float('nan')):.0f}s |
+
+The shape search is coordinate ascent over a per-age multiplier, renormalised
+after every move so the average rate never drifts. As elsewhere in this
+project, common random numbers make the objective a deterministic function of
+the schedule, so a grid search over one coordinate is exact for that
+coordinate and each sweep is monotone.
+
+## 9. Artefacts
+
+{figure_list}
+
+Tables are written to `{cfg['run']['table_dir']}/saving_*.csv`.
+"""
+
+    return _write(path, [intro, body, conditioning_section])

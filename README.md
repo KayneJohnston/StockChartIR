@@ -52,8 +52,9 @@ for the full analysis and the caveats.
 | [`docs/07_optimal_glide_path.md`](docs/07_optimal_glide_path.md) | Solving for the age-by-asset schedule directly: free-form and parametric optimisation, local-optimum checks |
 | [`docs/08_currency_hedging.md`](docs/08_currency_hedging.md) | Covered-interest-parity hedged international leg; break-even hedging cost and optimal hedge ratio |
 | [`docs/09_retirement_timing.md`](docs/09_retirement_timing.md) | Retirement as a path-dependent decision; value of conditioning on markets; the retirement-date lottery |
+| [`docs/10_savings_rate.md`](docs/10_savings_rate.md) | When to save over a career, and whether the rate should respond to the portfolio |
 
-All nine are **generated** by `main.py` from live pipeline objects -- edit
+All ten are **generated** by `main.py` from live pipeline objects -- edit
 `src/report.py`, not the Markdown.
 
 ## Sensitivity
@@ -93,6 +94,65 @@ withdrawal rate that holds ruin probability to 5%:
 The 4% rule was calibrated on US history — exactly the hindsight the paper
 removes, and removing it costs more than a percentage point of retirement
 income.
+
+## When to save, and on what
+
+`docs/10` is the accumulation-side mirror of the retirement-timing work. Two
+things could make the savings rate vary, and conflating them credits the wrong
+one, so they're measured separately.
+
+**First, a caveat the document leads with: this model cannot identify the
+savings *level*.** The certainty equivalent peaks at a constant 5% and falls
+above it — but that's set by the discount factor (β=0.96 over a 38-year
+working life discounts retirement consumption by 0.21) and by risk aversion
+acting on the left tail of consumption, which with a floored retirement and
+risky labour income sits in *working* life. None of that is something a panel
+of historical returns has a view on. So everything below **pins the average
+rate at 10%** and asks only *when*, and *on what*, to save it.
+
+**Shape — and it flips with risk aversion.** Solving a free rate for each of
+the 38 working years, with the average pinned:
+
+| Risk aversion | Shape | First quarter | Middle half | Last quarter |
+| --- | --- | --- | --- | --- |
+| γ = 2 | hump-shaped | 3.1% | 13.0% | 10.1% |
+| γ = 5 | hump-shaped | 5.8% | 13.8% | 6.1% |
+| γ = 10 | **front-loaded** | 15.8% | 11.7% | 1.3% |
+
+At moderate risk aversion it's a **hump** — save least when young, most in
+peak-earning years, taper into retirement. That's consumption smoothing: a
+25-year-old sits at the bottom of a hump-shaped income profile, so taking a
+further tenth away is expensive precisely because there's so little of it.
+This is the "save more later" pattern, and the model produces it unprompted.
+
+At γ=10 it **inverts** to front-loaded. Two motives compete and risk aversion
+picks the winner: smoothing wants saving where income is highest (mid-career),
+precaution wants a buffer built early to insure the whole remaining career
+against bad income draws. The model can't settle which kind of investor you
+are — but both beat a flat rate, and getting the shape right is worth more the
+more risk-averse you are.
+
+**Conditioning — your own position beats the market's direction.** Layered on
+top of the solved shape, and scored against a constant rate matched on the
+realised career average:
+
+| Rule | Signal | Value |
+| --- | --- | --- |
+| Solved shape | age only | +0.6% |
+| **On-track** | wealth vs an age-appropriate target | **+3.2%** |
+| Return-responsive | last year's market return | +0.4% |
+
+Saving more when behind an age-appropriate wealth-to-income target is worth
+~5× the shape. Saving more after a bad market year is worth almost nothing —
+and pushed harder, turns negative. A bad market year is a poor proxy for being
+behind; wealth relative to an age target is the sufficient statistic. (Sign
+check: saving *less* when behind costs −3.2%, which is the reassurance that
+the machinery measures what it claims.)
+
+**The savings and retirement gains don't add.** Conditioning the retirement
+date is worth ~2.9%; conditioning the savings rate ~3.2%. Doing **both** is
+worth less than savings conditioning alone — they read the same underlying
+signal (am I ahead or behind), so stacking them over-corrects.
 
 ## When you retire matters more than what you hold
 
@@ -269,8 +329,8 @@ while also spending more.
 pip install numpy pandas scipy matplotlib pyyaml openpyxl pytest
 
 python main.py --quick      # ~20 s smoke run at reduced N
-python main.py              # ~20 min full run: N = 100,000 plus sweeps and searches
-python -m pytest tests/ -q  # 282 tests
+python main.py              # ~30 min full run: N = 100,000 plus sweeps and searches
+python -m pytest tests/ -q  # 312 tests
 ```
 
 Selected steps and alternative configurations:
@@ -282,13 +342,14 @@ python main.py --steps 1 6          # panel + spending-rule comparison only
 python main.py --steps 1 7          # panel + glide-path optimisation only
 python main.py --steps 1 8          # panel + currency-hedging sweep only
 python main.py --steps 1 9          # panel + retirement-timing analysis only
+python main.py --steps 1 10         # panel + savings-rate analysis only
 python main.py --config other.yaml  # a different parameterisation
 ```
 
 ## Layout
 
 ```
-├── docs/                 # generated analysis documents (9 files)
+├── docs/                 # generated analysis documents (10 files)
 ├── data/
 │   ├── raw/              # primary source files, unmodified
 │   ├── processed/        # standardised real return panels (.csv and .npz)
@@ -302,19 +363,20 @@ python main.py --config other.yaml  # a different parameterisation
 │   ├── spending.py       # pluggable retirement withdrawal rules
 │   ├── glidepath.py      # batched evaluator + glide-path optimisers
 │   ├── hedging.py        # currency-hedged leg, break-even cost
-│   ├── retirement.py     # path-dependent retirement timing rules
+│   ├── retirement.py     # path-dependent retirement + saving engine
+│   ├── saving.py         # savings-rate rules and shape optimiser
 │   ├── plots.py          # publication-quality figures
 │   └── report.py         # Markdown report generation
-├── tests/                # 282 unit + integration tests
+├── tests/                # 312 unit + integration tests
 ├── results/
-│   ├── figures/          # 24 PNGs
+│   ├── figures/          # 25 PNGs
 │   └── tables/           # 40+ CSVs
 ├── config.yaml           # every tunable parameter
 └── main.py               # entry point
 ```
 
 `src/report.py`, `src/sensitivity.py`, `src/spending.py`, `src/glidepath.py`,
-`src/hedging.py` and `src/retirement.py` are additions to the structure specified in the brief:
+`src/hedging.py`, `src/retirement.py` and `src/saving.py` are additions to the structure specified in the brief:
 keeping Markdown generation, the sweep engine, the withdrawal policies and the
 optimiser out of `main.py` leaves the entry point readable as a seven-step
 pipeline.
