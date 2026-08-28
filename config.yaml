@@ -44,6 +44,12 @@ data:
   # the raw series; docs/01 lists every affected observation.
   international_winsor_pct: 0.1
 
+  # Share of the international equity sleeve held currency-hedged, and the
+  # annual cost of holding it that way.  Both default to 0 so the headline
+  # results are the unhedged case; docs/08 sweeps them.
+  hedge_ratio: 0.0
+  hedge_cost: 0.0
+
   # Modified-duration proxy used to translate a Tier-B bond *yield* into a
   # bond *total return* (see docs/01, section 4.3).
   bond_duration_years: 7.0
@@ -302,3 +308,41 @@ spending:
     - key: amortisation
       params: {assumed_return: 0.04}
       suffix: 4% assumed return
+
+# ---------------------------------------------------------------------------
+# Step 7 - solving for the optimal glide path
+# ---------------------------------------------------------------------------
+glide_path:
+  enabled: true
+  # Fewer paths than the headline run: the optimiser compares candidates that
+  # share the same draws, so precision on the *difference* is what matters.
+  # The winning schedules are re-scored at the full path count afterwards.
+  n_paths: 20000
+  bond_share: 0.7
+
+  # Free-form search: one equity share per age, domestic split on bands.
+  equity_grid: [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+  domestic_grid: [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+  domestic_band_years: 5
+  n_sweeps: 2
+
+  # Parametric search: piecewise-linear equity share through free knots.
+  parametric_knot_ages: [25, 40, 55, 63, 75, 92]
+  parametric_grid: [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+  parametric_sweeps: 4
+
+  # Local-optimum check: restart the free-form search from these flat
+  # starting equity shares and confirm it lands in the same place.
+  restart_equity_starts: [0.2, 0.6, 1.0]
+  restart_risk_aversion: 5.0
+
+  # The free-form optimum dips right at the retirement date under the 4%
+  # rule, which anchors spending on wealth at that one date.  Re-solving
+  # under spending rules that carry no such anchor tests whether the dip is
+  # a property of the withdrawal policy or of the investment problem.
+  anchor_check:
+    enabled: true
+    risk_aversion: 5.0
+    rules:
+      - {key: constant_percent, params: {rate: 0.07}}
+      - {key: life_expectancy}

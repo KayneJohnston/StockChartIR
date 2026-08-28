@@ -403,6 +403,90 @@ def build_international_leg(
     return result
 
 
+def build_hedged_international_leg(
+    wide_eq_tr: np.ndarray,
+    wide_bill_nominal: np.ndarray,
+    wide_inflation: np.ndarray,
+    hedge_cost: float = 0.0,
+    winsor_pct: float = 0.0,
+) -> np.ndarray:
+    """Real return on a *currency-hedged* rest-of-the-world equity portfolio.
+
+    Under covered interest parity, fully hedging a foreign equity position
+    back to the domestic currency converts the foreign local-currency return
+    at the forward rate, which pays the interest-rate differential:
+
+    ```
+    hedged_gross_ij = (1 + eq_tr_j) * (1 + r_i) / (1 + r_j)
+    ```
+
+    with ``r`` the nominal short rate.  The hedged investor therefore earns
+    the foreign *asset* return plus the domestic short rate and gives up the
+    foreign one -- they hold the equity risk and shed the currency risk.
+    Averaging over the available foreign markets, charging an annual
+    ``hedge_cost`` and deflating by domestic inflation gives the series
+    returned here.
+
+    Two honest caveats, both stated in docs/08.  CIP is an identity only when
+    it holds: it broke down during both world wars, under capital controls,
+    and again after 2008, and this construction imposes it throughout.  And a
+    hedge in practice is rolled short-dated forwards with basis and margin
+    risk, which ``hedge_cost`` represents as a flat drag rather than
+    modelling directly -- which is exactly why the cost is swept rather than
+    assumed in docs/08.
+    """
+    gross_local = 1.0 + wide_eq_tr
+    short = 1.0 + wide_bill_nominal
+    with np.errstate(invalid="ignore", divide="ignore"):
+        adjusted = gross_local / short
+    valid = np.isfinite(adjusted)
+    filled = np.where(valid, adjusted, 0.0)
+
+    row_sum = filled.sum(axis=1, keepdims=True)
+    row_count = valid.sum(axis=1, keepdims=True)
+    others_sum = row_sum - filled
+    others_count = row_count - valid.astype(int)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        others_mean = np.where(others_count > 0, others_sum / others_count,
+                               np.nan)
+        hedged_gross = others_mean * short * (1.0 - hedge_cost)
+        real_gross = hedged_gross / (1.0 + wide_inflation)
+
+    real_gross = np.where(np.isfinite(real_gross), real_gross, np.nan)
+    real_gross = np.where(np.isnan(real_gross), np.nan,
+                          np.maximum(real_gross, GROSS_RETURN_FLOOR))
+    result = real_gross - 1.0
+    if winsor_pct and winsor_pct > 0:
+        finite = result[np.isfinite(result)]
+        if finite.size:
+            lo, hi = np.percentile(finite, [winsor_pct, 100.0 - winsor_pct])
+            result = np.where(np.isfinite(result), np.clip(result, lo, hi),
+                              result)
+    return result
+
+
+def blend_international_legs(unhedged: np.ndarray, hedged: np.ndarray,
+                             hedge_ratio: float) -> np.ndarray:
+    """Return on holding ``hedge_ratio`` of the international sleeve hedged.
+
+    A linear blend of the two returns is exactly right for an investor who
+    splits the sleeve between a hedged and an unhedged share class and
+    rebalances annually -- which is the choice actually on offer.
+
+    Where the hedged series cannot be computed (a country-year with no usable
+    short rate) the unhedged value is carried through, so that varying the
+    hedge ratio never changes which country-years are available and therefore
+    never changes which blocks the bootstrap draws.  That keeps every hedge
+    ratio a paired comparison on identical history.
+    """
+    ratio = float(np.clip(hedge_ratio, 0.0, 1.0))
+    if ratio == 0.0:
+        return unhedged
+    usable = np.isfinite(hedged)
+    return np.where(usable, (1.0 - ratio) * unhedged + ratio * hedged,
+                    unhedged)
+
+
 def build_real_exchange_rate(
     wide_cpi: np.ndarray, wide_xrusd: np.ndarray
 ) -> np.ndarray:
@@ -450,8 +534,15 @@ def _pivot(frame: pd.DataFrame, column: str, years: np.ndarray,
     return wide.to_numpy(dtype=float)
 
 
-def build_tier_a(cfg: Mapping[str, Any]) -> Panel:
-    """Construct the fully empirical 16-country JST panel."""
+def build_tier_a(cfg: Mapping[str, Any], hedge_ratio: float = 0.0,
+                 hedge_cost: float = 0.0) -> Panel:
+    """Construct the fully empirical 16-country JST panel.
+
+    ``hedge_ratio`` blends a currency-hedged international equity leg into
+    ``intl_eq`` (see :func:`build_hedged_international_leg`).  It deliberately
+    does not affect ``available``, so every hedge ratio draws exactly the same
+    blocks and the comparison in docs/08 is paired on identical history.
+    """
     data_cfg = cfg["data"]
     jst = load_jst(cfg)
     jst = add_real_returns(jst)
@@ -467,11 +558,18 @@ def build_tier_a(cfg: Mapping[str, Any]) -> Panel:
     usd_gross = _pivot(window, "usd_gross_eq", years, all_isos)
     fx_gain = _pivot(window, "fx_gain", years, all_isos)
     infl_all = _pivot(window, "inflation", years, all_isos)
+    winsor = float(data_cfg.get("international_winsor_pct", 0.0))
     intl_all = build_international_leg(
         usd_gross, fx_gain, infl_all,
         weighting=data_cfg["international_weighting"],
-        winsor_pct=float(data_cfg.get("international_winsor_pct", 0.0)),
+        winsor_pct=winsor,
     )
+    if hedge_ratio > 0.0:
+        hedged_all = build_hedged_international_leg(
+            _pivot(window, "eq_tr", years, all_isos),
+            _pivot(window, "bill_rate", years, all_isos),
+            infl_all, hedge_cost=hedge_cost, winsor_pct=winsor)
+        intl_all = blend_international_legs(intl_all, hedged_all, hedge_ratio)
     intl_lookup = {iso: intl_all[:, k] for k, iso in enumerate(all_isos)}
 
     dom_eq = _pivot(window, "dom_eq", years, isos)
@@ -740,7 +838,9 @@ def _fx_gain_from_levels(xrusd: np.ndarray) -> np.ndarray:
     return np.where(np.isfinite(gain) & (gain > 0), gain, np.nan)
 
 
-def build_panel(cfg: Mapping[str, Any], mode: str | None = None) -> Panel:
+def build_panel(cfg: Mapping[str, Any], mode: str | None = None,
+                hedge_ratio: float | None = None,
+                hedge_cost: float | None = None) -> Panel:
     """Build the requested panel.
 
     Parameters
@@ -752,7 +852,12 @@ def build_panel(cfg: Mapping[str, Any], mode: str | None = None) -> Panel:
         to ``cfg["bootstrap"]["panel"]``.
     """
     mode = mode or cfg["bootstrap"]["panel"]
-    tier_a = build_tier_a(cfg)
+    data_cfg = cfg["data"]
+    hedge_ratio = float(data_cfg.get("hedge_ratio", 0.0)
+                        if hedge_ratio is None else hedge_ratio)
+    hedge_cost = float(data_cfg.get("hedge_cost", 0.0)
+                       if hedge_cost is None else hedge_cost)
+    tier_a = build_tier_a(cfg, hedge_ratio, hedge_cost)
     if mode == "jst16":
         return tier_a
     if mode != "dev38":
@@ -791,11 +896,21 @@ def build_panel(cfg: Mapping[str, Any], mode: str | None = None) -> Panel:
     cpi = np.column_stack([a_cpi, b_cpi])
     xrusd = np.column_stack([a_xrusd, b_fx])
 
+    winsor = float(cfg["data"].get("international_winsor_pct", 0.0))
     intl_eq = build_international_leg(
         usd_gross, fx_gain, inflation,
         weighting=cfg["data"]["international_weighting"],
-        winsor_pct=float(cfg["data"].get("international_winsor_pct", 0.0)),
+        winsor_pct=winsor,
     )
+    if hedge_ratio > 0.0:
+        a_eq_tr = _pivot(window, "eq_tr", years, tier_a.countries)
+        a_bill_nom = _pivot(window, "bill_rate", years, tier_a.countries)
+        b_bill_nominal = (1.0 + b_bill) * (1.0 + b_infl) - 1.0
+        hedged = build_hedged_international_leg(
+            np.column_stack([a_eq_tr, b_nominal_eq]),
+            np.column_stack([a_bill_nom, b_bill_nominal]),
+            inflation, hedge_cost=hedge_cost, winsor_pct=winsor)
+        intl_eq = blend_international_legs(intl_eq, hedged, hedge_ratio)
     rer = build_real_exchange_rate(cpi, xrusd)
 
     available = (

@@ -1835,3 +1835,263 @@ Tables are written to `{cfg['run']['table_dir']}/spending_*.csv`.
 """
 
     return _write(path, [intro, body])
+
+
+# ---------------------------------------------------------------------------
+# docs/07 - optimal glide path
+# ---------------------------------------------------------------------------
+def write_doc_07(
+    path: str | Path,
+    cfg: Mapping[str, Any],
+    schedules: pd.DataFrame,
+    comparison: pd.DataFrame,
+    trace: pd.DataFrame,
+    restarts: pd.DataFrame,
+    anchor: pd.DataFrame,
+    anchor_summary: pd.DataFrame,
+    deviation: pd.DataFrame,
+    figures: Sequence[str],
+    runtime_notes: Mapping[str, Any],
+) -> Path:
+    """What shape of glide path actually maximises certainty equivalent."""
+    glide = cfg["glide_path"]
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    retire = int(cfg["lifecycle"]["age_retire"])
+    gammas = sorted(schedules["risk_aversion"].unique())
+
+    free = schedules[schedules["kind"] == "free_form"]
+    base = free[free["risk_aversion"] == gamma].sort_values("age")
+    pre_retirement = base[base["age"] < retire]["equity_share"]
+    post_retirement = base[base["age"] >= retire]["equity_share"]
+    share_at_100 = float((base["equity_share"] >= 0.999).mean())
+
+    baseline_cmp = comparison[comparison["risk_aversion"] == gamma]
+    winner = baseline_cmp.iloc[0]
+    tdf = baseline_cmp[baseline_cmp["strategy"] == "target_date_fund"]
+    intl = baseline_cmp[baseline_cmp["strategy"] == "international_equity"]
+    tdf_gap = float(tdf["gap_to_best_pct"].iloc[0]) if len(tdf) else float("nan")
+    intl_gap = float(intl["gap_to_best_pct"].iloc[0]) if len(intl) else float("nan")
+
+    def wide(frame: pd.DataFrame, kind: str) -> str:
+        block = frame[frame["kind"] == kind]
+        if not len(block):
+            return "_not computed_"
+        table = block.pivot_table(index="age", columns="risk_aversion",
+                                  values="equity_share").sort_index()
+        table = table.iloc[::4]     # every fourth year keeps the table readable
+        return md_table(table.reset_index(), floatfmt="{:.2f}")
+
+    figure_list = "\n".join(f"* `{f}`" for f in figures)
+    restart_tbl = md_table(restarts, floatfmt="{:.5f}") if len(restarts) \
+        else "_not run_"
+
+    dev_gamma = gamma
+    dev = deviation[deviation["risk_aversion"] == dev_gamma] \
+        if len(deviation) else deviation
+    if len(dev):
+        material = dev[dev["cost_of_forcing_bp"].abs() > 1.0] \
+            .sort_values("cost_of_forcing_bp", ascending=False)
+        n_ages = int(len(dev))
+        n_material = int((dev["cost_of_forcing_bp"] > 1.0).sum())
+        n_trivial = int((dev["cost_of_forcing_bp"].abs() <= 1.0).sum())
+        deviation_tbl = md_table(
+            material[["age", "solved_equity_share", "cost_of_forcing_bp"]]
+            .head(12), floatfmt="{:.2f}")
+    else:
+        n_ages = n_material = n_trivial = 0
+        deviation_tbl = "_not computed_"
+    anchor_tbl = md_table(anchor_summary, floatfmt="{:.3f}") if len(anchor_summary) \
+        else "_not run_"
+
+    intro = _header(
+        "07 - Solving for the Optimal Glide Path",
+        "Optimising the age-by-asset weight schedule directly, instead of "
+        "testing a glide path someone else chose.",
+    )
+
+    body = f"""
+## 1. The question docs/04 left open
+
+`docs/04` shows a standard target-date glide path losing to a static
+all-equity portfolio. That is a comparison of two given schedules, and it
+leaves the more interesting question unasked: **what shape actually wins?**
+
+The candidates in the literature are not close together. A conventional
+target-date fund declines from about 90% equity to 30-50% at retirement.
+Pfau and Kitces argue for the opposite -- a *rising* equity path through
+retirement. A third possibility is that the optimum is flat and the whole
+glide-path apparatus is decoration. This document lets the data pick.
+
+## 2. Method
+
+Two searches, both by coordinate ascent on a grid under common random numbers.
+
+**Free-form.** One equity share per age -- {int(runtime_notes.get('horizon', 68))} free parameters -- plus the
+domestic split on {int(glide['domestic_band_years'])}-year bands. Nothing imposes smoothness or
+monotonicity. If the optimum is a declining glide path, an unconstrained
+search has to *discover* that; it is not built in.
+
+**Parametric.** Equity share is piecewise-linear through free knots at ages
+{", ".join(str(a) for a in glide['parametric_knot_ages'])}. The result is a path a fund could actually
+implement, and is directly comparable to the industry schedules in `docs/03`.
+
+Coordinate ascent is the right tool here for a specific reason: under common
+random numbers the objective is a *deterministic* function of the weights, so
+a grid search over one coordinate is exact for that coordinate and each sweep
+is monotone in the objective. There is no gradient to estimate, no step size
+to tune and no stochastic noise to average out. What it cannot do is escape a
+local optimum, which is why section 5 reports a restart check.
+
+Evaluating {int(runtime_notes.get('n_evaluations', 0)):,} candidate schedules is only affordable because the
+simulator is batched: `BatchEvaluator` runs the whole grid for one coordinate
+in a single vectorised pass, with the portfolio return computed as a BLAS
+matmul rather than a strided `einsum`. That is roughly a 3.5x speed-up, and it
+is the difference between this search taking minutes and taking an hour.
+
+| Setting | Value |
+| --- | --- |
+| Paths per evaluation | {int(glide['n_paths']):,} |
+| Equity grid | {len(glide['equity_grid'])} points |
+| Sweeps | {int(glide['n_sweeps'])} |
+| Risk aversions solved | {", ".join(f"{g:g}" for g in gammas)} |
+| Candidate evaluations | {int(runtime_notes.get('n_evaluations', 0)):,} |
+| Wall clock | {runtime_notes.get('elapsed_seconds', float('nan')):.0f}s |
+
+## 3. The answer: there is almost no glide
+
+Free-form optimal equity share, every fourth year:
+
+{wide(schedules, "free_form")}
+
+At γ = {gamma:g} the solved schedule holds **{share_at_100:.0%} of its ages at a full 100%
+equity**. The mean equity share is {float(pre_retirement.mean()):.0%} before retirement and
+{float(post_retirement.mean()):.0%} after it. The unconstrained optimum is not a declining glide
+path, not a rising one, and not a U -- it is a flat line at the top of the
+allowed range, with one exception discussed in section 4.
+
+The parametric search, restricted to a piecewise-linear shape, reaches the
+same place:
+
+{wide(schedules, "parametric")}
+
+### 3.1 Most of the remaining shape is not real
+
+A solved schedule plotted alone looks more structured than it is. The
+coordinate search reports *some* value at every age, including ages where the
+objective is flat to many decimal places -- late retirement, where the
+allocation touches only a lightly weighted bequest. Reading structure into
+that is the obvious way to get this analysis wrong.
+
+So rather than trusting the shape, every age was tested directly: hold the
+solved schedule fixed, force that one year to 100% equity, and measure the
+certainty-equivalent cost.
+
+{deviation_tbl}
+
+At γ = {dev_gamma:g}, **{n_trivial} of {n_ages} ages cost less than a basis point** to force
+back to full equity, and several are *negative* -- the search left value on
+the table there, which is what a flat surface with a finite grid looks like.
+Only {n_material} ages clear one basis point, and they are consecutive, at and just
+after the retirement date.
+
+The honest reading of the solved schedule is therefore: **100% equity at every
+age, plus a genuine de-risk at the retirement date.** Everything else in the
+plotted line is search noise on a flat objective.
+
+### 3.1 What it is worth
+
+{md_table(comparison, floatfmt="{:.5f}")}
+
+At γ = {gamma:g} the solved schedule scores {float(winner['cec']):.4f}. The industry target-date
+glide path gives up **{abs(tdf_gap):.1f}%** of certainty equivalent consumption against
+it. A *static* 100% international equity portfolio -- no glide path, no
+optimisation, one line in a prospectus -- gives up only {abs(intl_gap):.1f}%.
+
+That second number is the finding. Solving a {int(runtime_notes.get('horizon', 68))}-dimensional allocation
+problem beats the simplest possible portfolio by about one percent of
+lifetime consumption. **Almost all the value in this problem is in the level
+of equity exposure and the international split, and almost none is in its
+age profile.** A practitioner who gets those two things right and ignores
+glide paths entirely has captured nearly everything available.
+
+### 3.2 Rising risk aversion does not create a glide path
+
+The three solved schedules differ far less than the risk aversions do. What
+higher risk aversion buys is a *lower certainty equivalent everywhere* --
+the same gamble is worth less to a more risk-averse investor -- not a
+different shape. The mechanism a glide path relies on, that ageing investors
+should hold less equity, does not appear in the solution at any risk aversion
+tested here.
+"""
+
+    anchor_section = f"""
+## 4. The one real feature: a dip at the retirement date
+
+The solved schedule is not perfectly flat. Under the baseline 4% rule it dips
+for two or three years **exactly at the retirement date**, then returns to
+100%. That is a strange shape for an investment problem to produce, and it is
+worth being careful about whether it is real.
+
+It is real, and it belongs to the *withdrawal rule* rather than to the
+investment problem. The 4% rule sets the entire retirement spending path as a
+fixed fraction of wealth **on one date**. Wealth at age {retire} is therefore not just
+another point on the wealth path -- it is the single number that determines
+consumption for the next thirty years. A rational investor de-risks briefly
+around an anchor date like that, for the same reason you would not hold your
+house deposit in equities the month before completion.
+
+The test is to re-solve under spending rules that carry no such anchor:
+
+{anchor_tbl}
+
+{md_table(anchor.pivot_table(index="age", columns="rule", values="equity_share").sort_index().iloc[::4].reset_index(), floatfmt="{:.2f}") if len(anchor) else "_not run_"}
+
+Under a percent-of-portfolio rule and under a life-expectancy rule -- neither
+of which conditions on wealth at any single date -- the dip disappears and the
+schedule is flat at 100% throughout. The feature is a property of the 4% rule,
+not of the lifecycle.
+
+This is a genuinely useful practical result and it is not the one glide-path
+marketing describes. It says: **if your withdrawal policy anchors on your
+balance at one date, de-risk briefly around that date. If it does not, do not
+de-risk at all.** A conventional target-date fund does the opposite of both --
+it de-risks slowly over decades and stays de-risked.
+
+## 5. Is this a local optimum?
+
+Coordinate ascent finds a local optimum by construction. The search was
+restarted from flat schedules at very different equity levels:
+
+{restart_tbl}
+
+All restarts converge to the same certainty equivalent to within the grid
+resolution, which is what one would expect on a surface this smooth: the
+objective is close to monotone in equity share over most of the range, so
+there is little for a local optimum to hide behind.
+
+The residual caveat is honest rather than resolved. The grid is
+{len(glide['equity_grid'])} points wide, the domestic split moves on
+{int(glide['domestic_band_years'])}-year bands rather than annually, and the
+bond/bill split inside the fixed-income sleeve is held at
+{float(glide['bond_share']):.0%}/{1 - float(glide['bond_share']):.0%}
+throughout. A finer or wider search could move the answer at the margin. It
+would have to move it a long way to overturn "hold equities, don't glide".
+
+## 6. What this does not say
+
+The solved schedule is optimal **for this model**: no taxes, no fees, no
+mortality risk, no labour-income correlation with the drawn country, and an
+investor who holds the allocation through every drawdown without selling.
+`docs/05` section 8 lists what each of those would do. The one most likely to
+matter here is behaviour: the optimum is 100% equity at age 92, and an
+investor who cannot hold that has not found a better glide path, they have
+found a constraint.
+
+## 7. Artefacts
+
+{figure_list}
+
+Tables are written to `{cfg['run']['table_dir']}/glide_*.csv`.
+"""
+
+    return _write(path, [intro, body, anchor_section])

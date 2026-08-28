@@ -16,13 +16,14 @@ import argparse
 import logging
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Sequence
+from typing import Any, Dict, List, Mapping, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
 
 from src import bootstrap as bs
 from src import data_loader as dl
+from src import glidepath as gp
 from src import lifecycle as lc
 from src import plots
 from src import report as rp
@@ -61,6 +62,10 @@ def _apply_quick(cfg: Dict[str, Any]) -> Dict[str, Any]:
     if "sensitivity" in cfg:
         cfg["sensitivity"]["n_paths"] = 4000
         cfg["sensitivity"]["redraw_n_paths"] = 2000
+    if "glide_path" in cfg:
+        cfg["glide_path"]["n_paths"] = 2000
+        cfg["glide_path"]["n_sweeps"] = 1
+        cfg["glide_path"]["restart_equity_starts"] = [0.6]
     LOGGER.warning("quick mode: n_paths reduced to %s",
                    cfg["bootstrap"]["n_paths"])
     return cfg
@@ -745,14 +750,184 @@ def step6_spending(cfg: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
+# Step 7
+# ---------------------------------------------------------------------------
+def step7_glide_path(cfg: Dict[str, Any], state: Dict[str, Any]
+                     ) -> Dict[str, Any]:
+    """Solve for the optimal age-by-asset schedule; write docs/07."""
+    glide_cfg = cfg.get("glide_path", {})
+    if not glide_cfg.get("enabled", False):
+        LOGGER.info("glide-path search disabled in config; skipping step 7")
+        return state
+    LOGGER.info("=== STEP 7: solving for the optimal glide path ===")
+    started = time.perf_counter()
+
+    panel = state["panel"]
+    spec = state.get("spec") or lc.spec_from_config(cfg)
+    gammas = [float(g) for g in cfg["utility"]["risk_aversions"]]
+    baseline_gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    n_paths = int(glide_cfg["n_paths"])
+    bond_share = float(glide_cfg["bond_share"])
+    equity_grid = glide_cfg["equity_grid"]
+    domestic_grid = glide_cfg["domestic_grid"]
+
+    sampler = bs.from_config(panel, cfg, horizon_years=spec.horizon)
+    paths = sampler.sample(n_paths, chunk_size=int(cfg["bootstrap"]["chunk_size"]))
+    rng = np.random.default_rng(int(cfg["run"]["seed"]))
+    income = lc.simulate_income(
+        spec, n_paths, shocks=lc.draw_income_shocks(n_paths, spec.n_working, rng))
+    evaluator = gp.BatchEvaluator(paths, spec, income, cfg)
+    benchmarks = lc.build_strategies(cfg, spec)
+
+    trace = gp.OptimisationTrace()
+    schedules: List[pd.DataFrame] = []
+    comparisons: List[pd.DataFrame] = []
+    profiles: List[pd.DataFrame] = []
+    n_evaluations = 0
+
+    parameterisation = gp.GlideParameterisation(
+        knot_ages=tuple(int(a) for a in glide_cfg["parametric_knot_ages"]),
+        domestic_share=0.15, bond_share=bond_share)
+
+    for gamma in gammas:
+        LOGGER.info("solving free-form schedule for gamma=%.1f", gamma)
+        equity, domestic, cec = gp.optimise_free_form_banded(
+            evaluator, gamma, equity_grid, domestic_grid,
+            bond_share=bond_share,
+            domestic_band_years=int(glide_cfg["domestic_band_years"]),
+            n_sweeps=int(glide_cfg["n_sweeps"]), trace=trace)
+        n_evaluations += (spec.horizon * len(equity_grid)
+                          + len(domestic_grid) * (spec.horizon
+                                                  // int(glide_cfg["domestic_band_years"]) + 1)
+                          ) * int(glide_cfg["n_sweeps"])
+        schedules.append(gp.schedule_frame(equity, domestic, spec, gamma,
+                                           "free_form"))
+
+        knots, pcec = gp.optimise_parametric(
+            evaluator, gamma, parameterisation, glide_cfg["parametric_grid"],
+            n_sweeps=int(glide_cfg["parametric_sweeps"]))
+        n_evaluations += (len(parameterisation.knot_ages)
+                          * len(glide_cfg["parametric_grid"])
+                          * int(glide_cfg["parametric_sweeps"]))
+        p_weights = parameterisation.build(knots, spec)
+        schedules.append(gp.schedule_frame(
+            p_weights[:, 0] + p_weights[:, 1],
+            np.divide(p_weights[:, 0], np.maximum(p_weights[:, 0] + p_weights[:, 1], 1e-12)),
+            spec, gamma, "parametric"))
+
+        profiles.append(gp.deviation_profile(
+            evaluator, equity, domestic, gamma, bond_share=bond_share))
+        comparisons.append(gp.compare_to_benchmarks(
+            evaluator,
+            {"free_form_optimal": gp.weights_from_shares(equity, domestic,
+                                                         bond_share),
+             "parametric_optimal": p_weights},
+            benchmarks, gamma))
+
+    schedule_frame = pd.concat(schedules, ignore_index=True)
+    comparison = pd.concat(comparisons, ignore_index=True)
+    deviation = pd.concat(profiles, ignore_index=True)
+
+    # --- local-optimum check ---------------------------------------------
+    restart_rows: List[Dict[str, Any]] = []
+    restart_gamma = float(glide_cfg["restart_risk_aversion"])
+    for start in glide_cfg["restart_equity_starts"]:
+        eq, dom, cec = gp.optimise_free_form_banded(
+            evaluator, restart_gamma, equity_grid, domestic_grid,
+            start_equity=float(start), bond_share=bond_share,
+            domestic_band_years=int(glide_cfg["domestic_band_years"]),
+            n_sweeps=int(glide_cfg["n_sweeps"]))
+        restart_rows.append({
+            "start_equity_share": float(start),
+            "solved_cec": cec,
+            "mean_equity_share": float(eq.mean()),
+            "share_of_ages_at_100pct": float((eq >= 0.999).mean()),
+        })
+    restarts = pd.DataFrame.from_records(restart_rows)
+    if len(restarts):
+        restarts["gap_to_best_pct"] = (
+            restarts["solved_cec"] / restarts["solved_cec"].max() - 1.0) * 100.0
+
+    # --- retirement-anchor check ------------------------------------------
+    anchor_rows: List[pd.DataFrame] = []
+    anchor_summary_rows: List[Dict[str, Any]] = []
+    anchor_cfg = glide_cfg.get("anchor_check", {})
+    if anchor_cfg.get("enabled", False):
+        anchor_gamma = float(anchor_cfg["risk_aversion"])
+        variants: List[Tuple[str, Any]] = [
+            (f"4% rule (anchors on wealth at {spec.age_retire})", None)]
+        for entry in anchor_cfg["rules"]:
+            rule = spg.build(str(entry["key"]),
+                             **dict(entry.get("params", {}) or {}))
+            variants.append((rule.label, rule))
+        for label, rule in variants:
+            local = gp.BatchEvaluator(paths, spec, income, cfg, rule)
+            eq, dom, cec = gp.optimise_free_form_banded(
+                local, anchor_gamma, equity_grid, domestic_grid,
+                bond_share=bond_share,
+                domestic_band_years=int(glide_cfg["domestic_band_years"]),
+                n_sweeps=int(glide_cfg["n_sweeps"]))
+            frame = gp.schedule_frame(eq, dom, spec, anchor_gamma, "anchor")
+            frame["rule"] = label
+            anchor_rows.append(frame)
+            window = (spec.ages >= spec.age_retire - 1) &                 (spec.ages <= spec.age_retire + 2)
+            anchor_summary_rows.append({
+                "rule": label,
+                "min_equity_share_at_retirement": float(eq[window].min()),
+                "mean_equity_share_elsewhere": float(eq[~window].mean()),
+                "dip_size_pp": float((eq[~window].mean() - eq[window].min())
+                                     * 100.0),
+                "solved_cec": cec,
+            })
+    anchor = pd.concat(anchor_rows, ignore_index=True) if anchor_rows         else pd.DataFrame()
+    anchor_summary = pd.DataFrame.from_records(anchor_summary_rows)
+
+    tables = cfg["run"]["table_dir"]
+    _save_table(schedule_frame, tables, "glide_solved_schedules")
+    _save_table(comparison, tables, "glide_comparison")
+    _save_table(trace.frame(), tables, "glide_convergence")
+    _save_table(restarts, tables, "glide_restarts")
+    _save_table(deviation, tables, "glide_deviation_profile")
+    if len(anchor):
+        _save_table(anchor, tables, "glide_retirement_anchor")
+        _save_table(anchor_summary, tables, "glide_retirement_anchor_summary")
+
+    figure_dir = cfg["run"]["figure_dir"]
+    industry = lc.glide_path_table(benchmarks, spec)
+    figures = [
+        str(plots.plot_optimal_glide(schedule_frame, industry, deviation,
+                                     figure_dir)),
+        str(plots.plot_glide_comparison(comparison, trace.frame(), figure_dir)),
+    ]
+    if len(anchor):
+        figures.append(str(plots.plot_retirement_anchor(
+            anchor, spec.age_retire, figure_dir)))
+
+    elapsed = time.perf_counter() - started
+    rp.write_doc_07(
+        Path("docs") / "07_optimal_glide_path.md",
+        cfg, schedule_frame, comparison, trace.frame(), restarts, anchor,
+        anchor_summary, deviation, figures,
+        {"n_evaluations": n_evaluations, "elapsed_seconds": elapsed,
+         "horizon": spec.horizon},
+    )
+    LOGGER.info("docs/07 written (%.0fs, %s evaluations)", elapsed,
+                f"{n_evaluations:,}")
+    state.update({"glide_schedules": schedule_frame,
+                  "glide_comparison": comparison})
+    return state
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
-         4: step4_report, 5: step5_sensitivity, 6: step6_spending}
+         4: step4_report, 5: step5_sensitivity, 6: step6_spending,
+         7: step7_glide_path}
 
 
 def run(config_path: str = "config.yaml",
-        steps: Sequence[int] = (1, 2, 3, 4, 5, 6),
+        steps: Sequence[int] = (1, 2, 3, 4, 5, 6, 7),
         quick: bool = False) -> Dict[str, Any]:
     """Execute the pipeline and return the accumulated state."""
     cfg = dl.load_config(config_path)
@@ -782,8 +957,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--steps", nargs="+", type=int,
-                        default=[1, 2, 3, 4, 5, 6],
-                        choices=[1, 2, 3, 4, 5, 6])
+                        default=[1, 2, 3, 4, 5, 6, 7],
+                        choices=[1, 2, 3, 4, 5, 6, 7])
     parser.add_argument("--quick", action="store_true",
                         help="small N for smoke tests")
     parser.add_argument("--verbose", action="store_true")

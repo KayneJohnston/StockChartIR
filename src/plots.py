@@ -685,3 +685,140 @@ def plot_spending_bequest_pivot(frame: pd.DataFrame, directory: str | Path,
         ax.legend(fontsize=8)
         fig.tight_layout()
     return _save(fig, directory, name)
+
+
+# ---------------------------------------------------------------------------
+# Step 7 - optimal glide path
+# ---------------------------------------------------------------------------
+def plot_optimal_glide(schedules: pd.DataFrame, industry: pd.DataFrame,
+                       deviation: pd.DataFrame, directory: str | Path,
+                       name: str = "fig20_optimal_glide_path") -> Path:
+    """Solved schedules, the domestic split, and what each age is actually worth.
+
+    The third panel is the important one. A solved schedule plotted alone
+    looks structured, but most of its deviations from a flat line sit on a
+    part of the surface where the objective barely moves. Plotting the
+    certainty-equivalent cost of forcing each age to 100% equity separates
+    the one real feature from the search noise around it.
+    """
+    free = schedules[schedules["kind"] == "free_form"]
+    para = schedules[schedules["kind"] == "parametric"]
+    gammas = sorted(schedules["risk_aversion"].unique())
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(1, 3, figsize=(16.5, 5.0))
+
+        ax = axes[0]
+        for i, gamma in enumerate(gammas):
+            block = free[free["risk_aversion"] == gamma].sort_values("age")
+            ax.plot(block["age"], block["equity_share"] * 100, "-o",
+                    markersize=3, color=_colour(i), linewidth=1.8,
+                    label=f"free-form, γ = {gamma:g}")
+            pblock = para[para["risk_aversion"] == gamma].sort_values("age")
+            if len(pblock):
+                ax.plot(pblock["age"], pblock["equity_share"] * 100, "--",
+                        color=_colour(i), linewidth=1.4, alpha=0.75,
+                        label=f"parametric, γ = {gamma:g}")
+        if "target_date_fund" in industry.columns:
+            ax.plot(industry.index, industry["target_date_fund"] * 100,
+                    color="black", linewidth=2.4, linestyle=":",
+                    label="industry target-date fund")
+        ax.axhline(100, color="grey", linewidth=0.8)
+        ax.set_xlabel("Age")
+        ax.set_ylabel("Equity share (%)")
+        ax.set_ylim(-5, 108)
+        ax.set_title("The solved path barely glides", fontsize=10)
+        ax.legend(fontsize=7, loc="lower left")
+
+        ax = axes[1]
+        for i, gamma in enumerate(gammas):
+            block = free[free["risk_aversion"] == gamma].sort_values("age")
+            ax.plot(block["age"], block["domestic_share_of_equity"] * 100,
+                    "-o", markersize=3, color=_colour(i), linewidth=1.8,
+                    label=f"γ = {gamma:g}")
+        ax.set_xlabel("Age")
+        ax.set_ylabel("Domestic share of the equity sleeve (%)")
+        ax.set_ylim(-5, 105)
+        ax.set_title("Home bias stays low at every age", fontsize=10)
+        ax.legend(fontsize=8)
+
+        ax = axes[2]
+        for i, gamma in enumerate(gammas):
+            block = deviation[deviation["risk_aversion"] == gamma] \
+                .sort_values("age")
+            if not len(block):
+                continue
+            ax.plot(block["age"], block["cost_of_forcing_bp"], "-o",
+                    markersize=3, color=_colour(i), linewidth=1.6,
+                    label=f"γ = {gamma:g}")
+        ax.axhline(0, color="black", linewidth=1.0)
+        ax.axhspan(-1, 1, color="grey", alpha=0.18)
+        ax.text(26, 1.4, "±1bp: indistinguishable from flat", fontsize=7.5,
+                color="grey")
+        ax.set_xlabel("Age")
+        ax.set_ylabel("Cost of forcing this age to 100% equity (bp of CEC)")
+        ax.set_title("Only the retirement date is worth anything", fontsize=10)
+        ax.legend(fontsize=8)
+        fig.tight_layout()
+    return _save(fig, directory, name)
+
+
+def plot_glide_comparison(comparison: pd.DataFrame, trace: pd.DataFrame,
+                          directory: str | Path,
+                          name: str = "fig21_glide_comparison") -> Path:
+    """What the solved schedules buy, and how the search converged."""
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(1, 2, figsize=(13.5, 5.0),
+                                 gridspec_kw={"width_ratios": [1.25, 1.0]})
+
+        ax = axes[0]
+        gammas = sorted(comparison["risk_aversion"].unique())
+        names = list(comparison[comparison["risk_aversion"] == gammas[0]]
+                     .sort_values("cec")["strategy"])
+        y = np.arange(len(names))
+        width = 0.8 / max(len(gammas), 1)
+        for i, gamma in enumerate(gammas):
+            block = (comparison[comparison["risk_aversion"] == gamma]
+                     .set_index("strategy").reindex(names))
+            offset = (i - (len(gammas) - 1) / 2) * width
+            ax.barh(y + offset, block["cec"], width, color=_colour(i),
+                    label=f"γ = {gamma:g}")
+        ax.set_yticks(y)
+        ax.set_yticklabels(names, fontsize=8)
+        ax.set_xlabel("Certainty equivalent consumption")
+        ax.set_title("Solved schedules against fixed benchmarks")
+        ax.legend(fontsize=8)
+
+        ax = axes[1]
+        for i, gamma in enumerate(sorted(trace["gamma"].unique())):
+            block = trace[trace["gamma"] == gamma].sort_values("sweep")
+            ax.plot(block["sweep"], block["cec"], "-o", color=_colour(i),
+                    label=f"γ = {gamma:g}")
+        ax.set_xlabel("Coordinate-ascent sweep")
+        ax.set_ylabel("Certainty equivalent consumption")
+        ax.set_title("Convergence")
+        ax.legend(fontsize=8)
+        fig.tight_layout()
+    return _save(fig, directory, name)
+
+
+def plot_retirement_anchor(anchor: pd.DataFrame, retire_age: int,
+                           directory: str | Path,
+                           name: str = "fig22_retirement_anchor") -> Path:
+    """Does the dip at retirement survive a spending rule with no anchor?"""
+    with plt.rc_context(STYLE):
+        fig, ax = plt.subplots(figsize=(9.0, 5.0))
+        for i, rule in enumerate(sorted(anchor["rule"].unique())):
+            block = anchor[anchor["rule"] == rule].sort_values("age")
+            ax.plot(block["age"], block["equity_share"] * 100, "-o",
+                    markersize=3.5, color=_colour(i), linewidth=1.8,
+                    label=rule)
+        ax.axvline(retire_age, color="black", linestyle="--", linewidth=1.2)
+        ax.text(retire_age + 0.4, 4, "retirement", fontsize=8)
+        ax.set_xlabel("Age")
+        ax.set_ylabel("Optimal equity share (%)")
+        ax.set_ylim(-5, 108)
+        ax.set_title("The dip at retirement belongs to the withdrawal rule,\\n"
+                     "not to the investment problem")
+        ax.legend(fontsize=8, loc="lower left")
+        fig.tight_layout()
+    return _save(fig, directory, name)

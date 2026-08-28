@@ -49,8 +49,9 @@ for the full analysis and the caveats.
 | [`docs/04_replicated_results_and_tables.md`](docs/04_replicated_results_and_tables.md) | Headline tables, distributional evidence, robustness, comparison with the paper, limitations |
 | [`docs/05_sensitivity_analysis.md`](docs/05_sensitivity_analysis.md) | Sweeps over allocation, preferences, planning and sampling assumptions; safe withdrawal rates; tornado analysis |
 | [`docs/06_retirement_spending_rules.md`](docs/06_retirement_spending_rules.md) | Eight families of withdrawal policy compared at each rule's own optimal rate; the bequest-motive pivot |
+| [`docs/07_optimal_glide_path.md`](docs/07_optimal_glide_path.md) | Solving for the age-by-asset schedule directly: free-form and parametric optimisation, local-optimum checks |
 
-All six are **generated** by `main.py` from live pipeline objects -- edit
+All seven are **generated** by `main.py` from live pipeline objects -- edit
 `src/report.py`, not the Markdown.
 
 ## Sensitivity
@@ -90,6 +91,52 @@ withdrawal rate that holds ruin probability to 5%:
 The 4% rule was calibrated on US history — exactly the hindsight the paper
 removes, and removing it costs more than a percentage point of retirement
 income.
+
+## The optimal glide path
+
+`docs/07` stops testing glide paths and solves for one. Equity share gets a
+free parameter at **every age** — 68 of them, no smoothness imposed — plus the
+domestic split on five-year bands, optimised by coordinate ascent under common
+random numbers.
+
+**There is almost no glide.** The unconstrained optimum is 100% equity at
+every age before retirement and ~96% after, at every risk aversion from γ=2
+to γ=10. It is not a declining path, not a rising one, and not a U.
+
+| Strategy | CEC (γ=5) | Gap to optimum |
+| --- | --- | --- |
+| Free-form optimal (68 free parameters) | 1.0528 | — |
+| Parametric optimal (6 free knots) | 1.0490 | −0.35% |
+| **Static 100% international equity** | **1.0415** | **−1.07%** |
+| 50/50 all-equity | 0.9952 | −5.47% |
+| Industry target-date glide path | 0.9278 | −11.87% |
+| 60/40 | 0.8672 | −17.62% |
+
+That third row is the finding. Solving a 68-dimensional allocation problem
+beats the simplest possible portfolio by **one percent** of lifetime
+consumption. Almost all the available value is in the *level* of equity
+exposure and the international split; almost none is in its age profile.
+
+**The one real feature is a dip at the retirement date.** Under the 4% rule
+the solved schedule drops to 70% equity at exactly age 63 and recovers by 68 —
+a 29pp dip. That is not the investment problem talking, it is the withdrawal
+rule: the 4% rule sets thirty years of spending as a fraction of wealth on one
+date, so wealth at 63 is an anchor worth protecting. Re-solving under a
+percent-of-portfolio rule or a life-expectancy rule, neither of which anchors
+on any single date, the dip vanishes entirely and the schedule is flat at
+100%.
+
+So the practical rule is the opposite of what target-date funds do: *if your
+withdrawal policy anchors on your balance at one date, de-risk briefly around
+that date; if it does not, do not de-risk at all.*
+
+Two guards against over-reading the solved shape. Restarting the search from
+flat schedules at 20%, 60% and 100% equity converges to the same certainty
+equivalent within 0.013%. And forcing each age back to 100% equity one at a
+time shows **54 of 68 ages cost less than a basis point** — several are
+negative. Only the ages at and just after retirement clear one basis point, so
+the rest of the plotted line is search noise on a flat objective, not
+structure.
 
 ## Spending rules
 
@@ -132,8 +179,8 @@ while also spending more.
 pip install numpy pandas scipy matplotlib pyyaml openpyxl pytest
 
 python main.py --quick      # ~20 s smoke run at reduced N
-python main.py              # ~7 min full run: N = 100,000 plus sweeps
-python -m pytest tests/ -q  # 210 tests
+python main.py              # ~18 min full run: N = 100,000 plus sweeps and searches
+python -m pytest tests/ -q  # 235 tests
 ```
 
 Selected steps and alternative configurations:
@@ -142,13 +189,14 @@ Selected steps and alternative configurations:
 python main.py --steps 1 2          # panel + bootstrap only
 python main.py --steps 1 5          # panel + sensitivity sweeps only
 python main.py --steps 1 6          # panel + spending-rule comparison only
+python main.py --steps 1 7          # panel + glide-path optimisation only
 python main.py --config other.yaml  # a different parameterisation
 ```
 
 ## Layout
 
 ```
-├── docs/                 # generated analysis documents (6 files)
+├── docs/                 # generated analysis documents (7 files)
 ├── data/
 │   ├── raw/              # primary source files, unmodified
 │   ├── processed/        # standardised real return panels (.csv and .npz)
@@ -160,20 +208,22 @@ python main.py --config other.yaml  # a different parameterisation
 │   ├── utility.py        # CRRA, Epstein-Zin, shortfall metrics
 │   ├── sensitivity.py    # common-random-number parameter sweeps
 │   ├── spending.py       # pluggable retirement withdrawal rules
+│   ├── glidepath.py      # batched evaluator + glide-path optimisers
 │   ├── plots.py          # publication-quality figures
 │   └── report.py         # Markdown report generation
-├── tests/                # 210 unit + integration tests
+├── tests/                # 235 unit + integration tests
 ├── results/
-│   ├── figures/          # 19 PNGs
+│   ├── figures/          # 22 PNGs
 │   └── tables/           # 40+ CSVs
 ├── config.yaml           # every tunable parameter
 └── main.py               # entry point
 ```
 
-`src/report.py`, `src/sensitivity.py` and `src/spending.py` are additions to
-the structure specified in the brief: keeping Markdown generation, the sweep
-engine and the withdrawal policies out of `main.py` leaves the entry point
-readable as a six-step pipeline.
+`src/report.py`, `src/sensitivity.py`, `src/spending.py` and
+`src/glidepath.py` are additions to the structure specified in the brief:
+keeping Markdown generation, the sweep engine, the withdrawal policies and the
+optimiser out of `main.py` leaves the entry point readable as a seven-step
+pipeline.
 
 ## Data
 
@@ -240,6 +290,12 @@ against its own median makes every strategy look identical.
 **Ruin means running out with years left to fund**, not "could not afford the
 desired withdrawal". The latter misclassifies horizon-based spending rules,
 which deliberately spend the last of the portfolio in the final year.
+
+**The glide-path optimiser is coordinate ascent, deliberately.** Under common
+random numbers the objective is a *deterministic* function of the weights, so
+a grid search over one coordinate is exact for that coordinate and each sweep
+is monotone. No gradients, no step size, no noise to average out. What it
+cannot do is escape a local optimum, which is why the restart check exists.
 
 **Sensitivity sweeps use common random numbers.** One set of bootstrap paths
 and income shocks is drawn once and reused at every sweep point, so a
