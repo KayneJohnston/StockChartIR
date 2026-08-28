@@ -2276,3 +2276,286 @@ Tables are written to `{cfg['run']['table_dir']}/hedging_*.csv`.
 """
 
     return _write(path, [intro, body])
+
+
+# ---------------------------------------------------------------------------
+# docs/09 - endogenous retirement timing
+# ---------------------------------------------------------------------------
+def write_doc_09(
+    path: str | Path,
+    cfg: Mapping[str, Any],
+    summary: pd.DataFrame,
+    conditioning: pd.DataFrame,
+    lottery: pd.DataFrame,
+    lottery_stats: Mapping[str, float],
+    bull: Mapping[str, float],
+    figures: Sequence[str],
+    runtime_notes: Mapping[str, Any],
+) -> Path:
+    """Does retiring on a wealth trigger beat retiring on a birthday?"""
+    timing = cfg["retirement_timing"]
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    metric = f"cec_gamma{gamma:g}"
+    baseline = "Fixed age 63 (baseline)"
+    floor = float(timing["working_income_floor"])
+
+    with_floor = summary[summary["working_income_floor"] == floor]
+    without = summary[summary["working_income_floor"] == 0.0]
+
+    def advantage(block: pd.DataFrame) -> pd.DataFrame:
+        indexed = block.set_index("variant")
+        if baseline not in indexed.index:
+            return block
+        base = float(indexed.loc[baseline, metric])
+        out = block.copy()
+        out["vs_baseline_pct"] = (out[metric] / base - 1.0) * 100.0
+        return out
+
+    floored = advantage(with_floor)
+    unfloored = advantage(without)
+    best = floored.loc[floored[metric].idxmax()] if len(floored) else None
+
+    def gain(frame: pd.DataFrame, variant: str) -> float:
+        row = frame[frame["variant"] == variant]
+        return float(row["vs_baseline_pct"].iloc[0]) if len(row) else float("nan")
+
+    trigger = str(timing["lottery_rule"])
+    gain_floored = gain(floored, trigger)
+    gain_unfloored = gain(unfloored, trigger)
+    artefact_share = (1.0 - gain_floored / gain_unfloored) * 100.0 \
+        if gain_unfloored else float("nan")
+
+    cond = conditioning[conditioning["working_income_floor"] == floor] \
+        if "working_income_floor" in conditioning.columns else conditioning
+    cond_display = cond.drop(columns=["working_income_floor"], errors="ignore")
+    conditioning_tbl = md_table(cond_display, floatfmt="{:.4f}") \
+        if len(cond_display) else "_not computed_"
+    if len(cond):
+        # The unconstrained wealth triggers and the narrow +/-3-year window are
+        # not the same experiment: the window has far less room to respond, so
+        # averaging them together would understate the first and overstate the
+        # second.
+        triggers = cond[cond["variant"].str.contains("trigger", case=False)]
+        family = triggers if len(triggers) >= 2 else cond
+        values = family["value_of_conditioning_pct"]
+        conditioning_value = float(values.median())
+        conditioning_spread = (
+            f"{values.min():.1f}% to {values.max():.1f}% across the "
+            f"{len(values)} unconstrained triggers")
+        narrow = cond[~cond["variant"].str.contains("trigger", case=False)]
+        conditioning_narrow = (
+            f"The narrow +/-3-year window earns "
+            f"{float(narrow['value_of_conditioning_pct'].iloc[0]):.1f}%, less than the "
+            "unconstrained triggers because it has less room to respond -- "
+            "which is itself informative: most of the value is in the freedom "
+            "to move several years, not a token amount."
+            if len(narrow) else "")
+    else:
+        conditioning_value = float("nan")
+        conditioning_spread = "not computed"
+        conditioning_narrow = ""
+
+    cols = ["variant", metric, "vs_baseline_pct", "median_retire_age",
+            "mean_retire_age", "p10_retire_age", "p90_retire_age",
+            "prob_ruin", "median_retirement_consumption", "median_bequest"]
+    cols = [c for c in cols if c in floored.columns]
+
+    top = lottery.iloc[-1] if len(lottery) else None
+    bottom = lottery.iloc[0] if len(lottery) else None
+    figure_list = "\n".join(f"* `{f}`" for f in figures)
+
+    intro = _header(
+        "09 - Endogenous Retirement Timing",
+        "Retiring on a wealth trigger rather than a birthday, and how much "
+        "the decade around the retirement date decides.",
+    )
+
+    body = f"""
+## 1. Two questions
+
+Every other document here retires the investor on a fixed birthday. Real
+people do not: they retire when the balance looks big enough, which means
+they retire disproportionately *after* good markets. That raises two
+questions this model can answer.
+
+1. **Is a wealth trigger better than a date?** It is what people do and what
+   "you need 25x expenses" advice recommends, and it is not obvious it wins.
+2. **How much does the decade around retirement decide?** Sequence-of-returns
+   risk is the mechanism underneath every glide-path argument, and it can be
+   measured rather than asserted.
+
+Retirement timing changes how many years the investor works, so utility here
+is evaluated over the **whole lifetime**, not the retirement window used
+elsewhere. A rule that retires people early buys them leisure, and a
+retirement-only window would charge it the cost and credit it none of the
+benefit.
+
+## 2. A model artefact that had to be fixed first
+
+The first run of this comparison said flexible retirement was worth
+**{gain_unfloored:+.1f}%** of certainty equivalent consumption, and that retiring at 66
+instead of 63 was *worse* despite delivering higher retirement consumption,
+lower ruin and a larger bequest. That combination does not make economic
+sense, and chasing it down found a genuine asymmetry in the model rather than
+a genuine result.
+
+At ages 63-65 an investor who has retired consumes social security plus a
+withdrawal, and the **progressive** benefit schedule puts a real floor under
+that: the 1st percentile of their consumption is about 0.58. An investor still
+working at those ages consumes ninety percent of whatever their labour income
+happens to be, and after nearly forty years of compounding permanent shocks
+the 1st percentile of *that* is about 0.21. **Retirement had a consumption
+floor and working life had none.** At γ = {gamma:g} the certainty equivalent is
+dominated by exactly that left tail, so the model was rewarding early
+retirement for reaching the safety net sooner.
+
+Everywhere else in this project the compared strategies share identical
+working-life consumption, so the asymmetry cancels and is invisible. It does
+not cancel when the thing being compared is *when to stop working*.
+
+The fix is a floor on labour income representing unemployment insurance and
+in-work benefits, set at **{floor:.0%} of economy-wide average earnings** -- the
+counterpart of the progressive PIA schedule that already exists in
+retirement. It defaults to zero so every other result in the project is
+unchanged, and both versions are reported below.
+
+## 3. Does a wealth trigger beat a date?
+
+With the working-income floor in place:
+
+{md_table(floored[cols], floatfmt="{:.4f}")}
+
+Without it, for comparison:
+
+{md_table(unfloored[cols], floatfmt="{:.4f}")}
+
+### 3.1 Read the fixed-age rows with care
+
+Notice that the fixed-age rows fall monotonically: age 60 beats 63 beats 66
+beats 70. That is **not** a finding, it is a limit of the model. Utility here
+has one argument, consumption. There is no disutility of labour and no utility
+of leisure, so retiring early costs only the consumption forgone -- and since
+retirement consumption is close to working-life consumption at these ages,
+earlier is close to free. A model that priced work at all would push those
+rows the other way.
+
+Comparing a wealth trigger against a fixed age 63 therefore mixes two
+different things: the value of *conditioning the date on the portfolio*, and
+the artefact of *shifting the date* in a model that does not price work.
+
+### 3.2 Isolating the value of conditioning
+
+The fix is to compare each flexible rule against a fixed date **matched on its
+own mean retirement age**, interpolated along the fixed-age frontier. What
+survives is attributable to conditioning.
+
+{conditioning_tbl}
+
+**Conditioning the retirement date on the portfolio is worth about
+{conditioning_value:.1f}% of certainty equivalent consumption**, holding the average
+retirement age constant. It is strikingly stable across trigger multiples --
+{conditioning_spread} -- which is what you would want to see: the value comes
+from responding to the market at all, not from the particular threshold
+chosen. {conditioning_narrow}
+
+For scale, {conditioning_value:.1f}% is roughly **nine times** the entire
+currency-hedging decision in `docs/08` (+0.34%) and **three times** what
+solving the full 68-dimensional glide path buys over a static international
+portfolio in `docs/07` (+1.07%). **The option to adjust when you stop working
+is worth more than any portfolio decision measured anywhere in this project,
+and unlike all of them it is free.**
+
+What the rule actually does is worth stating plainly. Under the
+{best['variant'] if best is not None else 'n/a'} rule the median retirement age is
+{float(best['median_retire_age']) if best is not None else float('nan'):.0f}, but the 10th and
+90th percentiles are {float(best['p10_retire_age']) if best is not None else float('nan'):.0f} and {float(best['p90_retire_age']) if best is not None else float('nan'):.0f}. It is not "retire later" and not
+"retire earlier" -- it is *retire when the market lets you, and keep working
+when it does not*.
+
+## 4. The retirement-date lottery
+
+Deciles of the annualised real portfolio return over the
+{int(timing['window_before']) + int(timing['window_after'])}-year window straddling each path's *own* retirement date:
+
+{md_table(lottery, floatfmt="{:.4f}")}
+
+The spread is the finding. Between the worst and best decile of that one
+decade, median real retirement consumption runs from
+{float(bottom['median_retirement_consumption']) if bottom is not None else float('nan'):.2f} to {float(top['median_retirement_consumption']) if top is not None else float('nan'):.2f} -- a difference of
+{(float(top['median_retirement_consumption']) / float(bottom['median_retirement_consumption']) - 1) * 100 if bottom is not None else float('nan'):.0f}% -- and the probability of ruin runs from
+{float(bottom['prob_ruin']) if bottom is not None else float('nan'):.1%} down to {float(top['prob_ruin']) if top is not None else float('nan'):.1%}.
+
+Formally, regressing log mean retirement consumption on that single decade's
+return gives an R-squared of **{float(lottery_stats.get('r2_retirement_window', float('nan'))):.3f}**, against **{float(lottery_stats.get('r2_whole_lifetime', float('nan'))):.3f}** for the
+return over the entire 68-year lifetime. **Ten years out of sixty-eight --
+under 15% of the investing life -- account for about {float(lottery_stats.get('share_of_lifetime_r2', float('nan'))) * 100:.0f}% of the
+explanatory power of the whole record.** That concentration is
+sequence-of-returns risk, measured.
+
+It is also the strongest argument *for* a glide path anywhere in this
+project, and worth holding against `docs/07`, which found that de-risking
+around retirement is worth about 60 basis points and de-risking anywhere else
+is worth nothing. Both are true: the decade matters enormously, and hedging it
+by holding bonds through it costs more than it saves.
+"""
+
+    bull_section = f"""
+## 5. Do people retire into bad markets?
+
+The folk observation is that retirements cluster after bull runs, and the
+worry is that a balance which looks big after a good run is also a balance
+bought at rich valuations, with thinner returns ahead. That is a testable
+claim, and the wealth-trigger rule lets us test it directly.
+
+| Statistic | Value |
+| --- | --- |
+| Correlation of retirement age with the 5-year run-up | {float(bull.get('corr_retire_age_vs_runup', float('nan'))):.3f} |
+| Mean run-up, early retirees | {float(bull.get('mean_runup_early_retirees', float('nan'))):.2%} |
+| Mean run-up, late retirees | {float(bull.get('mean_runup_late_retirees', float('nan'))):.2%} |
+| Mean subsequent return, early retirees | {float(bull.get('mean_subsequent_return_early', float('nan'))):.2%} |
+| Mean subsequent return, late retirees | {float(bull.get('mean_subsequent_return_late', float('nan'))):.2%} |
+| Correlation of run-up with subsequent return | {float(bull.get('corr_runup_vs_subsequent_return', float('nan'))):.3f} |
+
+**The first half of the claim holds and the second does not.** People on a
+wealth trigger really do retire after good markets: the correlation between
+retirement age and the preceding five-year return is {float(bull.get('corr_retire_age_vs_runup', float('nan'))):.2f}, and early retirees
+saw run-ups of {float(bull.get('mean_runup_early_retirees', float('nan'))):.1%} a year against {float(bull.get('mean_runup_late_retirees', float('nan'))):.1%} for late ones. But they were
+not punished for it. Their subsequent returns averaged
+{float(bull.get('mean_subsequent_return_early', float('nan'))):.1%} against {float(bull.get('mean_subsequent_return_late', float('nan'))):.1%}, and the correlation between the run-up and
+what followed is {float(bull.get('corr_runup_vs_subsequent_return', float('nan'))):.3f} -- indistinguishable from zero.
+
+**This result is weaker than it looks, and the reason matters.** A block
+bootstrap only contains the mean reversion that fits *inside a block*. With an
+expected block length of ten years, multi-decade valuation cycles are broken
+apart by construction, so the sampler is close to unable to produce the effect
+being tested. A fair test needs a **valuation-conditional** bootstrap --
+drawing blocks whose starting dividend yield resembles the simulated
+investor's -- which the panel supports (`eq_dp` is in the source data) and
+this document does not attempt. Read section 5 as "the block bootstrap finds
+no penalty", not as "there is none".
+
+## 6. Method
+
+| Setting | Value |
+| --- | --- |
+| Paths | {int(timing['n_paths']):,} |
+| Portfolio | `{timing['strategy']}` |
+| Rules compared | {len(timing['rules'])} |
+| Working-income floor | {floor:.0%} of average earnings (and 0% for comparison) |
+| Utility window | whole lifetime (see section 1) |
+| Wall clock | {runtime_notes.get('elapsed_seconds', float('nan')):.0f}s |
+
+The path-dependent simulator reproduces the fixed-date engine exactly when
+given a fixed-age rule, to floating-point tolerance -- the career-average
+earnings differ in the last digit because one accumulates sequentially and the
+other uses a pairwise mean. That equivalence is asserted in
+`tests/test_retirement.py`.
+
+## 7. Artefacts
+
+{figure_list}
+
+Tables are written to `{cfg['run']['table_dir']}/retirement_*.csv`.
+"""
+
+    return _write(path, [intro, body, bull_section])

@@ -51,8 +51,9 @@ for the full analysis and the caveats.
 | [`docs/06_retirement_spending_rules.md`](docs/06_retirement_spending_rules.md) | Eight families of withdrawal policy compared at each rule's own optimal rate; the bequest-motive pivot |
 | [`docs/07_optimal_glide_path.md`](docs/07_optimal_glide_path.md) | Solving for the age-by-asset schedule directly: free-form and parametric optimisation, local-optimum checks |
 | [`docs/08_currency_hedging.md`](docs/08_currency_hedging.md) | Covered-interest-parity hedged international leg; break-even hedging cost and optimal hedge ratio |
+| [`docs/09_retirement_timing.md`](docs/09_retirement_timing.md) | Retirement as a path-dependent decision; value of conditioning on markets; the retirement-date lottery |
 
-All eight are **generated** by `main.py` from live pipeline objects -- edit
+All nine are **generated** by `main.py` from live pipeline objects -- edit
 `src/report.py`, not the Markdown.
 
 ## Sensitivity
@@ -92,6 +93,60 @@ withdrawal rate that holds ruin probability to 5%:
 The 4% rule was calibrated on US history — exactly the hindsight the paper
 removes, and removing it costs more than a percentage point of retirement
 income.
+
+## When you retire matters more than what you hold
+
+`docs/09` makes the retirement date a **decision** rather than a birthday:
+retire once wealth reaches a multiple of income, inside an age window. That is
+what people actually do, and it is testable.
+
+**Conditioning the retirement date on the portfolio is worth ~2.9% of
+certainty equivalent consumption** — measured against a fixed date *matched on
+the same mean retirement age*, so it isolates the value of responding to
+markets from the value of simply retiring earlier. It is stable across trigger
+multiples (2.9–3.1%). That is roughly nine times the entire
+currency-hedging decision and three times what solving the full
+68-dimensional glide path buys over a static portfolio — **and unlike either,
+it is free.**
+
+The rule isn't "retire later" or "retire earlier". Median retirement age is
+63, but the 10th and 90th percentiles are 55 and 70: *retire when the market
+lets you, keep working when it doesn't.*
+
+**The retirement-date lottery.** Sorting paths by the real return over the
+decade straddling their own retirement date:
+
+| Decile of that decade | Median retirement consumption | Probability of ruin |
+| --- | --- | --- |
+| Worst | 1.14 | 37.9% |
+| Median | 1.55 | 11.0% |
+| Best | 1.83 | 2.3% |
+
+Ten years out of sixty-eight — under 15% of the investing life — account for
+about **37%** of the explanatory power of the entire return record
+(R² 0.089 against 0.242). That is sequence-of-returns risk, measured.
+
+**Do people retire into bad markets?** Half the folk claim holds. People on a
+wealth trigger really do retire after good runs (correlation of retirement age
+with the prior 5-year return: -0.35; early retirees saw 12.5%/yr run-ups
+against 6.7% for late ones). But they were not punished: subsequent
+returns were 6.0% against 5.3%, and the run-up/subsequent correlation
+is 0.008. **This result is weaker than it looks** — a block bootstrap only
+contains the mean reversion that fits inside a block, so it is close to unable
+to produce the effect being tested. A valuation-conditional bootstrap is what
+would settle it.
+
+### A model artefact worth reading about
+
+The first run said flexible retirement was worth +4.6%, and that retiring at
+66 was *worse* than 63 despite higher retirement consumption, lower ruin and a
+bigger bequest. That combination doesn't make sense, and chasing it down found
+a real asymmetry: **retirement had a consumption floor (the progressive social
+security schedule) and working life had none.** At γ=5 the certainty
+equivalent is dominated by exactly that tail, so the model was rewarding early
+retirement for reaching the safety net sooner. Adding a symmetric
+working-income floor cut the apparent premium by ~60%. `docs/09` section 2
+documents it in full.
 
 ## The optimal glide path
 
@@ -214,8 +269,8 @@ while also spending more.
 pip install numpy pandas scipy matplotlib pyyaml openpyxl pytest
 
 python main.py --quick      # ~20 s smoke run at reduced N
-python main.py              # ~18 min full run: N = 100,000 plus sweeps and searches
-python -m pytest tests/ -q  # 256 tests
+python main.py              # ~20 min full run: N = 100,000 plus sweeps and searches
+python -m pytest tests/ -q  # 282 tests
 ```
 
 Selected steps and alternative configurations:
@@ -226,13 +281,14 @@ python main.py --steps 1 5          # panel + sensitivity sweeps only
 python main.py --steps 1 6          # panel + spending-rule comparison only
 python main.py --steps 1 7          # panel + glide-path optimisation only
 python main.py --steps 1 8          # panel + currency-hedging sweep only
+python main.py --steps 1 9          # panel + retirement-timing analysis only
 python main.py --config other.yaml  # a different parameterisation
 ```
 
 ## Layout
 
 ```
-├── docs/                 # generated analysis documents (8 files)
+├── docs/                 # generated analysis documents (9 files)
 ├── data/
 │   ├── raw/              # primary source files, unmodified
 │   ├── processed/        # standardised real return panels (.csv and .npz)
@@ -246,18 +302,19 @@ python main.py --config other.yaml  # a different parameterisation
 │   ├── spending.py       # pluggable retirement withdrawal rules
 │   ├── glidepath.py      # batched evaluator + glide-path optimisers
 │   ├── hedging.py        # currency-hedged leg, break-even cost
+│   ├── retirement.py     # path-dependent retirement timing rules
 │   ├── plots.py          # publication-quality figures
 │   └── report.py         # Markdown report generation
-├── tests/                # 256 unit + integration tests
+├── tests/                # 282 unit + integration tests
 ├── results/
-│   ├── figures/          # 23 PNGs
+│   ├── figures/          # 24 PNGs
 │   └── tables/           # 40+ CSVs
 ├── config.yaml           # every tunable parameter
 └── main.py               # entry point
 ```
 
-`src/report.py`, `src/sensitivity.py`, `src/spending.py`, `src/glidepath.py`
-and `src/hedging.py` are additions to the structure specified in the brief:
+`src/report.py`, `src/sensitivity.py`, `src/spending.py`, `src/glidepath.py`,
+`src/hedging.py` and `src/retirement.py` are additions to the structure specified in the brief:
 keeping Markdown generation, the sweep engine, the withdrawal policies and the
 optimiser out of `main.py` leaves the entry point readable as a seven-step
 pipeline.

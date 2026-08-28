@@ -119,6 +119,12 @@ lifecycle:
     permanent_shock_sd: 0.10
     transitory_shock_sd: 0.25
     shocks_enabled: true
+    # Floor on labour income as a multiple of economy-wide average earnings
+    # (unemployment insurance / in-work benefits).  0 keeps the headline
+    # results as they were; step 9 turns it on because it is the only
+    # analysis where working-life consumption differs across the arms being
+    # compared.  See docs/09.
+    working_income_floor: 0.0
 
   social_security:
     enabled: true
@@ -359,3 +365,40 @@ hedging:
   # that is where the break-even turns out to sit.
   costs: [0.0, 0.001, 0.002, 0.003, 0.005, 0.0075, 0.010, 0.015, 0.020]
   strategies: [balanced_all_equity, international_equity]
+
+# ---------------------------------------------------------------------------
+# Step 9 - endogenous retirement timing
+# ---------------------------------------------------------------------------
+retirement_timing:
+  enabled: true
+  n_paths: 50000
+  strategy: balanced_all_equity
+
+  # Retirement carries a consumption floor through the progressive social
+  # security schedule; working life, with no floor, does not.  Everywhere
+  # else in this project the compared arms share their working-life
+  # consumption so the asymmetry cancels.  Here it does not, and without a
+  # floor the comparison rewards retiring early purely for reaching social
+  # security sooner.  Both are reported.
+  working_income_floor: 0.25
+  compare_without_floor: true
+
+  # Window straddling each path's own retirement date, in years.
+  window_before: 5
+  window_after: 5
+  n_buckets: 10
+
+  rules:
+    - {key: fixed_age, params: {age: 60}, label: "Fixed age 60"}
+    - {key: fixed_age, params: {age: 63}, label: "Fixed age 63 (baseline)"}
+    - {key: fixed_age, params: {age: 66}, label: "Fixed age 66"}
+    - {key: fixed_age, params: {age: 70}, label: "Fixed age 70"}
+    - {key: wealth_multiple, params: {multiple: 25, min_age: 60, max_age: 66},
+       label: "Flexible +/-3 years, 25x income"}
+    - {key: wealth_multiple, params: {multiple: 20, min_age: 55, max_age: 70},
+       label: "Wealth trigger 20x income"}
+    - {key: wealth_multiple, params: {multiple: 25, min_age: 55, max_age: 70},
+       label: "Wealth trigger 25x income"}
+    - {key: wealth_multiple, params: {multiple: 30, min_age: 55, max_age: 70},
+       label: "Wealth trigger 30x income"}
+  lottery_rule: "Wealth trigger 25x income"

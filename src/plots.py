@@ -903,3 +903,78 @@ def plot_hedging(frame: pd.DataFrame, break_even: pd.DataFrame,
                   bbox_to_anchor=(0.5, -0.16))
         fig.tight_layout()
     return _save(fig, directory, name)
+
+
+# ---------------------------------------------------------------------------
+# Step 9 - endogenous retirement timing
+# ---------------------------------------------------------------------------
+def plot_retirement_timing(summary: pd.DataFrame, ages: Mapping[str, np.ndarray],
+                           lottery: pd.DataFrame, directory: str | Path,
+                           metric: str = "cec_gamma5",
+                           baseline: str = "Fixed age 63 (baseline)",
+                           name: str = "fig24_retirement_timing") -> Path:
+    """When people retire, what it is worth, and the decade that decides it."""
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(1, 3, figsize=(16.5, 5.0))
+
+        ax = axes[0]
+        labels = list(ages)
+        parts = ax.violinplot([ages[k] for k in labels], showextrema=False,
+                              widths=0.85)
+        for i, body in enumerate(parts["bodies"]):
+            body.set_facecolor(_colour(i))
+            body.set_alpha(0.6)
+        ax.scatter(range(1, len(labels) + 1),
+                   [np.median(ages[k]) for k in labels], color="black", s=18,
+                   zorder=3, label="median")
+        ax.set_xticks(range(1, len(labels) + 1))
+        ax.set_xticklabels(labels, rotation=30, ha="right", fontsize=7.5)
+        ax.set_ylabel("Retirement age")
+        ax.set_title("When a wealth trigger actually retires people",
+                     fontsize=10)
+        ax.legend(fontsize=8)
+
+        ax = axes[1]
+        floors = sorted(summary["working_income_floor"].unique())
+        variants = list(summary[summary["working_income_floor"] == floors[0]]
+                        ["variant"])
+        y = np.arange(len(variants))
+        width = 0.8 / max(len(floors), 1)
+        for i, floor in enumerate(floors):
+            block = (summary[summary["working_income_floor"] == floor]
+                     .set_index("variant").reindex(variants))
+            base = float(block.loc[baseline, metric]) if baseline in block.index \
+                else float(block[metric].iloc[0])
+            offset = (i - (len(floors) - 1) / 2) * width
+            ax.barh(y + offset, (block[metric] / base - 1.0) * 100, width,
+                    color=_colour(i),
+                    label=("no working-income floor" if floor == 0
+                           else f"floor at {floor:.0%} of average earnings"))
+        ax.axvline(0, color="black", linewidth=1.2)
+        ax.set_yticks(y)
+        ax.set_yticklabels(variants, fontsize=7.5)
+        ax.set_xlabel(f"CEC vs {baseline} (%)")
+        ax.set_title("Most of the flexibility premium is the\n"
+                     "model's missing safety net", fontsize=10)
+        ax.legend(fontsize=7.5)
+
+        ax = axes[2]
+        ax.plot(lottery["mean_window_return"] * 100,
+                lottery["median_retirement_consumption"], "-o",
+                color=_colour(0), linewidth=2, label="median consumption")
+        ax2 = ax.twinx()
+        ax2.plot(lottery["mean_window_return"] * 100,
+                 lottery["prob_ruin"] * 100, "-s", color=_colour(1),
+                 linewidth=2, label="probability of ruin")
+        ax2.set_ylabel("Probability of ruin (%)", color=_colour(1))
+        ax2.grid(False)
+        ax.set_xlabel("Annualised real return over the decade around retirement (%)")
+        ax.set_ylabel("Median real retirement consumption", color=_colour(0))
+        ax.set_title("The retirement-date lottery", fontsize=10)
+        handles = (ax.get_legend_handles_labels()[0]
+                   + ax2.get_legend_handles_labels()[0])
+        labs = (ax.get_legend_handles_labels()[1]
+                + ax2.get_legend_handles_labels()[1])
+        ax.legend(handles, labs, fontsize=8, loc="upper left")
+        fig.tight_layout()
+    return _save(fig, directory, name)
