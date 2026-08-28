@@ -4581,34 +4581,35 @@ def write_doc_14(
         floatfmt="{:.0f}") if len(recovered) else "_Nothing to recover._"
     n_recovered = int(recovered["observed_years"].sum()) if len(recovered) \
         else 0
-    # Named from the data: which recovered series stop before the panel does,
-    # and when. Asserting a country here would go stale the moment the set of
-    # recovered countries changes.
+    # Read from the data: the last year any recovered series reaches. Naming a
+    # country or a year here would go stale the moment the sources change.
     early = recovered[recovered["last_year"] < int(cfg["data"]["end_year"])] \
         if len(recovered) else recovered
-    clio_end_note = ("; ".join(
-        f"{row.country} {row.series} ends {int(row.last_year)}"
-        for row in early.itertuples()) if len(early)
-        else "no recovered series stops early")
+    clio_last = int(early["last_year"].max()) if len(early) \
+        else int(cfg["data"]["end_year"])
     recovered_countries = sorted(set(recovered["country"])) if len(recovered) \
         else []
 
     housing_tbl = md_table(_compact(
-        housing, ["country", "years", "first_year", "last_year", "mean", "sd",
-                  "autocorrelation", "sd_desmoothed", "equity_sd"],
+        _pct(housing, ["mean", "sd", "sd_desmoothed", "equity_sd"]),
+        ["country", "years", "first_year", "last_year", "mean", "sd",
+         "sd_desmoothed", "equity_sd", "autocorrelation"],
         {"country": "Country", "years": "Years", "first_year": "From",
-         "last_year": "To", "mean": "Mean real return",
-         "sd": "s.d. (as published)", "autocorrelation": "Autocorrelation",
-         "sd_desmoothed": "s.d. de-smoothed", "equity_sd": "Equity s.d."}),
-        floatfmt="{:.3f}") if len(housing) else "_Not audited._"
+         "last_year": "To", "mean": "Mean real return (%)",
+         "sd": "s.d. as published (%)",
+         "sd_desmoothed": "s.d. de-smoothed (%)",
+         "equity_sd": "Equity s.d. (%)",
+         "autocorrelation": "Autocorrelation"}),
+        floatfmt="{:.2f}") if len(housing) else "_Not audited._"
 
     wage_tbl = md_table(_compact(
-        wages, ["country", "years", "first_year", "last_year",
+        _pct(wages, ["geometric_mean", "sd"]),
+        ["country", "years", "first_year", "last_year",
                 "geometric_mean", "sd", "career_multiple"],
         {"country": "Country", "years": "Years", "first_year": "From",
-         "last_year": "To", "geometric_mean": "Real wage growth p.a.",
-         "sd": "s.d.", "career_multiple": "Compounded over a career"}),
-        floatfmt="{:.4f}") if len(wages) else "_Not audited._"
+         "last_year": "To", "geometric_mean": "Real wage growth p.a. (%)",
+         "sd": "s.d. (%)", "career_multiple": "Compounded over a career"}),
+        floatfmt="{:.2f}") if len(wages) else "_Not audited._"
 
     wage_section = ""
     if len(wages) and wage.get("countries"):
@@ -4794,10 +4795,12 @@ Three constraints were imposed on the recovery, and each one costs coverage:
 
 * **A real return needs a real deflator.** A genuine nominal yield divided by a
   drawn price index is not an observation, so a country-year is marked observed
-  only where that country's own inflation is empirical too. The Clio-Infra
-  price indices end before the panel does, and the years past their end are
-  dropped here rather than deflated by a factor-model estimate --
-  {clio_end_note}.
+  only where that country's own inflation is empirical too. For the Clio-Infra
+  countries that costs both the years past the end of Clio's own price index
+  and a scattering of interwar years where that index has gaps -- which is why
+  those series stop in {clio_last} rather than running to
+  {int(cfg["data"]["end_year"])}. The alternative was to deflate a real yield
+  by a factor-model estimate and call the result an observation.
 * **No equity was recovered**, because no source available here carries an
   equity return for these countries. Their equity remains simulated, which is
   why they are Tier B and not Tier A, and why section 7 below is unchanged by

@@ -776,10 +776,10 @@ def section_data(ctx: Any) -> List[Flowable]:
             f"audit it rather than leave it unmentioned."))
         out.extend(ctx.table(
             rows_from(hs["frame"],
-                      ["country", "years", "mean", "sd", "autocorrelation",
-                       "sd_desmoothed", "equity_sd"],
+                      ["country", "years", "mean", "sd", "sd_desmoothed",
+                       "equity_sd", "autocorrelation"],
                       ["Country", "Years", "Mean real", "s.d. published",
-                       "Autocorr.", "s.d. de-smoothed", "Equity s.d."],
+                       "s.d. de-smoothed", "Equity s.d.", "Autocorr."],
                       {"country": str, "years": lambda v: f"{int(v)}",
                        "mean": lambda v: pc(v, 1), "sd": lambda v: pc(v, 1),
                        "autocorrelation": lambda v: f2(v, 2),
@@ -790,9 +790,9 @@ def section_data(ctx: Any) -> List[Flowable]:
                   "from the same source as the equity series. De-smoothing is "
                   "first-order Geltner using each country's own lag-one "
                   "autocorrelation."),
-            col_widths=[ctx.width * 0.20, ctx.width * 0.10, ctx.width * 0.14,
-                        ctx.width * 0.16, ctx.width * 0.12,
-                        ctx.width * 0.16, ctx.width * 0.12]))
+            col_widths=[ctx.width * 0.20, ctx.width * 0.09, ctx.width * 0.14,
+                        ctx.width * 0.15, ctx.width * 0.16,
+                        ctx.width * 0.14, ctx.width * 0.12]))
         out.append(ctx.p(
             f"The comparison is the one the source project is known for. "
             f"Median real housing returns are <b>{pc(hs['mean'], 1)}</b> "
