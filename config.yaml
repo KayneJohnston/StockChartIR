@@ -346,3 +346,16 @@ glide_path:
     rules:
       - {key: constant_percent, params: {rate: 0.07}}
       - {key: life_expectancy}
+
+# ---------------------------------------------------------------------------
+# Step 8 - currency hedging the international sleeve
+# ---------------------------------------------------------------------------
+hedging:
+  enabled: true
+  n_paths: 50000
+  # Share of the international equity sleeve held in a hedged share class.
+  ratios: [0.0, 0.25, 0.5, 0.75, 1.0]
+  # Annual cost of holding it hedged.  The grid is dense near zero because
+  # that is where the break-even turns out to sit.
+  costs: [0.0, 0.001, 0.002, 0.003, 0.005, 0.0075, 0.010, 0.015, 0.020]
+  strategies: [balanced_all_equity, international_equity]

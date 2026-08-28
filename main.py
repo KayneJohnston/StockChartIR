@@ -24,6 +24,7 @@ import pandas as pd
 from src import bootstrap as bs
 from src import data_loader as dl
 from src import glidepath as gp
+from src import hedging as hg
 from src import lifecycle as lc
 from src import plots
 from src import report as rp
@@ -62,6 +63,8 @@ def _apply_quick(cfg: Dict[str, Any]) -> Dict[str, Any]:
     if "sensitivity" in cfg:
         cfg["sensitivity"]["n_paths"] = 4000
         cfg["sensitivity"]["redraw_n_paths"] = 2000
+    if "hedging" in cfg:
+        cfg["hedging"]["n_paths"] = 4000
     if "glide_path" in cfg:
         cfg["glide_path"]["n_paths"] = 2000
         cfg["glide_path"]["n_sweeps"] = 1
@@ -919,15 +922,63 @@ def step7_glide_path(cfg: Dict[str, Any], state: Dict[str, Any]
 
 
 # ---------------------------------------------------------------------------
+# Step 8
+# ---------------------------------------------------------------------------
+def step8_hedging(cfg: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
+    """Sweep the currency-hedge ratio against its annual cost; write docs/08."""
+    hedge_cfg = cfg.get("hedging", {})
+    if not hedge_cfg.get("enabled", False):
+        LOGGER.info("hedging analysis disabled in config; skipping step 8")
+        return state
+    LOGGER.info("=== STEP 8: currency hedging ===")
+    started = time.perf_counter()
+
+    spec = state.get("spec") or lc.spec_from_config(cfg)
+    strategies = state.get("strategies") or lc.build_strategies(cfg, spec)
+    gammas = [float(g) for g in cfg["utility"]["risk_aversions"]]
+    metric = f"cec_gamma{float(cfg['utility']['baseline_risk_aversion']):g}"
+
+    sweep = hg.sweep_hedging(
+        cfg, spec, strategies,
+        ratios=[float(r) for r in hedge_cfg["ratios"]],
+        costs=[float(c) for c in hedge_cfg["costs"]],
+        n_paths=int(hedge_cfg["n_paths"]),
+        gammas=gammas,
+        strategy_keys=tuple(hedge_cfg["strategies"]),
+    )
+    break_even = hg.break_even_costs(sweep, metric)
+    optimal = hg.optimal_ratio_by_cost(sweep, metric)
+
+    tables = cfg["run"]["table_dir"]
+    _save_table(sweep, tables, "hedging_sweep")
+    _save_table(break_even, tables, "hedging_break_even")
+    _save_table(optimal, tables, "hedging_optimal_ratio")
+
+    figures = [str(plots.plot_hedging(sweep, break_even,
+                                      cfg["run"]["figure_dir"], metric))]
+
+    elapsed = time.perf_counter() - started
+    rp.write_doc_08(
+        Path("docs") / "08_currency_hedging.md",
+        cfg, sweep, break_even, optimal, figures,
+        {"elapsed_seconds": elapsed,
+         "n_countries": state["panel"].n_countries},
+    )
+    LOGGER.info("docs/08 written (%.0fs)", elapsed)
+    state.update({"hedging_sweep": sweep, "hedging_break_even": break_even})
+    return state
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
          4: step4_report, 5: step5_sensitivity, 6: step6_spending,
-         7: step7_glide_path}
+         7: step7_glide_path, 8: step8_hedging}
 
 
 def run(config_path: str = "config.yaml",
-        steps: Sequence[int] = (1, 2, 3, 4, 5, 6, 7),
+        steps: Sequence[int] = (1, 2, 3, 4, 5, 6, 7, 8),
         quick: bool = False) -> Dict[str, Any]:
     """Execute the pipeline and return the accumulated state."""
     cfg = dl.load_config(config_path)
@@ -957,8 +1008,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--steps", nargs="+", type=int,
-                        default=[1, 2, 3, 4, 5, 6, 7],
-                        choices=[1, 2, 3, 4, 5, 6, 7])
+                        default=[1, 2, 3, 4, 5, 6, 7, 8],
+                        choices=[1, 2, 3, 4, 5, 6, 7, 8])
     parser.add_argument("--quick", action="store_true",
                         help="small N for smoke tests")
     parser.add_argument("--verbose", action="store_true")

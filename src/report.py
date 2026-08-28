@@ -2095,3 +2095,184 @@ Tables are written to `{cfg['run']['table_dir']}/glide_*.csv`.
 """
 
     return _write(path, [intro, body, anchor_section])
+
+
+# ---------------------------------------------------------------------------
+# docs/08 - currency hedging
+# ---------------------------------------------------------------------------
+def write_doc_08(
+    path: str | Path,
+    cfg: Mapping[str, Any],
+    sweep: pd.DataFrame,
+    break_even: pd.DataFrame,
+    optimal: pd.DataFrame,
+    figures: Sequence[str],
+    runtime_notes: Mapping[str, Any],
+) -> Path:
+    """Should the international equity sleeve be currency hedged, and at what cost?"""
+    hedge_cfg = cfg["hedging"]
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    metric = f"cec_gamma{gamma:g}"
+    strategy = "balanced_all_equity"
+
+    block = sweep[sweep["strategy"] == strategy]
+    grid = block.pivot_table(index="hedge_ratio", columns="hedge_cost",
+                             values=metric).sort_index()
+    moments = (block[block["hedge_cost"] == 0.0].drop_duplicates("hedge_ratio")
+               .sort_values("hedge_ratio")
+               [["hedge_ratio", "intl_mean", "intl_geometric_mean", "intl_sd",
+                 "intl_p5", "corr_intl_domestic_equity",
+                 "corr_intl_inflation"]])
+
+    best_free = optimal.iloc[0] if len(optimal) else None
+    positive = break_even.dropna(subset=["break_even_annual_cost"])
+    best_ratio = (float(best_free["optimal_hedge_ratio"])
+                  if best_free is not None else float("nan"))
+    best_gain = (float(best_free["gain_over_unhedged_pct"])
+                 if best_free is not None else float("nan"))
+    top_break_even = (float(positive["break_even_annual_cost"].max()) * 1e4
+                      if len(positive) else float("nan"))
+    zero_cost_sd = moments["intl_sd"].to_numpy()
+    sd_min_ratio = float(moments.iloc[int(np.argmin(zero_cost_sd))]["hedge_ratio"])
+
+    figure_list = "\n".join(f"* `{f}`" for f in figures)
+
+    intro = _header(
+        "08 - Currency Hedging the International Sleeve",
+        "Whether to hedge foreign equity back to the home currency, and the "
+        "annual cost at which the answer flips.",
+    )
+
+    body = f"""
+## 1. The question
+
+The international leg built in `docs/01` bundles two exposures that an
+investor can actually separate: the foreign **asset** return and the foreign
+**currency**. Hedged share classes exist, and they cost money. So the question
+is not the abstract "does hedging reduce risk" but the practical one: **is it
+worth what it costs?**
+
+That makes the deliverable a break-even -- the annual fee above which hedging
+stops paying -- rather than a yes or no. A reader can check that number
+against the hedged fund actually in front of them.
+
+## 2. How the hedged series is built
+
+Under covered interest parity, fully hedging a foreign equity position back to
+the home currency converts the local return at the forward rate, which pays
+the interest-rate differential:
+
+```
+hedged_gross_ij = (1 + eq_tr_j) * (1 + r_i) / (1 + r_j)
+```
+
+with `r` the nominal short rate, `i` the investor's country and `j` the
+foreign market. The hedged investor keeps the foreign equity risk, earns the
+*domestic* short rate and gives up the foreign one. Averaging over the
+available foreign markets, charging an annual cost and deflating by domestic
+inflation gives the hedged leg. A partial hedge is a linear blend of the two
+legs, which is exactly right for an investor splitting the sleeve between a
+hedged and an unhedged share class.
+
+**Two honest caveats.** Covered interest parity is an identity only when it
+holds: it broke down in both world wars, under capital controls, and again
+after 2008. This construction imposes it throughout, which flatters hedging in
+precisely the periods where a real hedge would have been hardest to maintain.
+And a hedge in practice is rolled short-dated forwards carrying basis and
+margin risk, represented here as a flat annual drag -- which is exactly why
+the cost is swept rather than assumed.
+
+### 2.1 Why the comparison is exactly paired
+
+The hedge ratio deliberately does **not** change which country-years are
+usable: where the hedged series cannot be computed, the unhedged value is
+carried through. The bootstrap therefore draws identical blocks at every
+ratio. The sweep goes further and reuses one set of drawn *(country,
+calendar)* indices for the whole grid, re-reading only the international leg,
+so two hedge ratios are compared on literally the same simulated lives rather
+than merely on the same distribution. The run asserts that the availability
+mask is unchanged and fails loudly if it is not.
+
+## 3. The answer
+
+Certainty equivalent consumption at γ = {gamma:g}, by hedge ratio (rows) and annual
+cost (columns):
+
+{md_table(grid.reset_index(), floatfmt="{:.4f}")}
+
+Break-even annual cost, per ratio:
+
+{md_table(break_even, floatfmt="{:.5f}")}
+
+Optimal hedge ratio at each assumed cost:
+
+{md_table(optimal, floatfmt="{:.5f}")}
+
+**Even for free, hedging is barely worth doing, and only in small doses.** The
+best ratio at zero cost is **{best_ratio:.0%}**, worth {best_gain:+.2f}% of certainty
+equivalent consumption. Hedging half the sleeve is worth essentially nothing.
+Hedging three-quarters or all of it is *negative* at any price.
+
+**The break-even is about {top_break_even:.0f} basis points a year**, at the 25% ratio. Above
+that, not hedging wins. Retail hedged share classes generally cost more than
+that, which makes the practical answer for this investor: don't.
+
+## 4. Why -- the mechanism
+
+{md_table(moments, floatfmt="{:.4f}")}
+
+The mechanism is visible in two columns, and it is not the one hedging is
+usually sold on.
+
+**Hedging does reduce the standalone volatility of the foreign sleeve**, but
+not monotonically: volatility bottoms out at a {sd_min_ratio:.0%} hedge and then rises
+again toward a full hedge. In *real* terms, foreign currency exposure is
+partly a hedge against domestic inflation -- a domestic inflation shock tends
+to depreciate the home currency, which raises the local-currency value of
+foreign assets. Hedging that away removes an offset. A nominal-terms study
+cannot see this; a real-terms one over 130 years can.
+
+**Hedging raises the correlation between the foreign sleeve and the home
+market**, from {float(moments['corr_intl_domestic_equity'].iloc[0]):.2f} unhedged to
+{float(moments['corr_intl_domestic_equity'].max()):.2f} at its peak. Currency movement is part of what makes foreign
+equity a *diversifier* rather than a second helping of the same risk. Hedging
+buys a lower standalone variance and pays for it with a higher covariance, and
+in a portfolio the two roughly cancel.
+
+That cancellation is the whole result. "Hedging reduces risk" is true of the
+sleeve in isolation and close to false of the portfolio that holds it.
+
+## 5. What would change this
+
+1. **A shorter or more recent sample.** The post-1990 experience of major
+   currencies is not the 1890-2020 one, and an investor who believes the
+   inflation-hedging channel is dead should discount section 4 accordingly.
+2. **A small home market with a volatile currency.** The panel averages over
+   {int(runtime_notes.get('n_countries', 38))} domestic countries. An investor whose currency swings far more
+   than the panel average has a stronger case to hedge than this average
+   result suggests; `docs/05` section 3.1 shows how much country identity
+   matters elsewhere in this project.
+3. **Bonds rather than equities.** Currency volatility is large relative to
+   bond returns and small relative to equity returns, which is why the
+   conventional advice -- hedge foreign bonds, don't bother with foreign
+   equity -- survives this analysis untouched. This document tests the equity
+   sleeve only.
+
+## 6. Method
+
+| Setting | Value |
+| --- | --- |
+| Paths | {int(hedge_cfg['n_paths']):,} |
+| Hedge ratios | {", ".join(f"{float(r):.0%}" for r in hedge_cfg['ratios'])} |
+| Annual costs | {", ".join(f"{float(c) * 1e4:.0f}bp" for c in hedge_cfg['costs'])} |
+| Panel | `{cfg['bootstrap']['panel']}` |
+| Wall clock | {runtime_notes.get('elapsed_seconds', float('nan')):.0f}s |
+
+## 7. Artefacts
+
+{figure_list}
+
+Tables are written to `{cfg['run']['table_dir']}/hedging_*.csv`.
+"""
+
+    return _write(path, [intro, body])

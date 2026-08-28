@@ -50,8 +50,9 @@ for the full analysis and the caveats.
 | [`docs/05_sensitivity_analysis.md`](docs/05_sensitivity_analysis.md) | Sweeps over allocation, preferences, planning and sampling assumptions; safe withdrawal rates; tornado analysis |
 | [`docs/06_retirement_spending_rules.md`](docs/06_retirement_spending_rules.md) | Eight families of withdrawal policy compared at each rule's own optimal rate; the bequest-motive pivot |
 | [`docs/07_optimal_glide_path.md`](docs/07_optimal_glide_path.md) | Solving for the age-by-asset schedule directly: free-form and parametric optimisation, local-optimum checks |
+| [`docs/08_currency_hedging.md`](docs/08_currency_hedging.md) | Covered-interest-parity hedged international leg; break-even hedging cost and optimal hedge ratio |
 
-All seven are **generated** by `main.py` from live pipeline objects -- edit
+All eight are **generated** by `main.py` from live pipeline objects -- edit
 `src/report.py`, not the Markdown.
 
 ## Sensitivity
@@ -138,6 +139,40 @@ negative. Only the ages at and just after retirement clear one basis point, so
 the rest of the plotted line is search noise on a flat objective, not
 structure.
 
+## Should you hedge the currency?
+
+`docs/08` splits the international sleeve into its two exposures — the foreign
+*asset* return and the foreign *currency* — by building a covered-interest-parity
+hedged leg, and sweeps the hedge ratio against an annual holding cost. Every
+ratio is evaluated on **literally the same simulated lives**: the hedge never
+changes which country-years are usable, and the sweep reuses one set of drawn
+(country, calendar) indices, re-reading only the international leg.
+
+| Hedge ratio | CEC gain at zero cost | Break-even annual cost |
+| --- | --- | --- |
+| 25% | +0.34% | 33 bp/yr |
+| 50% | +0.20% | 10 bp/yr |
+| 75% | -0.45% | never worth it |
+| 100% | -1.57% | never worth it |
+
+**Even for free, hedging is barely worth doing.** The best ratio is 25%, worth
++0.34% of certainty equivalent consumption; three-quarters or more is
+negative at any price. The break-even is about **33 basis points a year**, and
+retail hedged share classes generally cost more than that.
+
+**Why, and it isn't the usual story.** Hedging does cut the standalone
+volatility of the foreign sleeve — but not monotonically: volatility bottoms
+out at a 50% hedge (17.87%) and rises again toward a full hedge (19.36%).
+In *real* terms, foreign currency partly hedges domestic inflation, and
+hedging removes that offset. Meanwhile hedging raises the correlation between
+the foreign sleeve and the home market, from 0.54 to 0.61: currency
+movement is part of what makes foreign equity a *diversifier* rather than a
+second helping of the same risk.
+
+The two effects roughly cancel. "Hedging reduces risk" is true of the sleeve
+in isolation and close to false of the portfolio holding it. (The conventional
+advice to hedge foreign *bonds* survives untouched — this tests equities only.)
+
 ## Spending rules
 
 `docs/06` holds the portfolio fixed and compares eight families of withdrawal
@@ -180,7 +215,7 @@ pip install numpy pandas scipy matplotlib pyyaml openpyxl pytest
 
 python main.py --quick      # ~20 s smoke run at reduced N
 python main.py              # ~18 min full run: N = 100,000 plus sweeps and searches
-python -m pytest tests/ -q  # 235 tests
+python -m pytest tests/ -q  # 256 tests
 ```
 
 Selected steps and alternative configurations:
@@ -190,13 +225,14 @@ python main.py --steps 1 2          # panel + bootstrap only
 python main.py --steps 1 5          # panel + sensitivity sweeps only
 python main.py --steps 1 6          # panel + spending-rule comparison only
 python main.py --steps 1 7          # panel + glide-path optimisation only
+python main.py --steps 1 8          # panel + currency-hedging sweep only
 python main.py --config other.yaml  # a different parameterisation
 ```
 
 ## Layout
 
 ```
-├── docs/                 # generated analysis documents (7 files)
+├── docs/                 # generated analysis documents (8 files)
 ├── data/
 │   ├── raw/              # primary source files, unmodified
 │   ├── processed/        # standardised real return panels (.csv and .npz)
@@ -209,18 +245,19 @@ python main.py --config other.yaml  # a different parameterisation
 │   ├── sensitivity.py    # common-random-number parameter sweeps
 │   ├── spending.py       # pluggable retirement withdrawal rules
 │   ├── glidepath.py      # batched evaluator + glide-path optimisers
+│   ├── hedging.py        # currency-hedged leg, break-even cost
 │   ├── plots.py          # publication-quality figures
 │   └── report.py         # Markdown report generation
-├── tests/                # 235 unit + integration tests
+├── tests/                # 256 unit + integration tests
 ├── results/
-│   ├── figures/          # 22 PNGs
+│   ├── figures/          # 23 PNGs
 │   └── tables/           # 40+ CSVs
 ├── config.yaml           # every tunable parameter
 └── main.py               # entry point
 ```
 
-`src/report.py`, `src/sensitivity.py`, `src/spending.py` and
-`src/glidepath.py` are additions to the structure specified in the brief:
+`src/report.py`, `src/sensitivity.py`, `src/spending.py`, `src/glidepath.py`
+and `src/hedging.py` are additions to the structure specified in the brief:
 keeping Markdown generation, the sweep engine, the withdrawal policies and the
 optimiser out of `main.py` leaves the entry point readable as a seven-step
 pipeline.

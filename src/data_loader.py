@@ -257,6 +257,13 @@ class Panel:
 # ---------------------------------------------------------------------------
 # Primary source ingestion
 # ---------------------------------------------------------------------------
+#: Parsed workbooks, keyed by ``(path, sheet)``.  The hedging sweep rebuilds
+#: the panel dozens of times with different hedge ratios; re-parsing a 1.4 MB
+#: workbook each time dominated the runtime and the file cannot change during
+#: a run.
+_WORKBOOK_CACHE: Dict[Tuple[str, str], pd.DataFrame] = {}
+
+
 def load_jst(cfg: Mapping[str, Any]) -> pd.DataFrame:
     """Load the Jorda-Schularick-Taylor Macrohistory workbook.
 
@@ -265,7 +272,10 @@ def load_jst(cfg: Mapping[str, Any]) -> pd.DataFrame:
     ``cpi`` is an index; ``xrusd`` is *local currency units per USD*.
     """
     data_cfg = cfg["data"]
-    frame = pd.read_excel(data_cfg["jst_workbook"], sheet_name=data_cfg["jst_sheet"])
+    key = (str(data_cfg["jst_workbook"]), str(data_cfg["jst_sheet"]))
+    if key not in _WORKBOOK_CACHE:
+        _WORKBOOK_CACHE[key] = pd.read_excel(key[0], sheet_name=key[1])
+    frame = _WORKBOOK_CACHE[key].copy()
     keep = ["year", "country", "iso", "cpi", "xrusd", "eq_tr", "bond_tr",
             "bill_rate", "eq_dp", "bond_rate", "stir", "ltrate"]
     missing = [c for c in keep if c not in frame.columns]

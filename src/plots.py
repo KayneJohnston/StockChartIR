@@ -822,3 +822,84 @@ def plot_retirement_anchor(anchor: pd.DataFrame, retire_age: int,
         ax.legend(fontsize=8, loc="lower left")
         fig.tight_layout()
     return _save(fig, directory, name)
+
+
+# ---------------------------------------------------------------------------
+# Step 8 - currency hedging
+# ---------------------------------------------------------------------------
+def plot_hedging(frame: pd.DataFrame, break_even: pd.DataFrame,
+                 directory: str | Path, metric: str = "cec_gamma5",
+                 strategy: str = "balanced_all_equity",
+                 name: str = "fig23_currency_hedging") -> Path:
+    """Value of hedging by ratio and cost, its break-even, and the mechanism."""
+    block = frame[frame["strategy"] == strategy]
+    unhedged = block[block["hedge_ratio"] == 0.0]
+    baseline = float(unhedged[metric].iloc[0]) if len(unhedged) else np.nan
+
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(1, 3, figsize=(16.5, 5.0))
+
+        ax = axes[0]
+        costs = sorted(block.loc[block["hedge_ratio"] > 0,
+                                 "hedge_cost"].unique())
+        show = [c for c in costs if c in (0.0, 0.002, 0.005, 0.01, 0.02)] or costs
+        for i, cost in enumerate(show):
+            chunk = block[(block["hedge_cost"] == cost)
+                          & (block["hedge_ratio"] > 0)].sort_values("hedge_ratio")
+            ratios = np.concatenate([[0.0], chunk["hedge_ratio"].to_numpy()])
+            values = np.concatenate([[baseline], chunk[metric].to_numpy()])
+            ax.plot(ratios * 100, (values / baseline - 1.0) * 100, "-o",
+                    markersize=4, color=_colour(i),
+                    label=f"cost {cost * 1e4:.0f}bp/yr")
+        ax.axhline(0, color="black", linewidth=1.2)
+        ax.set_xlabel("Share of the international sleeve hedged (%)")
+        ax.set_ylabel("CEC gain over unhedged (%)")
+        ax.set_title("Hedging is worth little, and only in small doses",
+                     fontsize=10)
+        ax.legend(fontsize=8)
+
+        ax = axes[1]
+        ordered = break_even.sort_values("hedge_ratio")
+        ticks = (ordered["hedge_ratio"] * 100).to_numpy()
+        heights = (ordered["break_even_annual_cost"] * 1e4).to_numpy()
+        positions = np.arange(len(ordered))
+        ax.bar(positions, np.nan_to_num(heights), width=0.55, color=_colour(0))
+        top = np.nanmax(heights) if np.isfinite(heights).any() else 1.0
+        for x, height in zip(positions, heights):
+            if np.isfinite(height):
+                ax.text(x, height + top * 0.03, f"{height:.0f}bp",
+                        ha="center", fontsize=9)
+            else:
+                ax.text(x, top * 0.04, "never\nworth it", ha="center",
+                        fontsize=9, color=_colour(1))
+        ax.set_xticks(positions)
+        ax.set_xticklabels([f"{t:.0f}%" for t in ticks])
+        ax.set_ylim(0, top * 1.22)
+        ax.set_xlabel("Share of the international sleeve hedged")
+        ax.set_ylabel("Break-even annual hedging cost (bp)")
+        ax.set_title("What you could afford to pay", fontsize=10)
+
+        ax = axes[2]
+        moments = (block[block["hedge_cost"] == 0.0]
+                   .drop_duplicates("hedge_ratio").sort_values("hedge_ratio"))
+        ax.plot(moments["hedge_ratio"] * 100, moments["intl_sd"] * 100, "-o",
+                color=_colour(0), linewidth=2,
+                label="volatility of the international sleeve")
+        ax2 = ax.twinx()
+        ax2.plot(moments["hedge_ratio"] * 100,
+                 moments["corr_intl_domestic_equity"], "-s", color=_colour(1),
+                 linewidth=2, label="correlation with domestic equity")
+        ax2.set_ylabel("Correlation with domestic equity", color=_colour(1))
+        ax2.grid(False)
+        ax.set_xlabel("Share of the international sleeve hedged (%)")
+        ax.set_ylabel("Real return volatility (%)", color=_colour(0))
+        ax.set_title("Why: hedging cuts standalone risk but\n"
+                     "raises correlation with the home market", fontsize=10)
+        handles = (ax.get_legend_handles_labels()[0]
+                   + ax2.get_legend_handles_labels()[0])
+        labels = (ax.get_legend_handles_labels()[1]
+                  + ax2.get_legend_handles_labels()[1])
+        ax.legend(handles, labels, fontsize=7.5, loc="upper center",
+                  bbox_to_anchor=(0.5, -0.16))
+        fig.tight_layout()
+    return _save(fig, directory, name)
