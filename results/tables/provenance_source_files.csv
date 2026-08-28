@@ -1,0 +1,4 @@
+file,exists,bytes,sha256,path
+JST_macrohistory.xlsx,True,1408158,c1bb91fe56ea50d4f27af5c0fc897d481e89ae38ce41eaecab62134c9354981d,data/raw/JST_macrohistory.xlsx
+clio_infra_inflation.csv,True,244117,e9752dfed4bf1c09d827506bf4da8a840c13d9b72d950865523f8c91a405c5f6,data/raw/clio_infra_inflation.csv
+clio_infra_bond_yield.csv,True,41201,61c679417a1dcd6b04137dba8d37bc00f4eab8bcab6af86055d3c89d41a377cc,data/raw/clio_infra_bond_yield.csv

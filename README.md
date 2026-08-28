@@ -72,9 +72,30 @@ the paper cannot drift away from the pipeline that produced it. See
 | [`docs/11_accumulation_signal.md`](docs/11_accumulation_signal.md) | The savings-rate signal taken apart: functional form, asymmetry, target choice, eight competing signals, feasibility bands, and where the value lands |
 | [`docs/12_full_allocation.md`](docs/12_full_allocation.md) | The full four-asset weight simplex -- domestic equity, international equity, bonds and bills -- solved at every year of the lifecycle |
 | [`docs/13_leverage.md`](docs/13_leverage.md) | Borrowing to invest: the optimal leverage ratio and allocation at each price of credit, and the break-even spread |
+| [`docs/14_data_provenance.md`](docs/14_data_provenance.md) | **Which numbers were observed and which were generated** -- source fingerprints, authenticity checks on the primary file, and whether the headline survives on observed data alone |
 
-All thirteen are **generated** by `main.py` from live pipeline objects -- edit
+All fourteen are **generated** by `main.py` from live pipeline objects -- edit
 `src/report.py`, not the Markdown.
+
+## How much of this data is real
+
+**39.6% of the panel's country-years have simulated equity, bond and bill
+returns**, and so does 38% of an observed investor's international leg (59%
+after 2000). `docs/14` audits this in full: 22 of the 38 countries are
+factor-model draws from a randomly assigned observed donor, not series derived
+from anything those countries experienced.
+
+The 16 countries with real Jordà-Schularick-Taylor return series pass every
+authenticity check -- five independently known annual returns land within
+tolerance, and the internal accounting identity fails at the rate a genuine
+spliced-source database should. One finding does not pass: all 16 countries
+show a variance collapse over 2016-2020 (sign-test p = 3e-05), so those five
+years are flagged as unverified.
+
+**The headline is stronger on observed data alone** -- 11.2% against 7.3% --
+so the simulated countries dilute the result rather than create it. But the
+honest evidence base for the return series is sixteen countries, not
+thirty-eight, and nothing here should lean on the larger number.
 
 ## Sensitivity
 
@@ -440,6 +461,7 @@ python main.py --steps 1 9          # panel + retirement-timing analysis only
 python main.py --steps 1 10         # panel + savings-rate analysis only
 python main.py --steps 11           # the accumulation-signal deep dive
 python main.py --steps 12 13        # the full allocation solve and leverage
+python main.py --steps 14           # the data provenance audit
 python main.py --config other.yaml  # a different parameterisation
 ```
 
@@ -465,6 +487,7 @@ python main.py --config other.yaml  # a different parameterisation
 │   ├── accumulation.py   # response forms, signal horse race, feasibility bands
 │   ├── allocation.py     # the four-asset simplex solved at every age
 │   ├── leverage.py       # levered evaluator and the cost-of-credit sweep
+│   ├── provenance.py     # what is observed, what is simulated, and does it matter
 │   ├── plots.py          # publication-quality figures
 │   └── report.py         # Markdown report generation
 ├── tests/                # 312 unit + integration tests

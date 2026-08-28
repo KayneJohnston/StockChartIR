@@ -1662,3 +1662,74 @@ def plot_leverage_detail(detail: pd.DataFrame, schedule: pd.DataFrame,
         ax.legend(fontsize=8, title="Annual spread", title_fontsize=8)
         fig.tight_layout()
     return _save(fig, directory, name)
+
+
+# ---------------------------------------------------------------------------
+# Step 14 - where the data comes from
+# ---------------------------------------------------------------------------
+def plot_provenance(era: pd.DataFrame, contamination: pd.DataFrame,
+                    tail: pd.DataFrame, countries: pd.DataFrame,
+                    directory: str | Path,
+                    name: str = "fig38_data_provenance") -> Path:
+    """How much of the panel is observed, and how much is generated."""
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(1, 3, figsize=(16.5, 5.0))
+
+        ax = axes[0]
+        block = era.copy()
+        x = np.arange(len(block))
+        empirical = (block["country_years"] - block["simulated"]).to_numpy(float)
+        simulated = block["simulated"].to_numpy(float)
+        ax.bar(x, empirical, color=_colour(0), width=0.62,
+               label="observed (Jordà–Schularick–Taylor)")
+        ax.bar(x, simulated, bottom=empirical, color=_colour(1), width=0.62,
+               label="simulated (factor model)")
+        for i, row in enumerate(block.itertuples()):
+            ax.text(i, row.country_years * 1.02,
+                    f"{row.share_simulated:.0%}", ha="center", fontsize=8,
+                    color=_colour(1))
+        ax.set_xticks(x)
+        ax.set_xticklabels(block["era"], fontsize=8)
+        ax.set_ylabel("Country-years in the panel")
+        ax.set_title("The simulated share grows over time\n"
+                     "(label = share simulated)", fontsize=10)
+        ax.legend(fontsize=8, loc="upper left")
+        ax.grid(axis="x", alpha=0.0)
+
+        ax = axes[1]
+        block = contamination[contamination["era"] != "whole panel"]
+        x = np.arange(len(block))
+        values = block["mean_synthetic_share_of_intl_leg"].to_numpy(float) * 100
+        ax.bar(x, values, color=_colour(1), width=0.62)
+        for i, v in enumerate(values):
+            ax.text(i, v + 1.2, f"{v:.0f}%", ha="center", fontsize=8)
+        whole = contamination[contamination["era"] == "whole panel"]
+        if len(whole):
+            level = float(whole["mean_synthetic_share_of_intl_leg"].iloc[0]) * 100
+            ax.axhline(level, color="black", linestyle="--", linewidth=1.3)
+            ax.annotate(f"whole panel: {level:.0f}%", (len(block) - 0.5, level),
+                        textcoords="offset points", xytext=(-4, 5),
+                        ha="right", fontsize=8)
+        ax.set_xticks(x)
+        ax.set_xticklabels(block["era"], fontsize=8)
+        ax.set_ylim(0, max(values.max() * 1.25, 10))
+        ax.set_ylabel("Share of the international leg that is simulated (%)")
+        ax.set_title("Even an observed country's international leg\n"
+                     "is mostly simulated by 2000", fontsize=10)
+        ax.grid(axis="x", alpha=0.0)
+
+        ax = axes[2]
+        block = tail.sort_values("ratio")
+        y = np.arange(len(block))
+        ax.barh(y, block["ratio"], color=_colour(2), height=0.62)
+        ax.axvline(1.0, color="black", linewidth=1.3)
+        ax.annotate("equal variance", (1.0, len(block) - 0.4),
+                    textcoords="offset points", xytext=(5, 0), fontsize=8)
+        ax.set_yticks(y)
+        ax.set_yticklabels(block["iso"], fontsize=7.5)
+        ax.set_xlabel("Tail s.d. ÷ reference s.d. (equity returns)")
+        ax.set_title("Every country's last five years are\n"
+                     "smoother than its history", fontsize=10)
+        ax.grid(axis="y", alpha=0.0)
+        fig.tight_layout()
+    return _save(fig, directory, name)

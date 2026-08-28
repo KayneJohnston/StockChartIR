@@ -1,0 +1,19 @@
+iso,country,years_in_file,eq_tr,bond_tr,bill_rate,cpi,xrusd,complete_return_years,usable_for_returns
+PRT,Portugal,131,131,131,131,131,131,131,True
+GBR,United Kingdom,131,131,131,131,131,131,131,True
+NOR,Norway,131,131,131,131,131,131,131,True
+USA,United States,131,131,131,131,131,131,131,True
+SWE,Sweden,131,131,131,131,131,131,131,True
+DNK,Denmark,131,131,130,131,131,131,130,True
+JPN,Japan,131,129,131,131,131,131,129,True
+BEL,Belgium,131,131,125,127,131,131,125,True
+FIN,Finland,131,125,131,131,131,131,125,True
+DEU,Germany,131,131,126,125,131,130,124,True
+FRA,France,131,131,131,124,131,131,124,True
+ITA,Italy,131,131,131,124,131,131,124,True
+NLD,Netherlands,131,121,131,131,131,131,121,True
+CHE,Switzerland,131,121,120,131,131,131,120,True
+AUS,Australia,131,131,121,128,131,131,118,True
+ESP,Spain,131,121,117,127,131,131,115,True
+CAN,Canada,131,0,0,0,131,131,0,False
+IRL,Ireland,131,0,0,0,99,101,0,False

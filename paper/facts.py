@@ -240,3 +240,72 @@ class Facts:
             "ruin_top": float(top["prob_ruin"]),
         }
 
+    # -- the provenance audit ----------------------------------------------
+    @functools.cached_property
+    def provenance(self) -> Dict[str, Any]:
+        countries = self.table("provenance_by_country")
+        era = self.table("provenance_by_era")
+        contamination = self.table("provenance_intl_contamination")
+        anchors = self.table("provenance_anchor_checks")
+        identity = self.table("provenance_identity_check").iloc[0]
+        tail = self.table("provenance_tail_variance")
+        comparison = self.table("provenance_panel_comparison")
+
+        available_simulated = int(
+            countries[countries["tier"] == "B"]["usable_years"].sum())
+        total = int(countries["usable_years"].sum())
+        whole = contamination[contamination["era"] == "whole panel"]
+        recent = contamination[contamination["era"] != "whole panel"].iloc[-1]
+        smoother = int((tail["ratio"] < 1.0).sum())
+        n_tail = int(len(tail))
+        from math import comb
+        p_value = float(min(1.0, 2.0 * sum(comb(n_tail, k)
+                                           for k in range(min(smoother,
+                                                              n_tail - smoother) + 1))
+                            / 2.0 ** n_tail)) if n_tail else float("nan")
+        return {
+            "n_countries": int(len(countries)),
+            "n_simulated": int((countries["tier"] == "B").sum()),
+            "n_observed": int((countries["tier"] == "A").sum()),
+            "country_years": total,
+            "country_years_simulated": available_simulated,
+            "share_simulated": available_simulated / total if total else 0.0,
+            "share_simulated_recent": float(era["share_simulated"].iloc[-1]),
+            "recent_era": str(era["era"].iloc[-1]),
+            "intl_simulated": float(
+                whole["mean_synthetic_share_of_intl_leg"].iloc[0]),
+            "intl_simulated_recent": float(
+                recent["mean_synthetic_share_of_intl_leg"]),
+            "anchors_passed": int(anchors["within_tolerance"].sum()),
+            "anchors_total": int(len(anchors)),
+            "identity_share_violating": float(identity["share_violating"]),
+            "identity_observations": int(identity["observations"]),
+            "tail_smoother": smoother,
+            "tail_countries": n_tail,
+            "tail_median_ratio": float(tail["ratio"].median()),
+            "tail_p_value": p_value,
+            "comparison": comparison,
+        }
+
+    @functools.cached_property
+    def panel_advantage(self) -> Dict[str, float]:
+        """The headline advantage on the full panel and on observed data only."""
+        comparison = self.table("provenance_panel_comparison")
+        # The table carries display labels when step 4 ran alongside the
+        # audit and raw keys otherwise, so match on either.
+        def find(*needles: str) -> pd.Series:
+            for _, row in comparison.iterrows():
+                name = str(row["strategy"]).lower()
+                if any(n.lower() in name for n in needles):
+                    return row
+            raise KeyError(f"no strategy matching {needles} in the comparison")
+
+        equity = find("50/50", "balanced_all_equity")
+        glide = find("target-date", "target_date_fund")
+        return {
+            "dev38": (float(equity["cec_dev38"]) / float(glide["cec_dev38"])
+                      - 1.0) * 100.0,
+            "jst16": (float(equity["cec_jst16"]) / float(glide["cec_jst16"])
+                      - 1.0) * 100.0,
+        }
+

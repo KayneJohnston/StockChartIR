@@ -1,0 +1,39 @@
+iso,country,tier,usable_years,first_year,last_year,returns_source,returns_empirical_years,returns_simulated_years,inflation_empirical_share,donor,note
+AUS,Australia,A,118,1900,2020,JST/JKKST,118,0,1.0,,JST/JKKST empirical 1900-2020; inflation 100% empirical
+BEL,Belgium,A,125,1890,2020,JST/JKKST,125,0,1.0,,JST/JKKST empirical 1890-2020; inflation 100% empirical
+CHE,Switzerland,A,120,1900,2020,JST/JKKST,120,0,1.0,,JST/JKKST empirical 1900-2020; inflation 100% empirical
+DEU,Germany,A,124,1890,2020,JST/JKKST,124,0,1.0,,JST/JKKST empirical 1890-2020; inflation 100% empirical
+DNK,Denmark,A,130,1890,2020,JST/JKKST,130,0,1.0,,JST/JKKST empirical 1890-2020; inflation 100% empirical
+ESP,Spain,A,115,1900,2020,JST/JKKST,115,0,1.0,,JST/JKKST empirical 1900-2020; inflation 100% empirical
+FIN,Finland,A,125,1896,2020,JST/JKKST,125,0,1.0,,JST/JKKST empirical 1896-2020; inflation 100% empirical
+FRA,France,A,124,1890,2020,JST/JKKST,124,0,1.0,,JST/JKKST empirical 1890-2020; inflation 100% empirical
+GBR,United Kingdom,A,131,1890,2020,JST/JKKST,131,0,1.0,,JST/JKKST empirical 1890-2020; inflation 100% empirical
+ITA,Italy,A,124,1890,2020,JST/JKKST,124,0,1.0,,JST/JKKST empirical 1890-2020; inflation 100% empirical
+JPN,Japan,A,129,1890,2020,JST/JKKST,129,0,1.0,,JST/JKKST empirical 1890-2020; inflation 100% empirical
+NLD,Netherlands,A,121,1900,2020,JST/JKKST,121,0,1.0,,JST/JKKST empirical 1900-2020; inflation 100% empirical
+NOR,Norway,A,131,1890,2020,JST/JKKST,131,0,1.0,,JST/JKKST empirical 1890-2020; inflation 100% empirical
+PRT,Portugal,A,131,1890,2020,JST/JKKST,131,0,1.0,,JST/JKKST empirical 1890-2020; inflation 100% empirical
+SWE,Sweden,A,131,1890,2020,JST/JKKST,131,0,1.0,,JST/JKKST empirical 1890-2020; inflation 100% empirical
+USA,United States,A,131,1890,2020,JST/JKKST,131,0,1.0,,JST/JKKST empirical 1890-2020; inflation 100% empirical
+AUT,Austria,B,130,1891,2020,factor model,0,130,0.86,FRA,"Tier-B calibrated: inflation Clio-Infra CPI (86% of 131 active years empirical, remainder factor-model); equity/bond/bill simulated from donor FRA; market inception 1890"
+CAN,Canada,B,130,1891,2020,factor model,0,130,1.0,NOR,"Tier-B calibrated: inflation JST CPI (100% of 131 active years empirical, remainder factor-model); equity/bond/bill simulated from donor NOR; market inception 1890"
+HRV,Croatia,B,27,1994,2020,factor model,0,27,0.64,PRT,"Tier-B calibrated: inflation Clio-Infra CPI (64% of 28 active years empirical, remainder factor-model); equity/bond/bill simulated from donor PRT; market inception 1993"
+CYP,Cyprus,B,23,1997,2019,factor model,0,23,0.6,DEU,"Tier-B calibrated: inflation Clio-Infra CPI (60% of 25 active years empirical, remainder factor-model); equity/bond/bill simulated from donor DEU; market inception 1996"
+CZE,Czech Republic,B,26,1994,2020,factor model,0,26,0.61,DEU,"Tier-B calibrated: inflation Clio-Infra CPI (61% of 28 active years empirical, remainder factor-model); equity/bond/bill simulated from donor DEU; market inception 1993"
+EST,Estonia,B,24,1997,2020,factor model,0,24,0.6,DNK,"Tier-B calibrated: inflation Clio-Infra CPI (60% of 25 active years empirical, remainder factor-model); equity/bond/bill simulated from donor DNK; market inception 1996"
+GRC,Greece,B,130,1891,2020,factor model,0,130,0.9,NLD,"Tier-B calibrated: inflation Clio-Infra CPI (90% of 131 active years empirical, remainder factor-model); equity/bond/bill simulated from donor NLD; market inception 1890"
+HKG,Hong Kong SAR,B,73,1948,2020,factor model,0,73,0.0,BEL,"Tier-B calibrated: inflation none (0% of 74 active years empirical, remainder factor-model); equity/bond/bill simulated from donor BEL; market inception 1947"
+ISL,Iceland,B,24,1994,2018,factor model,0,24,0.64,DEU,"Tier-B calibrated: inflation Clio-Infra CPI (64% of 28 active years empirical, remainder factor-model); equity/bond/bill simulated from donor DEU; market inception 1993"
+IRL,Ireland,B,98,1923,2020,factor model,0,98,0.99,PRT,"Tier-B calibrated: inflation JST CPI (99% of 99 active years empirical, remainder factor-model); equity/bond/bill simulated from donor PRT; market inception 1922"
+ISR,Israel,B,70,1950,2019,factor model,0,70,0.85,DEU,"Tier-B calibrated: inflation Clio-Infra CPI (85% of 72 active years empirical, remainder factor-model); equity/bond/bill simulated from donor DEU; market inception 1949"
+KOR,Korea,B,64,1957,2020,factor model,0,64,0.85,DNK,"Tier-B calibrated: inflation Clio-Infra CPI (85% of 65 active years empirical, remainder factor-model); equity/bond/bill simulated from donor DNK; market inception 1956"
+LVA,Latvia,B,24,1997,2020,factor model,0,24,0.6,NLD,"Tier-B calibrated: inflation Clio-Infra CPI (60% of 25 active years empirical, remainder factor-model); equity/bond/bill simulated from donor NLD; market inception 1996"
+LTU,Lithuania,B,27,1994,2020,factor model,0,27,0.64,BEL,"Tier-B calibrated: inflation Clio-Infra CPI (64% of 28 active years empirical, remainder factor-model); equity/bond/bill simulated from donor BEL; market inception 1993"
+LUX,Luxembourg,B,91,1930,2020,factor model,0,91,0.67,FRA,"Tier-B calibrated: inflation Clio-Infra CPI (67% of 92 active years empirical, remainder factor-model); equity/bond/bill simulated from donor FRA; market inception 1929"
+MLT,Malta,B,28,1993,2020,factor model,0,28,0.66,DEU,"Tier-B calibrated: inflation Clio-Infra CPI (66% of 29 active years empirical, remainder factor-model); equity/bond/bill simulated from donor DEU; market inception 1992"
+NZL,New Zealand,B,130,1891,2020,factor model,0,130,0.84,USA,"Tier-B calibrated: inflation Clio-Infra CPI (84% of 131 active years empirical, remainder factor-model); equity/bond/bill simulated from donor USA; market inception 1890"
+POL,Poland,B,29,1992,2020,factor model,0,29,0.67,FIN,"Tier-B calibrated: inflation Clio-Infra CPI (67% of 30 active years empirical, remainder factor-model); equity/bond/bill simulated from donor FIN; market inception 1991"
+SGP,Singapore,B,55,1966,2020,factor model,0,55,0.82,ESP,"Tier-B calibrated: inflation Clio-Infra CPI (82% of 56 active years empirical, remainder factor-model); equity/bond/bill simulated from donor ESP; market inception 1965"
+SVK,Slovakia,B,27,1994,2020,factor model,0,27,0.61,NLD,"Tier-B calibrated: inflation Clio-Infra CPI (61% of 28 active years empirical, remainder factor-model); equity/bond/bill simulated from donor NLD; market inception 1993"
+SVN,Slovenia,B,29,1991,2020,factor model,0,29,0.58,DEU,"Tier-B calibrated: inflation Clio-Infra CPI (58% of 31 active years empirical, remainder factor-model); equity/bond/bill simulated from donor DEU; market inception 1990"
+TWN,Taiwan,B,58,1963,2020,factor model,0,58,0.0,CHE,"Tier-B calibrated: inflation none (0% of 59 active years empirical, remainder factor-model); equity/bond/bill simulated from donor CHE; market inception 1962"

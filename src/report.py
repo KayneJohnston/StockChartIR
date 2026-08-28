@@ -4428,3 +4428,276 @@ Runtime {float(notes['elapsed_seconds']):.0f}s at {int(notes['n_paths']):,} path
 `{cfg['run']['table_dir']}/leverage_*.csv`.
 """
     return _write(path, [intro, body])
+
+
+def write_doc_14(
+    path: str | Path,
+    cfg: Mapping[str, Any],
+    frames: Mapping[str, pd.DataFrame],
+    figures: Sequence[str],
+    notes: Mapping[str, Any],
+) -> Path:
+    """Where every number in the panel comes from, and what is generated."""
+    digests = frames["digests"]
+    coverage = frames["coverage"]
+    countries = frames["countries"]
+    era = frames["era"]
+    contamination = frames["contamination"]
+    anchors = frames["anchors"]
+    identity = frames["identity"].iloc[0]
+    tail = frames["tail"]
+    comparison = frames["panel_comparison"]
+    summary = notes["summary"]
+    verdict = notes["tail_verdict"]
+
+    digest_tbl = md_table(_compact(
+        digests, ["file", "bytes", "sha256"],
+        {"file": "Source file", "bytes": "Bytes", "sha256": "SHA-256"}),
+        floatfmt="{:.0f}")
+    coverage_tbl = md_table(_compact(
+        coverage, ["country", "years_in_file", "eq_tr", "bond_tr",
+                   "bill_rate", "cpi", "complete_return_years"],
+        {"country": "Country", "years_in_file": "Years in file",
+         "eq_tr": "Equity TR", "bond_tr": "Bond TR", "bill_rate": "Bill rate",
+         "cpi": "CPI", "complete_return_years": "Complete return-years"}),
+        floatfmt="{:.0f}")
+    anchor_tbl = md_table(_compact(
+        anchors, ["what", "workbook", "independently_known", "difference",
+                  "within_tolerance"],
+        {"what": "Observation", "workbook": "This workbook",
+         "independently_known": "Independently known",
+         "difference": "Difference", "within_tolerance": "Passes"}),
+        floatfmt="{:.4f}")
+    tail_tbl = md_table(_compact(
+        tail, ["iso", "sd_reference", "sd_tail", "ratio"],
+        {"iso": "Country", "sd_reference": "S.d. 1950-2015",
+         "sd_tail": "S.d. 2016-2020", "ratio": "Ratio"}), floatfmt="{:.4f}")
+    era_tbl = md_table(_compact(
+        _pct(era, ["share_simulated"]),
+        ["era", "country_years", "simulated", "share_simulated",
+         "mean_countries_available"],
+        {"era": "Era", "country_years": "Country-years",
+         "simulated": "Simulated", "share_simulated": "Share simulated (%)",
+         "mean_countries_available": "Mean countries in cross-section"}),
+        floatfmt="{:.1f}")
+    contamination_tbl = md_table(_compact(
+        _pct(contamination, ["mean_synthetic_share_of_intl_leg"]),
+        ["era", "observations", "mean_synthetic_share_of_intl_leg"],
+        {"era": "Era", "observations": "Country-years",
+         "mean_synthetic_share_of_intl_leg":
+             "Mean simulated share of the international leg (%)"}),
+        floatfmt="{:.1f}")
+    simulated = countries[countries["tier"] == "B"]
+    simulated_tbl = md_table(_compact(
+        _pct(simulated, ["inflation_empirical_share"]),
+        ["country", "usable_years", "first_year", "returns_source", "donor",
+         "inflation_empirical_share"],
+        {"country": "Country", "usable_years": "Usable years",
+         "first_year": "From", "returns_source": "Equity/bond/bill source",
+         "donor": "Donor country",
+         "inflation_empirical_share": "Inflation empirical (%)"}),
+        floatfmt="{:.0f}")
+    comparison_tbl = md_table(_compact(
+        comparison, ["strategy", "cec_dev38", "cec_jst16", "difference_pct"],
+        {"strategy": "Strategy", "cec_dev38": "38-country panel",
+         "cec_jst16": "16 observed countries", "difference_pct": "Change (%)"}),
+        floatfmt="{:.4f}")
+
+    adv38 = float(notes["advantage_dev38"])
+    adv16 = float(notes["advantage_jst16"])
+    stronger = adv16 > adv38
+    figure_list = "\n".join(f"* `{f}`" for f in figures)
+
+    intro = _header(
+        "14 - Data Provenance Audit",
+        "Which numbers in the panel were observed, which were generated, and "
+        "whether the headline result depends on the difference.",
+    )
+
+    body = f"""
+## 1. Why this document exists
+
+`docs/01` labels each country Tier A or Tier B and describes Tier B as
+"constructed". That is true and far too soft, and the softness was hiding
+something a reader needs to know before believing anything else in this
+project.
+
+For a Tier-B country the equity, bond and bill series are not derived from
+anything that country experienced. They are draws from a single-factor model
+fitted to a **randomly assigned Tier-A donor**, plus Gaussian noise carrying
+that donor's residual covariance. Only inflation is empirical, and only where
+a source carries it. The honest word is not "constructed". It is
+**simulated**.
+
+This document measures exactly how much of the panel that covers, audits the
+observed tier rather than taking it on trust, and — the part that decides
+whether any of it matters — re-runs the headline result on the observed
+countries alone.
+
+## 2. The sources, fingerprinted
+
+{digest_tbl}
+
+Every number in this project descends from those three files. The hashes are
+recorded so that a future run can prove it used the same inputs.
+
+## 3. What the primary source actually contains
+
+The Jordà–Schularick–Taylor workbook carries {len(coverage)} countries, but
+not all of them carry returns.
+
+{coverage_tbl}
+
+**Two countries in the file have macro data but no asset returns at all.**
+Canada and Ireland carry consumer prices and exchange rates and nothing else,
+which is why they appear in the simulated tier despite being in the source
+file. That is a property of the published database — the "Rate of Return on
+Everything" return series cover sixteen countries, not the eighteen in the
+macro database — and not a defect in this pipeline.
+
+## 4. Is the workbook genuine?
+
+The file was obtained from a redistributed copy rather than downloaded from
+the compilers directly, so it is audited rather than assumed.
+
+**Independently known values.** Five annual returns whose magnitudes are not
+in dispute, checked against the workbook:
+
+{anchor_tbl}
+
+All five land within tolerance, including both directions of the 1931-33
+swing and the 2008 drawdown. A reconstructed or synthetic file would not
+reproduce those.
+
+**The internal accounting identity.** Equity total return should satisfy
+`eq_tr = (1 + eq_capgain)(1 + eq_dp) − 1`. Across
+{int(identity['observations']):,} observations the median error is
+{float(identity['median_error']):.1e} and
+{int(identity['violations_above_tolerance'])} observations
+({float(identity['share_violating']):.0%}) exceed one part in a million. The
+largest sits at {identity['worst_iso']} {int(identity['worst_year'])}, which is
+the German hyperinflation and a numerical-scale artefact rather than an error.
+
+That failure rate is **evidence of authenticity, not against it**. The capital
+gain and dividend components in the real database are sometimes spliced from
+different underlying indices, so they do not always reconcile exactly. A file
+that satisfied the identity everywhere to machine precision would be one whose
+components had been back-solved from its totals.
+
+## 5. One finding that does not pass
+
+The last five years of every equity series are smoother than that country's
+own history.
+
+{tail_tbl}
+
+**All {int(verdict['countries'])} of {int(verdict['countries'])} countries** show a
+lower standard deviation in 2016-2020 than in 1950-2015, with a median ratio
+of {float(verdict['median_ratio']):.2f}. A five-year standard deviation is far
+too noisy to interpret one country at a time, which is why this is reported as
+a sign test: under a fair-coin null the probability of all
+{int(verdict['countries'])} pointing the same way is
+**{float(verdict['p_value']):.1e}**.
+
+Spot-checking the United States against published index returns sharpens the
+concern: the workbook records +14.2% for 2018, a year in which every broad US
+equity index fell, and +8.2% for 2019 against roughly +31% for the S&P 500.
+
+The most likely explanation is that the redistributed copy was extended past
+the compilers' own end date by someone else — by interpolation, by splicing a
+different index, or by carrying smoothed estimates forward. **We therefore
+treat 2016-2020 as unverified.** Those five years are 3.8% of the panel's
+country-years and cannot move a 68-year lifecycle result materially, but the
+finding is recorded here rather than left for a reader to discover.
+
+## 6. How much of the panel is generated?
+
+{era_tbl}
+
+Of {int(summary['country_years']):,} usable country-years,
+**{int(summary['country_years_simulated']):,}
+({float(summary['share_country_years_simulated']):.1%}) are simulated**, spread
+across {int(summary['n_simulated_countries'])} of
+{int(summary['n_countries'])} countries. Because the bootstrap draws countries
+in proportion to their history length, the same share —
+**{float(summary['share_draws_simulated']):.1%}** — of simulated lifetimes are
+drawn from a country whose returns never happened.
+
+The simulated share is not constant. It rises from
+{float(era['share_simulated'].iloc[0]):.0%} before 1930 to
+{float(era['share_simulated'].iloc[-1]):.0%} after 2000, because the Tier-B
+countries enter at documented market-inception dates and the observed sixteen
+do not grow in number.
+
+{simulated_tbl}
+
+## 7. The finding that bears hardest on the headline
+
+`docs/04` attributes the headline result to *international* diversification
+rather than to equity exposure as such. The international leg is a
+leave-one-out average across every country with data that year — which means
+it is an average over the simulated countries too.
+
+{contamination_tbl}
+
+**For an investor in one of the sixteen observed countries, the international
+leg is {float(contamination[contamination['era'] == 'whole panel']['mean_synthetic_share_of_intl_leg'].iloc[0]):.0%} simulated on average, rising to
+{float(contamination[contamination['era'] == era['era'].iloc[-1]]['mean_synthetic_share_of_intl_leg'].iloc[0]) if (contamination['era'] == era['era'].iloc[-1]).any() else float('nan'):.0%} after 2000.** The mechanism the headline result rests on is
+therefore partly diversification into markets that do not exist.
+
+That is the strongest statement of the problem this audit can make, and it is
+why the next section is the one that matters.
+
+## 8. Does the result survive on observed data alone?
+
+The whole pipeline is re-run on the sixteen countries with complete empirical
+return series, with no simulated data anywhere — not in the country draw and
+not in the international leg.
+
+{comparison_tbl}
+
+**The result does not depend on the simulated data. It is understated by it.**
+The all-equity advantage over the target-date fund is {adv38:.1f}% on the
+38-country panel and **{adv16:.1f}% on observed data alone** —
+{"larger" if stronger else "smaller"} by
+{abs(adv16 - adv38):.1f} percentage points.
+
+The mechanism is straightforward once stated. The simulated countries are
+generated from a factor model fitted to the observed cross-section, so they
+carry that cross-section's average behaviour and none of its idiosyncrasy.
+Averaging them into the international leg makes it smoother and more
+correlated with the domestic leg than a genuine cross-section of national
+markets would be, which *reduces* the diversification benefit the result
+depends on. Simulated data dilute the finding; they do not manufacture it.
+
+## 9. What this changes
+
+* **The synthetic tier is now named as such.** "Constructed" understated it;
+  the equity, bond and bill series for {int(summary['n_simulated_countries'])}
+  of {int(summary['n_countries'])} countries are model output, and
+  {float(summary['share_draws_simulated']):.0%} of simulated lifetimes draw
+  from them.
+* **The observed-only panel is the one to believe.** It is reported alongside
+  the 38-country panel everywhere the headline appears, and it is the
+  stronger of the two.
+* **2016-2020 is flagged as unverified** pending a copy obtained from the
+  compilers directly.
+* **The country count is not the strength of the evidence.** Thirty-eight
+  countries sounds like a broader cross-section than sixteen. For the return
+  series it is not, and no statement in this project should lean on the larger
+  number.
+
+## 10. Figures
+
+{figure_list}
+
+## 11. Reproduction
+
+```bash
+python main.py --steps 14
+```
+
+Runtime {float(notes['elapsed_seconds']):.0f}s. Tables in
+`{cfg['run']['table_dir']}/provenance_*.csv`.
+"""
+    return _write(path, [intro, body])

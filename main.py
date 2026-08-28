@@ -31,6 +31,7 @@ from src import hedging as hg
 from src import leverage as lev
 from src import lifecycle as lc
 from src import plots
+from src import provenance as pvn
 from src import report as rp
 from src import retirement as rt
 from src import saving as sav
@@ -1794,17 +1795,115 @@ def step13_leverage(cfg: Dict[str, Any],
 
 
 # ---------------------------------------------------------------------------
+# Step 14
+# ---------------------------------------------------------------------------
+def step14_provenance(cfg: Dict[str, Any],
+                      state: Dict[str, Any]) -> Dict[str, Any]:
+    """Audit where every number in the panel came from; write docs/14."""
+    audit_cfg = cfg.get("provenance", {})
+    if not audit_cfg.get("enabled", False):
+        LOGGER.info("provenance audit disabled; skipping step 14")
+        return state
+    LOGGER.info("=== STEP 14: data provenance audit ===")
+    started = time.perf_counter()
+
+    panel = state["panel"]
+    raw = pvn.load_raw_workbook(cfg)
+    digests = pvn.source_digests(cfg)
+    coverage = pvn.coverage_by_series(raw, int(cfg["data"]["start_year"]),
+                                      int(cfg["data"]["end_year"]))
+    countries = pvn.country_provenance(panel)
+    era = pvn.simulated_share_by_era(panel)
+    contamination = pvn.international_leg_contamination(panel)
+    anchors = pvn.anchor_check(raw)
+    identity = pvn.identity_check(raw)
+    tail = pvn.tail_variance_test(
+        raw, tail_start=int(audit_cfg["tail_start"]),
+        reference_start=int(audit_cfg["reference_start"]),
+        reference_end=int(audit_cfg["tail_start"]) - 1)
+    summary = pvn.panel_summary(panel)
+    verdict = pvn.tail_verdict(tail)
+
+    if not bool(anchors["within_tolerance"].all()):
+        failed = list(anchors[~anchors["within_tolerance"]]["what"])
+        LOGGER.warning("provenance: anchor checks FAILED for %s", failed)
+
+    # The comparison that decides whether any of this matters.
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    column = f"cec_crra_gamma{gamma:g}"
+    # Read from state when step 4 ran in the same session, and from its table
+    # otherwise, so the audit can be re-run on its own.
+    tables_dir = Path(cfg["run"]["table_dir"])
+    headline = state.get("headline")
+    if headline is None:
+        headline = pd.read_csv(tables_dir / "headline_lifecycle_metrics.csv")
+    dev38 = headline.set_index("strategy")[column]
+    jst16 = pd.read_csv(
+        tables_dir / "robustness_panel_jst16_fully_empirical_countries_only.csv"
+    ).set_index("strategy")[column]
+    shared = [k for k in dev38.index if k in jst16.index]
+    labels = dict(zip(headline["strategy"], headline["label"]))
+    comparison = pd.DataFrame({
+        "strategy": [labels.get(k, k) for k in shared],
+        "cec_dev38": [float(dev38[k]) for k in shared],
+        "cec_jst16": [float(jst16[k]) for k in shared],
+    })
+    comparison["difference_pct"] = (comparison["cec_jst16"]
+                                    / comparison["cec_dev38"] - 1.0) * 100.0
+
+    def advantage(series: pd.Series) -> float:
+        return (float(series["balanced_all_equity"])
+                / float(series["target_date_fund"]) - 1.0) * 100.0
+
+    tables = cfg["run"]["table_dir"]
+    for frame, name in ((digests, "provenance_source_files"),
+                        (coverage, "provenance_source_coverage"),
+                        (countries, "provenance_by_country"),
+                        (era, "provenance_by_era"),
+                        (contamination, "provenance_intl_contamination"),
+                        (anchors, "provenance_anchor_checks"),
+                        (identity, "provenance_identity_check"),
+                        (tail, "provenance_tail_variance"),
+                        (comparison, "provenance_panel_comparison")):
+        _save_table(frame, tables, name)
+
+    figures = [str(plots.plot_provenance(era, contamination, tail, countries,
+                                         cfg["run"]["figure_dir"]))]
+
+    elapsed = time.perf_counter() - started
+    rp.write_doc_14(
+        Path("docs") / "14_data_provenance.md", cfg,
+        {"digests": digests, "coverage": coverage, "countries": countries,
+         "era": era, "contamination": contamination, "anchors": anchors,
+         "identity": identity, "tail": tail, "panel_comparison": comparison},
+        figures,
+        {"elapsed_seconds": elapsed, "summary": summary,
+         "tail_verdict": verdict,
+         "advantage_dev38": advantage(dev38),
+         "advantage_jst16": advantage(jst16)})
+    LOGGER.info("docs/14 written (%.0fs); %.1f%% of country-years simulated, "
+                "%.1f%% of the international leg", elapsed,
+                100 * summary["share_country_years_simulated"],
+                100 * float(contamination[contamination["era"] == "whole panel"]
+                            ["mean_synthetic_share_of_intl_leg"].iloc[0]))
+    state.update({"provenance_summary": summary,
+                  "provenance_countries": countries})
+    return state
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
          4: step4_report, 5: step5_sensitivity, 6: step6_spending,
          7: step7_glide_path, 8: step8_hedging, 9: step9_retirement_timing,
          10: step10_saving, 11: step11_accumulation,
-         12: step12_allocation, 13: step13_leverage}
+         12: step12_allocation, 13: step13_leverage,
+         14: step14_provenance}
 
 
 def run(config_path: str = "config.yaml",
-        steps: Sequence[int] = tuple(range(1, 14)),
+        steps: Sequence[int] = tuple(range(1, 15)),
         quick: bool = False) -> Dict[str, Any]:
     """Execute the pipeline and return the accumulated state."""
     cfg = dl.load_config(config_path)
@@ -1834,8 +1933,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--steps", nargs="+", type=int,
-                        default=list(range(1, 14)),
-                        choices=list(range(1, 14)))
+                        default=list(range(1, 15)),
+                        choices=list(range(1, 15)))
     parser.add_argument("--quick", action="store_true",
                         help="small N for smoke tests")
     parser.add_argument("--verbose", action="store_true")

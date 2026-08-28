@@ -573,3 +573,18 @@ leverage:
   detail_leverage: [1.0, 1.5, 2.0, 3.0]
   detail_spread: 0.01
 
+# ---------------------------------------------------------------------------
+# Step 14 -- data provenance audit
+# ---------------------------------------------------------------------------
+# docs/01 calls the Tier-B series "constructed".  They are simulated: equity,
+# bond and bill returns for those countries are factor-model draws from a
+# randomly assigned Tier-A donor.  This step measures how much of the panel
+# that covers, audits the observed tier against independently known values,
+# and re-runs the headline on observed data alone.
+provenance:
+  enabled: true
+  # The stretch of years tested for the variance collapse that would indicate
+  # a redistributed file had been extended past the compilers' own end date.
+  tail_start: 2016
+  reference_start: 1950
+
