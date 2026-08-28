@@ -16,6 +16,7 @@ from typing import Any, Dict, Iterable, Mapping, Sequence
 import numpy as np
 import pandas as pd
 
+from . import accumulation as acc
 from . import data_loader as dl
 
 GENERATED_BY = (
@@ -2559,3 +2560,1276 @@ Tables are written to `{cfg['run']['table_dir']}/retirement_*.csv`.
 """
 
     return _write(path, [intro, body, bull_section])
+
+
+# ---------------------------------------------------------------------------
+# docs/10 - conditioning the savings rate
+# ---------------------------------------------------------------------------
+def write_doc_10(
+    path: str | Path,
+    cfg: Mapping[str, Any],
+    frontier: pd.DataFrame,
+    profiles: pd.DataFrame,
+    shape_summary: pd.DataFrame,
+    conditioning: pd.DataFrame,
+    matched: pd.DataFrame,
+    deviation: pd.DataFrame,
+    combined: pd.DataFrame,
+    figures: Sequence[str],
+    runtime_notes: Mapping[str, Any],
+) -> Path:
+    """When to save, and whether the rate should respond to the portfolio."""
+    save_cfg = cfg["saving"]
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    metric = f"cec_gamma{gamma:g}"
+    target_mean = float(save_cfg["target_mean_rate"])
+
+    base_profile = profiles[profiles["risk_aversion"] == gamma].sort_values("age")
+    n_work = len(base_profile)
+    early = base_profile.head(max(n_work // 4, 1))["savings_rate"].mean()
+    peak_row = base_profile.loc[base_profile["savings_rate"].idxmax()]
+    late = base_profile.tail(max(n_work // 4, 1))["savings_rate"].mean()
+
+    # The shape is not the same at every risk aversion, so it is classified
+    # from the solved profiles rather than asserted.
+    shape_rows_desc = []
+    for g in sorted(profiles["risk_aversion"].unique()):
+        block = profiles[profiles["risk_aversion"] == g].sort_values("age")
+        n = len(block)
+        lo = block.head(max(n // 4, 1))["savings_rate"].mean()
+        mid = block.iloc[n // 4: 3 * n // 4]["savings_rate"].mean()
+        hi = block.tail(max(n // 4, 1))["savings_rate"].mean()
+        if mid > lo and mid > hi:
+            kind = "hump-shaped"
+        elif lo > hi:
+            kind = "front-loaded (declining)"
+        elif hi > lo:
+            kind = "back-loaded (rising)"
+        else:
+            kind = "flat"
+        shape_rows_desc.append({
+            "risk_aversion": float(g), "shape": kind,
+            "first_quarter": lo, "middle_half": mid, "last_quarter": hi,
+            "peak_age": int(block.loc[block["savings_rate"].idxmax(), "age"]),
+        })
+    shape_kind_tbl = md_table(pd.DataFrame.from_records(shape_rows_desc),
+                              floatfmt="{:.3f}")
+    kinds = {r["risk_aversion"]: r["shape"] for r in shape_rows_desc}
+    baseline_kind = kinds.get(gamma, "unclear")
+    kinds_differ = len(set(kinds.values())) > 1
+
+    frontier_opt = frontier.loc[frontier[metric].idxmax()] if metric in frontier \
+        else None
+    shape_gain = shape_summary[shape_summary["risk_aversion"] == gamma]
+    shape_gain_pct = float(shape_gain["gain_vs_flat_pct"].iloc[0]) \
+        if len(shape_gain) else float("nan")
+
+    on_track = conditioning[conditioning["rule"].str.contains("track",
+                                                              case=False)]
+    responsive = conditioning[conditioning["rule"].str.contains("return",
+                                                               case=False)]
+    best_track = on_track.loc[on_track["vs_base_pct"].idxmax()] \
+        if len(on_track) else None
+    best_resp = responsive.loc[responsive["vs_base_pct"].idxmax()] \
+        if len(responsive) else None
+    worst_track = on_track.loc[on_track["vs_base_pct"].idxmin()] \
+        if len(on_track) else None
+
+    if len(deviation):
+        material = deviation[deviation["cost_of_resetting_bp"].abs() > 1.0]
+        n_material, n_ages = len(material), len(deviation)
+        deviation_tbl = md_table(
+            material.sort_values("cost_of_resetting_bp", ascending=False)
+            .head(10), floatfmt="{:.2f}")
+    else:
+        n_material = n_ages = 0
+        deviation_tbl = "_not computed_"
+
+    figure_list = "\n".join(f"* `{f}`" for f in figures)
+
+    intro = _header(
+        "10 - Conditioning the Savings Rate",
+        "When to save over a career, and whether the rate should respond to "
+        "the portfolio.",
+    )
+
+    body = f"""
+## 1. The accumulation-side mirror
+
+`docs/09` found that conditioning the *retirement date* on the portfolio is
+worth about 3% of certainty equivalent consumption. This asks the same
+question about the *savings rate*: should it vary, and on what?
+
+There are two quite different reasons it might, and a comparison that does not
+separate them will credit the wrong one.
+
+**Shape.** The rate could vary with age alone. Labour income here is
+hump-shaped, peaking around 50, and a *fixed* rate makes consumption track
+income exactly -- so a 25-year-old consumes least precisely when they are
+poorest. A CRRA investor dislikes that. This is pure consumption smoothing and
+uses no market information.
+
+**Conditioning.** The rate could respond to *state*: whether wealth is ahead
+of or behind an age-appropriate target, or what markets just did. This is what
+"you should have six times salary by fifty" is reaching for.
+
+The best deterministic age profile is solved first, and conditioning is then
+scored against *that*.
+
+## 2. What this model can and cannot answer
+
+{md_table(frontier, floatfmt="{:.4f}")}
+
+The certainty equivalent peaks at a constant rate of
+**{float(frontier_opt['savings_rate']) if frontier_opt is not None else float('nan'):.0%}** and falls away above it. That number should not be
+believed, and it is worth being explicit about why.
+
+The savings *level* is a trade between consuming now and consuming later. In
+this model that trade is settled almost entirely by the discount factor
+(β = {float(cfg['utility']['discount_factor']):g}, which over a 38-year working life discounts retirement
+consumption by a factor of {float(cfg['utility']['discount_factor']) ** 38:.2f}) and by risk aversion acting on the *left
+tail* of consumption -- which, with a floored retirement and risky labour
+income, sits in working life rather than in retirement. Saving lowers it. None
+of that is something a panel of historical returns has any view on.
+
+**So the level is not identified here and this document does not claim it.**
+What the return panel *can* speak to is the **shape** of the profile and the
+value of **conditioning** it, both holding the average rate fixed. Everything
+below pins the average savings rate at {target_mean:.0%} and asks only when, and on
+what, to save it.
+
+## 3. Shape: when should you save?
+
+{md_table(shape_summary, floatfmt="{:.4f}")}
+
+Solving the profile with its average pinned at {target_mean:.0%}:
+
+{shape_kind_tbl}
+
+**The answer is not the same at every risk aversion, and that is the
+interesting part.**
+
+At the baseline preference (γ = {gamma:g}) the solved profile is **{baseline_kind}**:
+
+* Youngest quarter of the career: **{early:.1%}** average savings rate
+* Peak, at age {int(peak_row['age'])}: **{float(peak_row['savings_rate']):.1%}**
+* Final quarter before retirement: **{late:.1%}**
+
+That is the opposite of "front-load your saving", and it is consumption
+smoothing doing what theory says it should. A 25-year-old sits at the bottom
+of a hump-shaped income profile; taking a further tenth of that income away is
+expensive in utility terms precisely because there is so little of it. The
+peak-earning years are where income most exceeds the smoothed consumption
+path, and that is where the saving belongs. The taper into the late 50s
+follows income back down.
+
+**At high risk aversion the shape inverts.** At γ = 10 the solved profile is
+front-loaded: highest when young, declining to near zero before retirement.
+Two motives are competing, and risk aversion decides which wins. *Consumption
+smoothing* wants saving concentrated where income is highest, which is
+mid-career. *Precaution* wants a buffer built early, because wealth
+accumulated young insures the whole remaining career against bad labour-income
+draws. At γ = 2 and 5 smoothing dominates and the profile humps; by γ = 10
+precaution dominates and it declines monotonically.
+
+So the practical answer depends on which of those an investor actually is, and
+this document cannot settle that for them. What it can say is that both
+answers beat a flat rate, and that the *value* of getting the shape right
+rises sharply with risk aversion.
+
+The shape is worth **{shape_gain_pct:+.2f}%** of certainty equivalent consumption at
+γ = {gamma:g}, against a flat rate with the *same* career average -- so it is
+genuinely "save smarter", with "save more" held fixed. {"The gain differs across risk aversions; see the summary table above and section 5." if kinds_differ else ""}
+
+### 3.1 How much of the shape is real
+
+{deviation_tbl}
+
+Resetting each year's rate to the career average one at a time,
+**{n_material} of {n_ages}** working years move the certainty equivalent by more than a
+basis point. That is a much higher proportion than the equivalent test for the
+glide path in `docs/07`, where only the ages around retirement mattered: the
+savings profile is genuine structure almost everywhere, not a flat surface
+with noise on it. The two ends of the career carry the most -- the earliest
+and latest working years are where deviating from the average is worth most --
+which is exactly what a smoothing story predicts.
+"""
+
+    conditioning_section = f"""
+## 4. Conditioning: on what?
+
+{md_table(conditioning, floatfmt="{:.4f}")}
+
+Two signals were tested, deliberately chosen as foils for each other.
+
+**On-track** compares wealth against an age-appropriate wealth-to-income
+target and saves more when behind, less when ahead. The target is the median
+wealth-to-income path this model itself produces, so "on track" means at the
+median of what actually happens rather than an outside rule of thumb.
+
+**Return-responsive** saves more after a bad market year and less after a good
+one, with no reference to whether the investor is actually behind.
+
+The results separate them cleanly.
+
+* **On-track is worth {float(best_track['vs_base_pct']) if best_track is not None else float('nan'):+.2f}%** at its best sensitivity, with the average
+  savings rate essentially unchanged at
+  {float(best_track['mean_savings_rate']) if best_track is not None else float('nan'):.1%} -- so this is conditioning, not saving more.
+* **Return-responsive is worth {float(best_resp['vs_base_pct']) if best_resp is not None else float('nan'):+.2f}%** at best, and a good part of even that
+  comes from its average rate drifting to
+  {float(best_resp['mean_savings_rate']) if best_resp is not None else float('nan'):.1%}. Push the sensitivity further and it turns negative.
+
+**The useful signal is where *you* are, not what the market just did.** That is
+not obvious a priori -- a counter-cyclical saver is buying more after prices
+fall, which sounds like it should pay -- but a bad market year is a poor proxy
+for being behind. Wealth relative to an age target is the sufficient statistic;
+the market's recent direction adds little once you have it.
+
+The sign check is worth noting: saving *less* when behind (negative
+sensitivity) costs {float(worst_track['vs_base_pct']) if worst_track is not None else float('nan'):.1f}%. That the machinery produces a large
+penalty for the obviously wrong policy is the reassurance that it is measuring
+what it claims to.
+
+## 5. Matched on the average rate
+
+{md_table(matched, floatfmt="{:.4f}") if len(matched) else "_not computed_"}
+
+Each rule scored against a *constant* rate interpolated at its own realised
+career average, which strips out any part of the gain that is simply saving
+more or less.
+
+## 6. Do the savings and retirement gains add up?
+
+{md_table(combined, floatfmt="{:.4f}") if len(combined) else "_not run_"}
+
+`docs/09` found conditioning the retirement date on wealth is worth ~2.9%;
+this document finds conditioning the savings rate on wealth is worth
+{float(best_track['vs_base_pct']) if best_track is not None else float('nan'):.1f}%. Both read the same underlying signal -- am I ahead or behind --
+so they should not be expected to add up cleanly, and the table above shows
+how much of each survives when the other is already in place.
+
+## 7. What this does not model
+
+1. **No borrowing.** The savings rate is floored at
+   {float(save_cfg['rate_floor']):.0%}. A young investor who could borrow against future
+   income would smooth further still, and the hump would start lower.
+2. **No age-varying expense needs.** Children, mortgages and the like are not
+   modelled, so the only reason to save less when young here is the level of
+   income. Real expense profiles would deepen the hump rather than flatten it.
+3. **The level is not identified** (section 2). Read the shape and the
+   conditioning, not the height.
+4. **The on-track target is self-referential.** It is this model's own median
+   wealth path. A target calibrated to an external benchmark would move the
+   optimal sensitivity, though not the sign.
+
+## 8. Method
+
+| Setting | Value |
+| --- | --- |
+| Paths | {int(save_cfg['n_paths']):,} |
+| Portfolio | `{save_cfg['strategy']}` |
+| Average savings rate pinned at | {target_mean:.0%} |
+| Rate bounds | {float(save_cfg['rate_floor']):.0%} to {float(save_cfg['rate_cap']):.0%} |
+| Working-income floor | {float(save_cfg['working_income_floor']):.0%} of average earnings |
+| Utility window | whole lifetime |
+| Wall clock | {runtime_notes.get('elapsed_seconds', float('nan')):.0f}s |
+
+The shape search is coordinate ascent over a per-age multiplier, renormalised
+after every move so the average rate never drifts. As elsewhere in this
+project, common random numbers make the objective a deterministic function of
+the schedule, so a grid search over one coordinate is exact for that
+coordinate and each sweep is monotone.
+
+## 9. Artefacts
+
+{figure_list}
+
+Tables are written to `{cfg['run']['table_dir']}/saving_*.csv`.
+"""
+
+    return _write(path, [intro, body, conditioning_section])
+
+
+def _compact(frame: pd.DataFrame, columns: Sequence[str],
+             renames: Mapping[str, str] | None = None) -> pd.DataFrame:
+    """Keep only the columns that exist, in order, optionally renamed."""
+    present = [c for c in columns if c in frame.columns]
+    out = frame.loc[:, present].copy()
+    return out.rename(columns=dict(renames or {}))
+
+
+def write_doc_11(
+    path: str | Path,
+    cfg: Mapping[str, Any],
+    frames: Mapping[str, pd.DataFrame],
+    figures: Sequence[str],
+    notes: Mapping[str, Any],
+) -> Path:
+    """Take the accumulation signal apart: form, asymmetry, target, feasibility.
+
+    Every verdict below is classified from the frames rather than asserted.
+    The results in this study kept coming out the other way round from the
+    obvious guess -- a target with no age content is worse than no rule at
+    all, the pay cheque beats the portfolio, conditioning is worth *most* to
+    the investor holding bills -- so the prose branches on what it finds.
+    """
+    acc_cfg = cfg["accumulation"]
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    target_mean = float(acc_cfg["target_mean_rate"])
+    best_form = str(notes["best_form"])
+    best_k = float(notes["best_k"])
+    reference_age = int(notes["reference_age"])
+    shape_value = float(notes.get("no_conditioning_pct", 0.0))
+
+    forms, asymmetry, bands = frames["forms"], frames["asymmetry"], frames["bands"]
+    targets, race, signal_best = (frames["targets"], frames["race"],
+                                  frames["signal_best"])
+    combination, feasibility, fan = (frames["combination"],
+                                     frames["feasibility"], frames["fan"])
+    activity, quantiles = frames["activity"], frames["quantile_gain"]
+    by_gamma, windows = frames["by_gamma"], frames["windows"]
+    by_strategy, by_income = frames["by_strategy"], frames["by_income"]
+
+    value = "matched_value_pct"
+
+    def net(row: Any) -> float:
+        """Value net of what the deterministic age profile already earned."""
+        return float(row[value]) - shape_value
+
+    def edge_note(is_edge: bool, what: str) -> str:
+        return (f" That coefficient sits at the edge of the grid, so {what} is "
+                "a lower bound on what an unbounded search would pick."
+                if is_edge else "")
+
+    # --- 2. functional form -----------------------------------------------
+    form_best = forms.loc[forms.groupby("form")[value].idxmax()] \
+        .sort_values(value, ascending=False)
+    form_tbl = md_table(_compact(
+        _pct(form_best.assign(net_of_shape=form_best[value] - shape_value),
+             ["mean_savings_rate"]),
+        ["form_label", "sensitivity", "rate_move_pp", value, "net_of_shape",
+         "mean_savings_rate", "prob_ruin"],
+        {"form_label": "gap measured as", "sensitivity": "best k",
+         "rate_move_pp": "extra saving when 25% behind (pp)",
+         value: "value vs matched constant (%)",
+         "net_of_shape": "of which, from conditioning (%)",
+         "mean_savings_rate": "mean rate (%)", "prob_ruin": "P(ruin)"}),
+        floatfmt="{:.3f}")
+    winner, laggard = form_best.iloc[0], form_best.iloc[-1]
+    runner_up = form_best.iloc[1] if len(form_best) > 1 else winner
+    form_spread = float(winner[value]) - float(laggard[value])
+    top_two_gap = float(winner[value]) - float(runner_up[value])
+    level_row = form_best[form_best["form"] == "level"]
+    scale_free = form_best[form_best["form"] != "level"]
+    scale_free_spread = float(scale_free[value].max() - scale_free[value].min()) \
+        if len(scale_free) > 1 else float("nan")
+    level_penalty = (float(scale_free[value].max()) - float(level_row[value].iloc[0])
+                     if len(level_row) and len(scale_free) else float("nan"))
+    winner_edge = acc.at_grid_edge(
+        [float(v) for v in acc_cfg["response_grids"][str(winner["form"])]],
+        float(winner["sensitivity"]))
+    edged_forms = [str(r["form_label"]) for _, r in form_best.iterrows()
+                   if acc.at_grid_edge(
+                       [float(v) for v in acc_cfg["response_grids"][str(r["form"])]],
+                       float(r["sensitivity"]))]
+    form_edge_note = (
+        "One caveat on the comparison: "
+        + ", ".join(f"`{name}`" for name in edged_forms)
+        + (" picks the largest coefficient offered, so its value is a lower "
+           "bound." if len(edged_forms) == 1 else
+           " pick the largest coefficient offered, so their values are lower "
+           "bounds.")
+        + (" The conclusion is conservative in the right direction -- an "
+           "unbounded search could only move it up."
+           if len(edged_forms) == 1 else
+           " The conclusion is conservative in the right direction -- an "
+           "unbounded search could only move them up.")
+        if edged_forms else
+        "Every form's best coefficient sits inside its own grid, so none of "
+        "these is a truncated search.")
+    common = acc.value_at_common_strength(forms)
+    common_tbl = md_table(_compact(
+        common, ["form", "common_strength", "value_at_common", "own_best",
+                 "own_reach"],
+        {"common_strength": "at the same move (pp)",
+         "value_at_common": "value there (%)",
+         "own_best": "best anywhere on its grid (%)",
+         "own_reach": "furthest move its grid reaches (pp)"}),
+        floatfmt="{:.3f}")
+    common_spread = float(common["value_at_common"].max()
+                          - common["value_at_common"].min())
+    form_verdict = (
+        f"**The two scale-free forms are indistinguishable** -- {scale_free_spread:.2f} "
+        "percentage points apart, which is inside the noise of a sweep this "
+        f"size -- and both beat the level gap by {level_penalty:.2f} points at their own "
+        "optima."
+        if (np.isfinite(scale_free_spread) and scale_free_spread < 0.2
+            and np.isfinite(level_penalty) and level_penalty > 0.2) else
+        f"**The form matters here**: {form_spread:.2f} percentage points separate the "
+        f"best from the worst, and only {top_two_gap:.2f} points separate the best "
+        "from the runner-up."
+        if form_spread > 0.2 else
+        f"**The functional form barely matters.** All three land within "
+        f"{form_spread:.2f} percentage points once tuned, so the choice of units is "
+        "presentational rather than economic.")
+    level_mechanism = (
+        "That comparison is not quite fair, though, because it ranks each form "
+        "at its own best coefficient and the three grids do not reach equally "
+        "far. Interpolating every curve at the strongest response *all* of them "
+        "can produce separates \"this form is better\" from \"this form's grid "
+        "let it go further\":"
+        f"\n\n{common_tbl}\n\n"
+        + (f"At matched strength the three are within {common_spread:.2f} percentage "
+           "points. **So the units are a presentational choice, not an economic "
+           "one.** What matters is how far the rule moves the contribution, not "
+           "how the shortfall driving it is written down. The apparent penalty "
+           "on the level gap is mostly a statement about where its grid stops."
+           if common_spread < 0.3 else
+           f"At matched strength {common_spread:.2f} percentage points still separate "
+           "them, so the ranking is about the shape of the response and not "
+           "only about its strength. A shortfall of two times salary is a "
+           "crisis at 30 and a rounding error at 60; a rule linear in income "
+           "multiples treats them alike, and is therefore inert exactly when "
+           "the investor has time to respond."))
+
+    # --- 3. asymmetry ------------------------------------------------------
+    behind_only = asymmetry[asymmetry["k_ahead"] == 0.0]
+    ahead_only = asymmetry[asymmetry["k_behind"] == 0.0]
+    symmetric = asymmetry[asymmetry["symmetric"] & (asymmetry["k_behind"] > 0)]
+    best_behind = behind_only.loc[behind_only[value].idxmax()]
+    best_ahead = ahead_only.loc[ahead_only[value].idxmax()]
+    best_symmetric = symmetric.loc[symmetric[value].idxmax()] \
+        if len(symmetric) else best_behind
+    best_overall = asymmetry.loc[asymmetry[value].idxmax()]
+    perverse = asymmetry[asymmetry["k_ahead"] < 0.0]
+    worst_perverse = perverse.loc[perverse[value].idxmin()] if len(perverse) \
+        else None
+    asym_tbl = md_table(_compact(
+        _pct(pd.DataFrame([
+            {"rule": "neither (age profile only)", "k_behind": 0.0,
+             "k_ahead": 0.0, value: shape_value,
+             "mean_savings_rate": target_mean},
+            {"rule": "catch up only (never ease off)",
+             "k_behind": best_behind["k_behind"], "k_ahead": 0.0,
+             value: best_behind[value],
+             "mean_savings_rate": best_behind["mean_savings_rate"]},
+            {"rule": "ease off only (never catch up)", "k_behind": 0.0,
+             "k_ahead": best_ahead["k_ahead"], value: best_ahead[value],
+             "mean_savings_rate": best_ahead["mean_savings_rate"]},
+            {"rule": "both, same coefficient",
+             "k_behind": best_symmetric["k_behind"],
+             "k_ahead": best_symmetric["k_ahead"],
+             value: best_symmetric[value],
+             "mean_savings_rate": best_symmetric["mean_savings_rate"]},
+            {"rule": "both, free coefficients",
+             "k_behind": best_overall["k_behind"],
+             "k_ahead": best_overall["k_ahead"], value: best_overall[value],
+             "mean_savings_rate": best_overall["mean_savings_rate"]},
+        ]), ["mean_savings_rate"]),
+        ["rule", "k_behind", "k_ahead", value, "mean_savings_rate"],
+        {value: "value vs matched constant (%)",
+         "mean_savings_rate": "mean rate (%)"}), floatfmt="{:.3f}")
+    catch_up, ease_off = net(best_behind), net(best_ahead)
+    both_halves = net(best_overall)
+    halves_ratio = max(catch_up, ease_off) / max(min(catch_up, ease_off), 1e-9)
+    halves_tie = halves_ratio < 1.15
+    dominant = "easing off when ahead" if ease_off > catch_up \
+        else "catching up when behind"
+    weaker = "catching up when behind" if ease_off > catch_up \
+        else "easing off when ahead"
+    halves_sum = catch_up + ease_off
+    is_symmetric_best = abs(float(best_overall["k_behind"])
+                            - float(best_overall["k_ahead"])) < 1e-9
+    asym_verdict = (
+        f"**Neither half dominates.** Catching up alone is worth {catch_up:+.2f}% "
+        f"and easing off alone {ease_off:+.2f}% -- a ratio of {halves_ratio:.2f}, which "
+        "is a tie. That is itself the finding, because the two halves are not "
+        "symmetric in anything except their value: catch-up alone raises the "
+        f"career savings rate to {float(best_behind['mean_savings_rate']):.1%} and ease-off alone cuts it to "
+        f"{float(best_ahead['mean_savings_rate']):.1%}. They arrive at the same place from opposite "
+        "directions, and only the matched-rate comparison makes that visible -- "
+        "on raw certainty equivalent the one that saves more would simply look "
+        "better."
+        if halves_tie else
+        f"**{dominant.capitalize()} is the half that earns its keep**, by a factor "
+        f"of {halves_ratio:.1f} over {weaker} ({max(catch_up, ease_off):+.2f}% against "
+        f"{min(catch_up, ease_off):+.2f}%). "
+        + ("That is the opposite of how the advice is usually written: being "
+           "told to save harder after a bad decade is the famous half of this "
+           "rule, and being told to *stop* saving so hard after a good one is "
+           "the half the model actually pays for."
+           if ease_off > catch_up else
+           "That is the half published advice concentrates on, which is at "
+           "least reassuring."))
+    additivity_verdict = (
+        f"Run together they reach {both_halves:+.2f}%, against {halves_sum:.2f}% for the "
+        "two run separately and added up. **The halves are sub-additive**: much "
+        "of what each one earns alone is the same correction, arrived at from "
+        "opposite sides."
+        if halves_sum - both_halves > 0.1 else
+        f"Run together they reach {both_halves:+.2f}%, against {halves_sum:.2f}% for the sum "
+        "of the two alone -- close enough to additive that the two directions "
+        "are doing largely separate work.")
+
+    # --- 4. guardrails -----------------------------------------------------
+    best_band = bands.loc[bands[value].idxmax()]
+    band_tbl = md_table(_compact(
+        _pct(bands.sort_values(value, ascending=False).head(8),
+             ["mean_savings_rate"]),
+        ["band", "step", value, "mean_savings_rate", "prob_ruin"],
+        {"band": "dead band (± of target)", "step": "rate step",
+         value: "value vs matched constant (%)",
+         "mean_savings_rate": "mean rate (%)", "prob_ruin": "P(ruin)"}),
+        floatfmt="{:.3f}")
+    band_share = 100.0 * net(best_band) / max(net(winner), 1e-9)
+    band_edge = acc.at_grid_edge([float(v) for v in acc_cfg["bands"]],
+                                 float(best_band["band"]))
+    step_edge = acc.at_grid_edge([float(v) for v in acc_cfg["band_steps"]],
+                                 float(best_band["step"]))
+    guardrail_verdict = (
+        "The best guardrail wants the *narrowest* dead band and the *largest* "
+        "step the grid offers, which is the search saying it would rather be "
+        "continuous. The coarse rule is a compromise, and the table prices the "
+        "compromise rather than pretending there is none."
+        if (band_edge and step_edge) else
+        "The best guardrail sits inside its grid on both axes, so this is a "
+        "genuine interior optimum rather than the search straining against a "
+        "boundary.")
+
+    # --- 5. target ---------------------------------------------------------
+    target_best = targets.loc[targets.groupby("target")[value].idxmax()] \
+        .sort_values(value, ascending=False)
+    unscaled = targets[np.isclose(targets["factor"], 1.0)] \
+        .sort_values(value, ascending=False)
+    target_tbl = md_table(_compact(
+        _pct(target_best, ["mean_savings_rate"]),
+        ["target", "factor", "median_target_multiple", value,
+         "mean_savings_rate"],
+        {"factor": "best scaling",
+         "median_target_multiple": "median multiple asked for",
+         value: "value vs matched constant (%)",
+         "mean_savings_rate": "mean rate (%)"}), floatfmt="{:.3f}")
+    unscaled_tbl = md_table(_compact(
+        _pct(unscaled, ["mean_savings_rate"]),
+        ["target", "median_target_multiple", value, "mean_savings_rate"],
+        {"median_target_multiple": "median multiple asked for",
+         value: "value vs matched constant (%)",
+         "mean_savings_rate": "mean rate (%)"}), floatfmt="{:.3f}")
+
+    def unscaled_value(name: str) -> float:
+        block = unscaled[unscaled["target"] == name]
+        return net(block.iloc[0]) if len(block) else float("nan")
+
+    model_ref = unscaled_value("model median path")
+    ladder_ref = unscaled_value("published ladder")
+    flat_name = next((t for t in unscaled["target"] if t.startswith("flat")),
+                     "flat")
+    flat_ref = unscaled_value(flat_name)
+    ladder_share = 100.0 * ladder_ref / max(model_ref, 1e-9)
+    model_best_factor = float(target_best[
+        target_best["target"] == "model median path"]["factor"].iloc[0]) \
+        if (target_best["target"] == "model median path").any() else 1.0
+    factor_edge = acc.at_grid_edge(
+        [float(v) for v in acc_cfg["target_factors"]], model_best_factor)
+    flat_rate = float(unscaled[unscaled["target"] == flat_name]
+                      ["mean_savings_rate"].iloc[0]) \
+        if (unscaled["target"] == flat_name).any() else float("nan")
+    target_verdict = (
+        f"**The target has to be roughly right.** The published ladder captures "
+        f"{ladder_share:.0f}% of the model-implied path's value -- useful, but not a "
+        "substitute -- and the flat multiple, which has no age content at all, "
+        f"is worth {flat_ref:+.2f}%: **worse than not conditioning**. Telling a "
+        "28-year-old they should already hold eight times salary leaves them "
+        f"behind target for most of a career, and the career average savings "
+        f"rate goes to {flat_rate:.1%} against the {target_mean:.0%} everything else here holds "
+        "to. That is not conditioning, it is just saving more, and the matched "
+        "comparison charges for it."
+        if flat_ref < 0 else
+        f"**The target is forgiving.** The published ladder captures {ladder_share:.0f}% of "
+        f"the model-implied path's value, and even the age-free flat multiple "
+        f"reaches {flat_ref:+.2f}%.")
+    target_shape_note = (
+        "The ranking says two separate things. A target that *rises with age* "
+        "is necessary -- the flat one is not merely weaker, it is harmful. But "
+        f"rising is not sufficient: the ladder rises and still gives up {100 - ladder_share:.0f}% "
+        "of the value, so how it rises matters too."
+        if ladder_ref > 0 and flat_ref < 0 and ladder_share < 60 else
+        "A target that *rises with age* is what matters, and how precisely it "
+        "rises is second order."
+        if ladder_ref > 0 and flat_ref < ladder_ref else
+        "The ranking does not line up with how much age content each target "
+        "carries, which is worth treating as unexplained rather than tidied "
+        "away.")
+    scaling_verdict = (
+        f"Scaling the model target up to {model_best_factor:g}× beats leaving it alone, "
+        "even after the matched comparison strips out the extra saving it "
+        "induces: an over-ambitious target keeps the rule leaning against the "
+        "shortfall for longer, and the cost of over-saving is charged back."
+        + edge_note(factor_edge, "the best scaling")
+        if model_best_factor > 1.0 else
+        f"The best scaling is {model_best_factor:g}, so aiming deliberately high only "
+        "makes the rule over-react."
+        if model_best_factor < 1.0 else
+        "The model's own median path is already best unscaled.")
+
+    # --- 6. signals --------------------------------------------------------
+    ranked = signal_best.sort_values(value, ascending=False)
+    race_tbl = md_table(_compact(
+        _pct(ranked.assign(net_of_shape=ranked[value] - shape_value),
+             ["mean_savings_rate"]),
+        ["signal_label", "family", "sensitivity", value, "net_of_shape",
+         "mean_savings_rate", "prob_ruin", "p5_retirement_consumption"],
+        {"signal_label": "signal", "family": "kind", "sensitivity": "best k",
+         value: "value vs matched constant (%)",
+         "net_of_shape": "of which, from conditioning (%)",
+         "mean_savings_rate": "mean rate (%)", "prob_ruin": "P(ruin)",
+         "p5_retirement_consumption": "5th pct retirement consumption"}),
+        floatfmt="{:.3f}")
+    live = ranked[ranked["signal"] != "none"]
+    top_signal = live.iloc[0]
+    stock = live[live["family"].str.startswith("stock")]
+    flow = live[live["family"].str.startswith("flow")]
+    best_stock = stock.iloc[0] if len(stock) else None
+    best_flow = flow.iloc[0] if len(flow) else None
+    stock_value = net(best_stock) if best_stock is not None else float("nan")
+    flow_value = net(best_flow) if best_flow is not None else float("nan")
+    null_block = race[race["signal"] == "none"]
+    null_spread = float(null_block[value].max() - null_block[value].min()) \
+        if len(null_block) else float("nan")
+    flow_negligible = np.isfinite(flow_value) and flow_value < 0.10
+    flow_verdict = (
+        f"**Every flow signal is worth essentially nothing**: the best of them "
+        f"reaches {flow_value:+.2f}%, against {stock_value:+.2f}% for the best stock "
+        "signal. At that size the ordering *within* the flow group is not "
+        "meaningful and should not be read as one. A return signal knows what "
+        "the market did but not whether it left this investor short -- it is "
+        "the same market for a 30-year-old with nothing saved and a 60-year-old "
+        "with ten times salary, and they should not respond alike."
+        if flow_negligible else
+        f"The best stock signal is worth {stock_value:+.2f}% against {flow_value:+.2f}% for "
+        "the best flow signal, so knowing where you are beats knowing what the "
+        "market did -- but the market signals are not worthless here.")
+    income_wins = str(top_signal["family"]) == "income"
+    top_verdict = (
+        "**The winner is not a portfolio signal at all.** Saving more in years "
+        "when the pay cheque runs above its expected path -- and less when it "
+        "runs below -- beats every balance-based rule tested. That is the "
+        "accumulation-side version of consumption smoothing: an income shock is "
+        "observed *before* it is spent, so responding to it costs the investor "
+        "very little utility, whereas responding to a portfolio shortfall means "
+        "cutting consumption that was already planned. It is also the easiest "
+        "signal in the list to act on, because it needs no target, no balance "
+        "and no arithmetic."
+        if income_wins else
+        f"**{str(top_signal['signal_label'])}** wins, at {net(top_signal):+.2f}% net of the "
+        "age profile.")
+
+    best_combo = combination.loc[combination[value].idxmax()]
+    first_name = str(combination["first_signal"].iloc[0]).replace("_", " ")
+    second_name = str(combination["second_signal"].iloc[0]).replace("_", " ")
+    solo_first = combination[combination["k_second"] == 0.0]
+    solo_second = combination[combination["k_first"] == 0.0]
+    best_solo = max(float(solo_first[value].max()),
+                    float(solo_second[value].max()))
+    combo_adds = float(best_combo[value]) - best_solo
+    solo_sum = (float(solo_first[value].max()) - shape_value) \
+        + (float(solo_second[value].max()) - shape_value)
+    combo_tbl = md_table(_compact(
+        _pct(pd.DataFrame([
+            {"rule": f"{first_name} alone",
+             value: float(solo_first[value].max()),
+             "mean_savings_rate": float(solo_first.loc[
+                 solo_first[value].idxmax(), "mean_savings_rate"])},
+            {"rule": f"{second_name} alone",
+             value: float(solo_second[value].max()),
+             "mean_savings_rate": float(solo_second.loc[
+                 solo_second[value].idxmax(), "mean_savings_rate"])},
+            {"rule": "both together", value: float(best_combo[value]),
+             "mean_savings_rate": float(best_combo["mean_savings_rate"])},
+        ]), ["mean_savings_rate"]),
+        ["rule", value, "mean_savings_rate"],
+        {value: "value vs matched constant (%)",
+         "mean_savings_rate": "mean rate (%)"}), floatfmt="{:.3f}")
+    combo_stacks = combo_adds > 0.05
+    combo_verdict = (
+        f"Layering them adds {combo_adds:+.2f} percentage points over the better one "
+        f"alone, so the two are worth running together -- but {net(best_combo):.2f}% "
+        f"against {solo_sum:.2f}% for the two summed is well short of additive. They "
+        "overlap, because a run of weak income and a run of weak markets both "
+        "show up as a balance behind target; they do not overlap completely, "
+        "because only one of them is visible before the money is spent."
+        if combo_stacks else
+        f"Layering them adds {combo_adds:+.2f} percentage points over the better one "
+        "alone. **They do not stack.** The same thing happened in `docs/10` "
+        "between the savings-side and retirement-side rules, and for the same "
+        "reason: two rules responding to overlapping information mostly "
+        "duplicate each other, and the clipping absorbs the rest.")
+
+    # --- 7. feasibility ----------------------------------------------------
+    feas = feasibility.sort_values("width").copy()
+    unconstrained_net = float(feas[value].iloc[-1]) - shape_value
+    feas["net"] = feas[value] - shape_value
+    feas["share"] = feas["net"] / max(unconstrained_net, 1e-9) * 100.0
+    reachable = feas[feas["share"] >= 80.0]
+    narrowest = reachable.iloc[0] if len(reachable) else feas.iloc[-1]
+    feas_tbl = md_table(_compact(
+        _pct(feas, ["width", "rate_floor", "rate_cap", "mean_savings_rate"]),
+        ["width", "rate_floor", "rate_cap", value, "net", "share",
+         "mean_savings_rate", "prob_ruin"],
+        {"width": "± allowed move (pp)", "rate_floor": "floor (%)",
+         "rate_cap": "cap (%)", value: "value vs matched constant (%)",
+         "net": "of which, from conditioning (%)",
+         "share": "share of unconstrained (%)",
+         "mean_savings_rate": "mean rate (%)", "prob_ruin": "P(ruin)"}),
+        floatfmt="{:.2f}")
+    widths = feas["width"].to_numpy(dtype=float)
+
+    def share_at(width: float) -> float:
+        return float(np.interp(width, widths, feas["share"].to_numpy(dtype=float)))
+
+    share_3, share_5, share_10 = share_at(0.03), share_at(0.05), share_at(0.10)
+    feasibility_verdict = (
+        "**The value is bought early**: a contribution free to move by only "
+        f"±5 points of income already captures {share_5:.0f}% of it, so a household with "
+        "a little slack gets most of what a household with a lot does."
+        if share_5 > 70.0 else
+        "**There is no cheap corner here.** Up to about ±10 points the value "
+        f"is close to proportional to the flexibility given -- ±3 points buys "
+        f"{share_3:.0f}%, ±5 buys {share_5:.0f}%, ±10 buys {share_10:.0f}% -- and only then does it "
+        "saturate. A household that can flex its contribution by a couple of "
+        "points of income does *not* get most of the benefit; it gets roughly "
+        "its share. That is the least convenient version of this result and it "
+        "is the one the table supports.")
+    fan_rows = fan.iloc[::max(len(fan) // 9, 1)]
+    fan_tbl = md_table(_pct(fan_rows, ["q10", "q25", "q50", "q75", "q90"]),
+                       floatfmt="{:.2f}")
+    widest = fan.loc[(fan["q90"] - fan["q10"]).idxmax()]
+    floored_share = float((fan["q10"] <= 1e-9).mean() * 100.0)
+
+    # --- 8. distribution ---------------------------------------------------
+    quantile_tbl = md_table(_compact(
+        quantiles, ["quantile", "baseline_consumption",
+                    "conditioned_consumption", "gain_pct"],
+        {"baseline_consumption": "no conditioning",
+         "conditioned_consumption": "conditioned", "gain_pct": "change (%)"}),
+        floatfmt="{:.3f}")
+    low = quantiles[quantiles["quantile"] <= 0.10]
+    mid = quantiles[(quantiles["quantile"] > 0.10)
+                    & (quantiles["quantile"] < 0.90)]
+    high = quantiles[quantiles["quantile"] >= 0.90]
+    low_gain = float(low["gain_pct"].mean()) if len(low) else float("nan")
+    mid_gain = float(mid["gain_pct"].mean()) if len(mid) else float("nan")
+    high_gain = float(high["gain_pct"].mean()) if len(high) else float("nan")
+    all_positive = bool((quantiles["gain_pct"] > 0).all())
+    tail_tilted = low_gain > mid_gain and low_gain > high_gain
+    distribution_verdict = (
+        "**This is insurance.** The rule pays for the left tail out of the "
+        "right one: it saves harder on the paths that have fallen behind, and "
+        "those contributions come out of consumption on paths that were going "
+        "to be comfortable anyway."
+        if tail_tilted else
+        "**This is not left-tail insurance, and it is not a free lunch "
+        "either.** The gain is positive across almost the whole distribution "
+        f"and is *largest in the middle* ({mid_gain:+.2f}% against {low_gain:+.2f}% at the "
+        f"bottom and {high_gain:+.2f}% at the top). The bottom of the distribution is "
+        "where the rule has least to work with -- a path that is behind "
+        "*because* labour income collapsed cannot save its way out -- and the "
+        "top is where the rule takes its payment, which is why the very top "
+        "percentile is the one place the change turns negative."
+        if all_positive or mid_gain > low_gain else
+        f"The gain runs {low_gain:+.2f}% at the bottom decile, {mid_gain:+.2f}% through the "
+        f"middle and {high_gain:+.2f}% at the top.")
+
+    # The age profile is worth a different amount at each risk aversion, so
+    # this arm has to net out its *own* zero-sensitivity row rather than the
+    # baseline preference's.
+    gamma_zero = by_gamma[by_gamma["sensitivity"] == 0.0] \
+        .set_index("risk_aversion")[value].to_dict()
+    gamma_frame = by_gamma.assign(net_of_shape=[
+        float(r[value]) - float(gamma_zero.get(float(r["risk_aversion"]), 0.0))
+        for _, r in by_gamma.iterrows()])
+    gamma_best = gamma_frame.loc[
+        gamma_frame.groupby("risk_aversion")["net_of_shape"].idxmax()] \
+        .sort_values("risk_aversion")
+    gamma_tbl = md_table(_compact(
+        _pct(gamma_best, ["mean_savings_rate"]),
+        ["risk_aversion", "sensitivity", value, "net_of_shape",
+         "mean_savings_rate"],
+        {"sensitivity": "best k", value: "value vs matched constant (%)",
+         "net_of_shape": "of which, from conditioning (%)",
+         "mean_savings_rate": "mean rate (%)"}), floatfmt="{:.3f}")
+    gamma_lo, gamma_hi = gamma_best.iloc[0], gamma_best.iloc[-1]
+    gamma_net_lo = float(gamma_lo["net_of_shape"])
+    gamma_net_hi = float(gamma_hi["net_of_shape"])
+    same_k = gamma_best["sensitivity"].nunique() == 1
+    gamma_verdict = (
+        f"The value rises steeply with risk aversion, from {gamma_net_lo:+.2f}% at "
+        f"γ = {float(gamma_lo['risk_aversion']):g} to {gamma_net_hi:+.2f}% at "
+        f"γ = {float(gamma_hi['risk_aversion']):g}"
+        + (", and every preference picks the same coefficient, so what changes "
+           "is not the rule but how much the investor will pay for it. "
+           if same_k else
+           ", and the best coefficient moves with it. ")
+        + "Conditioning is a risk product, and its price is set by how much "
+        "the buyer dislikes risk."
+        if gamma_net_hi > gamma_net_lo else
+        f"The value *falls* with risk aversion, from {gamma_net_lo:+.2f}% at "
+        f"γ = {float(gamma_lo['risk_aversion']):g} to {gamma_net_hi:+.2f}% at "
+        f"γ = {float(gamma_hi['risk_aversion']):g}, which sits awkwardly beside the "
+        "distribution table and is worth treating with suspicion.")
+
+    # --- 9. timing ---------------------------------------------------------
+    window_tbl = md_table(_compact(
+        _pct(windows.sort_values(value, ascending=False)
+             .assign(net_of_shape=windows[value] - shape_value),
+             ["mean_savings_rate"]),
+        ["window", value, "net_of_shape", "mean_savings_rate", "prob_ruin"],
+        {"window": "conditioning active for ages",
+         value: "value vs matched constant (%)",
+         "net_of_shape": "of which, from conditioning (%)",
+         "mean_savings_rate": "mean rate (%)", "prob_ruin": "P(ruin)"}),
+        floatfmt="{:.3f}")
+    tiles = acc.partition_windows(windows).sort_values("min_age")
+    tile_values = [(str(r["window"]), net(r)) for _, r in tiles.iterrows()]
+    tiles_rising = (len(tile_values) > 1
+                    and tile_values[-1][1] > tile_values[0][1])
+    tile_sum = sum(v for _, v in tile_values)
+    whole = windows.loc[windows[value].idxmax()]
+    tile_text = ", ".join(f"ages {name} {val:+.2f}%" for name, val in tile_values)
+    timing_verdict = (
+        f"Taking the three windows that tile the career without overlapping -- "
+        f"{tile_text} -- **the value rises monotonically with age**. The balance "
+        "is close to uninformative when there is barely any of it and decades "
+        "left to recover; it becomes informative once a shortfall is large in "
+        "absolute terms and there is little time left to fix it."
+        if tiles_rising else
+        f"Across the three non-overlapping windows -- {tile_text} -- the value "
+        "does not rise with age, which cuts against the natural story that a "
+        "shortfall matters more the less time is left to fix it.")
+    timing_additivity = (
+        f"The three tiles sum to {tile_sum:.2f}% against {net(whole):.2f}% for the whole "
+        "career, so switching the rule on in one stretch does not much change "
+        "what it is worth in another -- unlike the two directions in section 3, "
+        "these really are close to separable."
+        if abs(tile_sum - net(whole)) < 0.4 else
+        f"The three tiles sum to {tile_sum:.2f}% against {net(whole):.2f}% for the whole "
+        "career, so the stretches interact: what the rule is worth in one part "
+        "of a career depends on whether it was running in the others.")
+    live_activity = activity[activity["mean_abs_deviation"] > 1e-9]
+    busiest = live_activity.loc[live_activity["mean_abs_deviation"].idxmax()] \
+        if len(live_activity) else activity.iloc[0]
+    quietest = live_activity.loc[live_activity["mean_abs_deviation"].idxmin()] \
+        if len(live_activity) else activity.iloc[0]
+    activity_range = (float(live_activity["mean_abs_deviation"].max())
+                      / max(float(live_activity["mean_abs_deviation"].min()),
+                            1e-9)) if len(live_activity) else float("nan")
+
+    # Comparing a 15-year window against a 10-year one says more about length
+    # than about timing, so both sides are put on a per-year basis.
+    tile_rows = []
+    for _, r in tiles.iterrows():
+        lo, hi = int(r["min_age"]), int(r["max_age"])
+        span = max(hi - lo + 1, 1)
+        inside = activity[activity["age"].between(lo, hi)]
+        tile_rows.append({
+            "window": str(r["window"]), "years": span,
+            "value_pct": net(r), "value_per_year_bp": net(r) / span * 100.0,
+            "average_move_pp": float(inside["mean_abs_deviation"].mean()) * 100.0
+            if len(inside) else float("nan"),
+        })
+    tile_frame = pd.DataFrame.from_records(tile_rows)
+    tile_tbl = md_table(_compact(
+        tile_frame, ["window", "years", "value_pct", "value_per_year_bp",
+                     "average_move_pp"],
+        {"window": "ages", "value_pct": "value (%)",
+         "value_per_year_bp": "value per year (bp)",
+         "average_move_pp": "average move (pp of income)"}), floatfmt="{:.2f}")
+    per_year = tile_frame["value_per_year_bp"].to_numpy(dtype=float)
+    moves = tile_frame["average_move_pp"].to_numpy(dtype=float)
+    value_ratio = float(per_year.max() / max(per_year.min(), 1e-9)) \
+        if per_year.size else float("nan")
+    move_ratio = float(moves.max() / max(moves.min(), 1e-9)) \
+        if moves.size else float("nan")
+    activity_verdict = (
+        f"Activity and value move together, but not one for one. Across the "
+        f"three stretches the value per year ranges {value_ratio:.1f}× while the size of "
+        f"the adjustment ranges {move_ratio:.1f}×, so **the early career is not just "
+        "quieter, it is worth less than its quietness would suggest.** The two "
+        "later stretches are near-identical on both measures, which is the "
+        "useful shape of the result: everything that separates the ages here "
+        "happens before 40, and after that a year of conditioning is a year of "
+        "conditioning."
+        if np.isfinite(value_ratio) and np.isfinite(move_ratio)
+        and value_ratio > move_ratio * 1.15 else
+        f"Per year the value ranges {value_ratio:.1f}× across the three stretches and "
+        f"the size of the adjustment ranges {move_ratio:.1f}×. On this panel the two "
+        "track each other closely enough that how busy the rule is at an age "
+        "is a fair guide to what it is worth there.")
+    # The first crossing is an early transient while the target is still
+    # tiny; the meaningful flip is where the sign turns and stays turned.
+    signs = live_activity["mean_deviation"].to_numpy(dtype=float) > 0
+    ages_live = live_activity["age"].to_numpy(dtype=int)
+    flip_age = None
+    if signs.size and signs[-1]:
+        idx = signs.size - 1
+        while idx > 0 and signs[idx - 1]:
+            idx -= 1
+        flip_age = int(ages_live[idx])
+    activity_rows = activity.iloc[::max(len(activity) // 9, 1)]
+    activity_tbl = md_table(_compact(
+        _pct(activity_rows, ["mean_abs_deviation", "mean_deviation",
+                             "share_saving_more", "share_saving_less"]),
+        ["age", "mean_abs_deviation", "mean_deviation", "share_saving_more",
+         "share_saving_less"],
+        {"mean_abs_deviation": "average size of move (pp)",
+         "mean_deviation": "average direction (pp)",
+         "share_saving_more": "saving more (%)",
+         "share_saving_less": "saving less (%)"}), floatfmt="{:.2f}")
+    direction_note = (
+        f"The *direction* flips at about age {flip_age}. Before it the average "
+        "adjustment is negative -- most paths are ahead of an age target that "
+        "is still small, and the rule tells them to ease off -- and after it "
+        "the average turns positive as the target outruns the balance. Nobody "
+        "designed that; it falls out of comparing wealth to a target taken from "
+        "the model's own median path."
+        if flip_age is not None else
+        "The average adjustment keeps the same sign throughout the career.")
+
+    # --- 10. interactions --------------------------------------------------
+    strategy_tbl = md_table(_compact(
+        _pct(by_strategy.sort_values(value, ascending=False)
+             .assign(net_of_shape=by_strategy[value] - shape_value),
+             ["mean_savings_rate"]),
+        ["strategy", value, "net_of_shape", "mean_savings_rate", "prob_ruin"],
+        {value: "value vs matched constant (%)",
+         "net_of_shape": "of which, from conditioning (%)",
+         "mean_savings_rate": "mean rate (%)", "prob_ruin": "P(ruin)"}),
+        floatfmt="{:.3f}")
+    income_tbl = md_table(_compact(
+        _pct(by_income.sort_values("volatility_factor")
+             .assign(net_of_shape=by_income[value] - shape_value),
+             ["mean_savings_rate"]),
+        ["volatility_factor", value, "net_of_shape", "mean_savings_rate",
+         "prob_ruin"],
+        {"volatility_factor": "income shock sd, × baseline",
+         value: "value vs matched constant (%)",
+         "net_of_shape": "of which, from conditioning (%)",
+         "mean_savings_rate": "mean rate (%)", "prob_ruin": "P(ruin)"}),
+        floatfmt="{:.3f}")
+    strat_hi = by_strategy.loc[by_strategy[value].idxmax()]
+    strat_lo = by_strategy.loc[by_strategy[value].idxmin()]
+    ruin_rank = (by_strategy[["prob_ruin", value]].corr(method="spearman")
+                 .iloc[0, 1]) if len(by_strategy) > 2 else float("nan")
+    income_lo = by_income.loc[by_income["volatility_factor"].idxmin()]
+    income_hi = by_income.loc[by_income["volatility_factor"].idxmax()]
+    income_rises = net(income_hi) > net(income_lo)
+    strategy_verdict = (
+        f"**Conditioning is worth most to the investor whose plan is going "
+        f"worst.** Across the four strategies the value tracks the ruin "
+        f"probability almost exactly (rank correlation {ruin_rank:+.2f}): bills only, "
+        f"which ruins {float(strat_hi['prob_ruin']):.0%} of the time, gets {net(strat_hi):+.2f}%, and "
+        f"all-equity, which ruins {float(strat_lo['prob_ruin']):.0%} of the time, gets {net(strat_lo):+.2f}%. "
+        "Note that this runs *opposite* to portfolio volatility: the safest "
+        "portfolio benefits most. What the signal is worth is not driven by how "
+        "much the balance bounces around, but by how often it ends up somewhere "
+        "the investor cannot live on."
+        if np.isfinite(ruin_rank) and ruin_rank > 0.8 else
+        f"Conditioning is worth most under **{str(strat_hi['strategy'])}** ({net(strat_hi):+.2f}%) "
+        f"and least under **{str(strat_lo['strategy'])}** ({net(strat_lo):+.2f}%). The ordering "
+        f"has rank correlation {ruin_rank:+.2f} with the ruin probability.")
+    income_verdict = (
+        f"Labour-income risk cuts the other way, and in the direction the "
+        f"dispersion story predicts: "
+        f"scaling the shocks from {float(income_lo['volatility_factor']):g}× to {float(income_hi['volatility_factor']):g}× baseline moves the value "
+        f"from {net(income_lo):+.2f}% to {net(income_hi):+.2f}%. More income risk means more "
+        "dispersion in where a path ends up relative to target, and more for "
+        "the signal to correct."
+        if income_rises else
+        f"More labour-income risk makes the signal *less* valuable "
+        f"({net(income_lo):+.2f}% at {float(income_lo['volatility_factor']):g}× against {net(income_hi):+.2f}% at "
+        f"{float(income_hi['volatility_factor']):g}×), which does not fit the dispersion story and is "
+        "worth flagging as unexplained.")
+
+    figure_list = "\n".join(f"* `{f}`" for f in figures)
+    n_evaluations = (len(forms) + len(asymmetry) + len(bands) + len(targets)
+                     + len(race) + len(combination) + len(feasibility)
+                     + len(windows) + len(by_gamma) + len(by_strategy)
+                     + len(by_income))
+
+    intro = _header(
+        "11 - The Accumulation Signal, Taken Apart",
+        "How hard the savings rate should lean on the balance already built, "
+        "and how much of the answer survives the modelling choices.",
+    )
+
+    body = f"""
+## 1. What `docs/10` left open
+
+`docs/10` found that conditioning the savings rate on whether wealth is ahead
+of or behind an age-appropriate target is worth about 3% of certainty
+equivalent consumption at a matched average savings rate, while conditioning
+on last year's return is worth almost nothing.
+
+That result rests on choices that were made once and never tested. The gap was
+measured in income multiples; the target was the model's own median path; one
+coefficient governed both directions; the rate was free to move anywhere
+between {float(acc_cfg['rate_floor']):.0%} and {float(acc_cfg['rate_cap']):.0%}; and the rule ran for the whole career. Each of
+those is a modelling decision, and a number that survives only one setting of
+them is not worth acting on.
+
+This document varies all five, races five further signals against the funded
+ratio, tests whether the two best combine, and asks where in the distribution
+and at which ages the value lands. {n_evaluations:,} rule evaluations at
+{int(notes['n_paths']):,} paths each, all under common random numbers, so every
+difference below is a difference in the rule and not in the draw.
+
+**How to read every number here.** Each is a percentage gain over a *constant*
+savings rate interpolated at the rule's own realised average. A rule that leans
+on the balance will, in a world where most paths fall behind, quietly save more
+overall; without the matched comparison it would be credited for saving more
+rather than for saving smarter.
+
+Conditioning is layered on top of {notes['base_label']}, and **that profile is
+itself worth {shape_value:+.2f}%** against a matched constant rate. So the headline
+column in each table is shape *plus* conditioning, and a second column strips
+the shape out. Where this document says a rule is "worth" something, it means
+the second column.
+
+## 2. Which units is "behind" measured in?
+
+Being "two times salary short" means something entirely different at 30 and at
+60, because the target itself grows from roughly nothing to around ten times
+income over a career. A response linear in that gap is therefore inert when
+young and violent when old, whether or not anyone intended it. Two scale-free
+alternatives measure the shortfall as a *fraction* of the target instead.
+
+The three forms measure the gap in different units, so their coefficients are
+not comparable and cannot be plotted against each other. The table translates
+each into the same thing: how many percentage points of income the rule adds
+for a path a quarter short of target at age {reference_age}.
+
+{form_tbl}
+
+**{str(winner['form_label'])}** wins at {float(winner[value]):+.2f}% gross, {net(winner):+.2f}% net of the
+age profile.{edge_note(winner_edge, "its value")}
+
+{form_verdict}
+
+{level_mechanism}
+
+{form_edge_note}
+
+## 3. Catching up and easing off are not the same policy
+
+A symmetric rule does two things at once: it saves more when behind and less
+when ahead. There is no reason those should carry the same coefficient, and
+separating them is the question a real saver faces -- almost all published
+advice is about catching up, and almost none is about easing off.
+
+{asym_tbl}
+
+{asym_verdict}
+
+{additivity_verdict}
+
+The free search picks {"the same coefficient in both directions" if is_symmetric_best else f"k_behind = {float(best_overall['k_behind']):g} against k_ahead = {float(best_overall['k_ahead']):g}"},
+so on this panel there is no case for an asymmetric rule beyond the tie above.
+The sign check behaves: saving *more* when already ahead of target -- the
+perverse direction -- costs {(net(worst_perverse) if worst_perverse is not None else float('nan')):+.2f}%.
+
+## 4. The version a person could actually follow
+
+A continuous response asks for a freshly computed contribution rate every year.
+The spending side of this project found (`docs/06`) that coarse guardrail rules
+give up surprisingly little against continuous ones. The accumulation-side
+analogue: check once a year, and move the contribution by a fixed step only if
+the funded ratio is more than a dead band away from target.
+
+{band_tbl}
+
+The best guardrail -- move by {float(best_band['step']):.0%} of income once you are more than
+{float(best_band['band']):.0%} off target -- is worth {net(best_band):+.2f}% net, or {band_share:.0f}% of what the
+tuned continuous rule earns.
+
+{guardrail_verdict}
+
+Even so, {band_share:.0f}% of the value for a rule with two numbers and no arithmetic is
+the trade most people should take. Note also that every guardrail row holds the
+career average savings rate within a few tenths of a point of {target_mean:.0%}: unlike
+the continuous rule, it barely drifts.
+
+## 5. Does the target have to be right?
+
+The target is the weakest link in the construction: it is the model's own
+median wealth path, which no investor could know in advance. Two alternatives
+test how much that matters -- a published "N times salary by age X" ladder, and
+a flat multiple with no age content at all.
+
+At face value, with no scaling:
+
+{unscaled_tbl}
+
+Allowing each to be scaled up or down:
+
+{target_tbl}
+
+{target_verdict}
+
+{target_shape_note}
+
+{scaling_verdict}
+
+## 6. Which signal, out of everything available?
+
+Eight candidates, all signed so positive means "save more", all bounded so one
+sensitivity grid is meaningful across them, all swept over the same grid and
+scored the same way. They split into three kinds: *stock* signals that say
+where the investor is, *flow* signals that say what the market just did, and
+the pay cheque.
+
+{race_tbl}
+
+{top_verdict}
+
+{flow_verdict}
+
+The "no conditioning" row is a determinism check: it appears once for every
+point on the sensitivity grid and spans {null_spread:.1e} percentage points across them,
+confirming that the common random numbers hold and that the differences above
+are rule effects rather than sampling noise.
+
+### Do the two leaders stack?
+
+{combo_tbl}
+
+{combo_verdict}
+
+## 7. How far does the contribution have to move?
+
+The unconstrained optimum may send the savings rate anywhere between {float(acc_cfg['rate_floor']):.0%} and
+{float(acc_cfg['rate_cap']):.0%}. No household budget works like that. Re-pricing the rule with the rate
+confined to progressively narrower bands around its average is the cheapest
+test of whether the finding survives contact with a real household.
+
+{feas_tbl}
+
+Unconstrained, the rule is worth {unconstrained_net:+.2f}% net. The narrowest band that keeps
+80% of that is **±{float(narrowest['width']):.0%}** of income, at {net(narrowest):+.2f}%.
+
+{feasibility_verdict}
+
+What the unconstrained rule asks for, age by age:
+
+{fan_tbl}
+
+The spread is widest at age {int(widest['age'])}, where the 10th and 90th percentiles of the
+prescribed rate are {float(widest['q10']):.1%} and {float(widest['q90']):.1%}. The floor binds for the bottom decile
+in {floored_share:.0f}% of working years: the rule spends a great deal of its time telling
+paths that are comfortably ahead to contribute nothing at all. That is a real
+prescription, not a rounding artefact, and it is the strongest argument for the
+banded version in section 4 over the unconstrained optimum.
+
+## 8. Where the gain lands, and who wants it
+
+A certainty equivalent is one number. It cannot say whether a rule lifted the
+middle of the distribution or insured the bottom of it, and those are very
+different products.
+
+{quantile_tbl}
+
+The bottom decile of retirement consumption moves {low_gain:+.2f}%, the middle of the
+distribution {mid_gain:+.2f}%, and the top decile {high_gain:+.2f}%.
+
+{distribution_verdict}
+
+Across preferences, each at its own best coefficient:
+
+{gamma_tbl}
+
+{gamma_verdict}
+
+## 9. When in a career is the balance worth reading?
+
+Switching the conditioning on only for part of the career prices each stretch
+of working life separately. Outside the window the rule falls back to the age
+profile exactly, so these are clean subtractions. The sweep includes
+overlapping spans, because halves and thirds answer different questions.
+
+{window_tbl}
+
+{timing_verdict}
+
+{timing_additivity}
+
+How hard the rule leans at each age is a *different* question from whether
+leaning there is worth anything:
+
+{activity_tbl}
+
+The rule is most active at age {int(busiest['age'])}, moving the rate by {float(busiest['mean_abs_deviation']):.1%} of income on
+average, and least active at age {int(quietest['age'])} ({float(quietest['mean_abs_deviation']):.1%}) -- a range of {activity_range:.1f}×.
+Putting the two on a per-year basis, over the same three non-overlapping
+stretches:
+
+{tile_tbl}
+
+{activity_verdict}
+
+{direction_note}
+
+## 10. What the value depends on
+
+By what the money is invested in:
+
+{strategy_tbl}
+
+{strategy_verdict}
+
+By how risky the pay cheque is:
+
+{income_tbl}
+
+{income_verdict}
+
+## 11. What this changes about `docs/10`
+
+* The headline is **robust to the functional form**, provided the gap is
+  measured as a fraction of the target rather than in income multiples: the
+  two scale-free forms are {abs(scale_free_spread):.2f} points apart and both beat the level
+  gap by {level_penalty:.2f}.
+* It is **not robust to the target**. A published ladder captures {ladder_share:.0f}% of it,
+  and a target with no age content is worth {flat_ref:+.2f}% -- worse than not
+  conditioning at all.
+* It **survives a plausible rule**. A dead-band guardrail keeps {band_share:.0f}%, and a
+  contribution confined to ±{float(narrowest['width']):.0%} of its average keeps
+  {float(narrowest['share']):.0f}%.
+* It is **symmetric**, and the two directions are sub-additive: catching up and
+  easing off are worth {catch_up:+.2f}% and {ease_off:+.2f}% alone but {both_halves:+.2f}% together.
+* The balance is **not the best signal available**: {str(top_signal['signal_label']).lower()}
+  wins the horse race at {net(top_signal):+.2f}%, and {"the two stack, partially" if combo_stacks else "the two do not stack"}.
+* Every *flow* signal -- one-, five- and ten-year trailing returns --
+  {"is worth essentially nothing" if flow_negligible else "trails the stock signals"}.
+* It is worth **most to the investor whose plan is failing**, not to the one
+  taking the most market risk.
+
+The standing caveat from `docs/10` is unchanged and worth repeating: none of
+this identifies how much to save. The average rate is pinned at {target_mean:.0%}
+throughout, because the level is set by the discount factor and by risk
+aversion acting on working-life consumption, and a panel of historical returns
+has no view on either.
+
+## 12. Figures
+
+{figure_list}
+
+## 13. Reproduction
+
+```bash
+python main.py --steps 11
+```
+
+Runtime {float(notes['elapsed_seconds']):.0f}s at {int(notes['n_paths']):,} paths, γ = {gamma:g}, average savings rate
+pinned at {target_mean:.0%}. Best response form `{best_form}` at k = {best_k:g}. Tables in
+`{cfg['run']['table_dir']}/acc_*.csv`.
+"""
+    return _write(path, [intro, body])

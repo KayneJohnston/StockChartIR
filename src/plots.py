@@ -53,8 +53,19 @@ def _save(fig: Figure, directory: str | Path, name: str) -> Path:
     return path
 
 
+#: Marker shapes carry series identity alongside colour. Two entries of the
+#: Okabe-Ito palette (the green and the pink) sit in the 6-8 CVD separation
+#: band, which is only legal with a second encoding; every multi-series panel
+#: below therefore varies the marker as well as the hue.
+MARKERS: Sequence[str] = ("o", "s", "^", "D", "v", "P", "X", "*")
+
+
 def _colour(i: int) -> str:
     return PALETTE[i % len(PALETTE)]
+
+
+def _marker(i: int) -> str:
+    return MARKERS[i % len(MARKERS)]
 
 
 # ---------------------------------------------------------------------------
@@ -976,5 +987,469 @@ def plot_retirement_timing(summary: pd.DataFrame, ages: Mapping[str, np.ndarray]
         labs = (ax.get_legend_handles_labels()[1]
                 + ax2.get_legend_handles_labels()[1])
         ax.legend(handles, labs, fontsize=8, loc="upper left")
+        fig.tight_layout()
+    return _save(fig, directory, name)
+
+
+# ---------------------------------------------------------------------------
+# Step 10 - conditioning the savings rate
+# ---------------------------------------------------------------------------
+def plot_saving(profiles: pd.DataFrame, frontier: pd.DataFrame,
+                conditioning: pd.DataFrame, directory: str | Path,
+                target_mean: float = 0.10,
+                name: str = "fig25_savings_rate") -> Path:
+    """The solved savings hump, the level question, and what conditioning adds."""
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(1, 3, figsize=(16.5, 5.0))
+
+        ax = axes[0]
+        for i, gamma in enumerate(sorted(profiles["risk_aversion"].unique())):
+            block = profiles[profiles["risk_aversion"] == gamma] \
+                .sort_values("age")
+            ax.plot(block["age"], block["savings_rate"] * 100, "-o",
+                    markersize=3, color=_colour(i), linewidth=1.8,
+                    label=f"solved, γ = {gamma:g}")
+        ax.axhline(target_mean * 100, color="black", linestyle="--",
+                   linewidth=1.4, label=f"flat {target_mean:.0%} (same average)")
+        ax.set_xlabel("Age")
+        ax.set_ylabel("Savings rate (% of labour income)")
+        ax.set_title("Save least when young, most in peak-earning years",
+                     fontsize=10)
+        ax.legend(fontsize=8)
+
+        ax = axes[1]
+        cec_cols = [c for c in frontier.columns if c.startswith("cec_gamma")]
+        for i, col in enumerate(cec_cols):
+            ax.plot(frontier["savings_rate"] * 100, frontier[col], "-o",
+                    markersize=4, color=_colour(i),
+                    label=col.replace("cec_gamma", "γ = "))
+            peak = frontier.loc[frontier[col].idxmax()]
+            ax.scatter([peak["savings_rate"] * 100], [peak[col]],
+                       color=_colour(i), s=70, zorder=4, edgecolor="white",
+                       linewidth=1.2)
+        ax.set_xlabel("Constant savings rate (%)")
+        ax.set_ylabel("Certainty equivalent consumption")
+        ax.set_title("The model cannot identify the level\n"
+                     "(dots mark each optimum)", fontsize=10)
+        ax.legend(fontsize=8)
+
+        ax = axes[2]
+        for i, rule in enumerate(sorted(conditioning["rule"].unique())):
+            block = conditioning[conditioning["rule"] == rule] \
+                .sort_values("sensitivity")
+            ax.plot(block["sensitivity"], block["vs_base_pct"], "-o",
+                    markersize=4, color=_colour(i), linewidth=1.8, label=rule)
+        ax.axhline(0, color="black", linewidth=1.2)
+        ax.axvline(0, color="grey", linewidth=0.8, linestyle=":")
+        ax.set_xscale("symlog", linthresh=0.005)
+        ax.set_xlabel("Sensitivity of the savings rate to the signal")
+        ax.set_ylabel("CEC vs the same rule with no conditioning (%)")
+        ax.set_title("Conditioning on your own position beats\n"
+                     "conditioning on the market", fontsize=10)
+        ax.legend(fontsize=8)
+        fig.tight_layout()
+    return _save(fig, directory, name)
+
+
+# ---------------------------------------------------------------------------
+# Step 11 - taking the accumulation signal apart
+# ---------------------------------------------------------------------------
+#: Short axis-legend forms of the three gap definitions in :mod:`src.accumulation`.
+FORM_SHORT: Mapping[str, str] = {
+    "level": "level gap (income multiples)",
+    "proportional": "funded ratio",
+    "log": "log funded ratio",
+}
+
+
+def plot_response_forms(forms: pd.DataFrame, policy: pd.DataFrame,
+                        directory: str | Path,
+                        name: str = "fig26_savings_response_form") -> Path:
+    """Which functional form, and what policy each one implies."""
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(1, 2, figsize=(12.5, 5.0))
+
+        ax = axes[0]
+        for i, form in enumerate(sorted(forms["form"].unique())):
+            block = forms[forms["form"] == form].sort_values("rate_move_pp")
+            ax.plot(block["rate_move_pp"], block["matched_value_pct"],
+                    marker=_marker(i), markersize=6, color=_colour(i),
+                    linewidth=2.0, label=FORM_SHORT.get(form, form))
+            peak = block.loc[block["matched_value_pct"].idxmax()]
+            ax.scatter([peak["rate_move_pp"]], [peak["matched_value_pct"]],
+                       s=110, color=_colour(i), zorder=5,
+                       edgecolor="white", linewidth=1.6)
+        ax.axhline(0, color="black", linewidth=1.2)
+        ax.set_xlabel("Extra saving when a quarter behind target\n"
+                      "(percentage points of income, mid-career)")
+        ax.set_ylabel("CEC vs a constant rate saving the same (%)")
+        ax.set_title("How hard to lean, on one comparable scale", fontsize=10)
+        ax.legend(fontsize=8, title="Gap measured as", title_fontsize=8)
+
+        ax = axes[1]
+        for i, form in enumerate(sorted(policy["form"].unique())):
+            block = policy[policy["form"] == form].sort_values("funded_ratio")
+            ax.plot(block["funded_ratio"], block["savings_rate"] * 100,
+                    marker=_marker(i), markersize=5, color=_colour(i),
+                    linewidth=2.0, markevery=3,
+                    label=FORM_SHORT.get(form, form))
+        ax.axvline(1.0, color="grey", linewidth=1.0, linestyle=":")
+        ax.set_xlabel("Wealth as a fraction of the age target")
+        ax.set_ylabel("Prescribed savings rate (%)")
+        ax.set_title("The policy each form implies, at its own optimum",
+                     fontsize=10)
+        ax.legend(fontsize=8)
+        fig.tight_layout()
+    return _save(fig, directory, name)
+
+
+
+def plot_asymmetry(asymmetry: pd.DataFrame, directory: str | Path,
+                   name: str = "fig27_savings_asymmetry") -> Path:
+    """Saving more when behind and saving less when ahead, priced separately."""
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(1, 2, figsize=(13.0, 5.0))
+
+        grid = asymmetry.pivot_table(index="k_behind", columns="k_ahead",
+                                     values="matched_value_pct")
+        ax = axes[0]
+        limit = float(np.nanmax(np.abs(grid.to_numpy(dtype=float))))
+        im = ax.imshow(grid.to_numpy(dtype=float), origin="lower",
+                       aspect="auto", cmap="RdBu_r", vmin=-limit, vmax=limit)
+        ax.set_xticks(range(grid.shape[1]))
+        ax.set_xticklabels([f"{c:g}" for c in grid.columns])
+        ax.set_yticks(range(grid.shape[0]))
+        ax.set_yticklabels([f"{r:g}" for r in grid.index])
+        best = asymmetry.loc[asymmetry["matched_value_pct"].idxmax()]
+        ax.scatter([list(grid.columns).index(best["k_ahead"])],
+                   [list(grid.index).index(best["k_behind"])],
+                   marker="*", s=280, color="black", zorder=5,
+                   edgecolor="white", linewidth=1.2)
+        for yi, row_key in enumerate(grid.index):
+            for xi, col_key in enumerate(grid.columns):
+                value = grid.iloc[yi, xi]
+                if np.isfinite(value):
+                    ax.text(xi, yi, f"{value:+.1f}", ha="center", va="center",
+                            fontsize=7,
+                            color="black" if abs(value) < 0.6 * limit else "white")
+        ax.set_xlabel("Response when ahead of target (k)")
+        ax.set_ylabel("Response when behind target (k)")
+        ax.set_title("Value of conditioning (%), by which half is switched on\n"
+                     "(★ marks the best pair)", fontsize=10)
+        ax.grid(False)
+        fig.colorbar(im, ax=ax, shrink=0.8, label="CEC vs matched constant (%)")
+
+        ax = axes[1]
+        behind_only = asymmetry[asymmetry["k_ahead"] == 0.0] \
+            .sort_values("k_behind")
+        ahead_only = asymmetry[asymmetry["k_behind"] == 0.0] \
+            .sort_values("k_ahead")
+        symmetric = asymmetry[asymmetry["symmetric"]].sort_values("k_behind")
+        for i, (block, x, label) in enumerate((
+                (behind_only, "k_behind", "catch up only (ease off never)"),
+                (ahead_only, "k_ahead", "ease off only (catch up never)"),
+                (symmetric, "k_behind", "both, same coefficient"))):
+            ax.plot(block[x], block["matched_value_pct"], marker=_marker(i),
+                    markersize=6, color=_colour(i), linewidth=2.0, label=label)
+        ax.axhline(0, color="black", linewidth=1.2)
+        ax.set_xlabel("Sensitivity of the savings rate to the funded ratio")
+        ax.set_ylabel("CEC vs a constant rate saving the same (%)")
+        ax.set_title("Which half of the rule earns its keep", fontsize=10)
+        ax.legend(fontsize=8)
+        fig.tight_layout()
+    return _save(fig, directory, name)
+
+
+def plot_signal_race(best: pd.DataFrame, race: pd.DataFrame,
+                     combination: pd.DataFrame, directory: str | Path,
+                     name: str = "fig28_savings_signal_race") -> Path:
+    """Every candidate signal, swept over the same sensitivity grid."""
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(1, 3, figsize=(18.0, 5.2))
+
+        ax = axes[0]
+        labels = list(best["signal_label"])
+        values = best["matched_value_pct"].to_numpy(dtype=float)
+        colours = [_colour(0) if v >= 0 else _colour(1) for v in values]
+        bars = ax.barh(range(len(values)), values, color=colours, height=0.62)
+        ax.set_yticks(range(len(values)))
+        ax.set_yticklabels(labels, fontsize=8)
+        span = max(float(np.abs(values).max()), 1e-9)
+        for bar, value in zip(bars, values):
+            offset = 0.03 * span * (1 if value >= 0 else -1)
+            ax.text(value + offset, bar.get_y() + bar.get_height() / 2,
+                    f"{value:+.2f}%", va="center",
+                    ha="left" if value >= 0 else "right", fontsize=8)
+        ax.axvline(0, color="black", linewidth=1.2)
+        ax.set_xlim(min(0.0, values.min() - 0.25 * span),
+                    max(0.0, values.max() + 0.30 * span))
+        ax.set_xlabel("CEC vs a constant rate saving the same (%)")
+        ax.set_title("Best of each signal, at its own best sensitivity",
+                     fontsize=10)
+        ax.grid(axis="y", alpha=0.0)
+
+        ax = axes[1]
+        top = list(best.sort_values("matched_value_pct", ascending=False)
+                   ["signal"].head(4))
+        for i, signal in enumerate(top):
+            block = race[race["signal"] == signal].sort_values("sensitivity")
+            ax.plot(block["sensitivity"], block["matched_value_pct"],
+                    marker=_marker(i), markersize=6, color=_colour(i),
+                    linewidth=2.0,
+                    label=block["signal_label"].iloc[0])
+        ax.axhline(0, color="black", linewidth=1.2)
+        ax.set_xlabel("Sensitivity of the savings rate to the signal")
+        ax.set_ylabel("CEC vs a constant rate saving the same (%)")
+        ax.set_title("How sharply the leaders peak", fontsize=10)
+        ax.legend(fontsize=8)
+
+        ax = axes[2]
+        grid = combination.pivot_table(index="k_first", columns="k_second",
+                                       values="matched_value_pct")
+        data = grid.to_numpy(dtype=float)
+        limit = float(np.nanmax(np.abs(data)))
+        im = ax.imshow(data, origin="lower", aspect="auto", cmap="RdBu_r",
+                       vmin=-limit, vmax=limit)
+        ax.set_xticks(range(grid.shape[1]))
+        ax.set_xticklabels([f"{c:g}" for c in grid.columns])
+        ax.set_yticks(range(grid.shape[0]))
+        ax.set_yticklabels([f"{r:g}" for r in grid.index])
+        for yi in range(data.shape[0]):
+            for xi in range(data.shape[1]):
+                value = data[yi, xi]
+                if np.isfinite(value):
+                    ax.text(xi, yi, f"{value:+.1f}", ha="center", va="center",
+                            fontsize=7,
+                            color="black" if abs(value) < 0.6 * limit else "white")
+        peak = combination.loc[combination["matched_value_pct"].idxmax()]
+        ax.scatter([list(grid.columns).index(peak["k_second"])],
+                   [list(grid.index).index(peak["k_first"])], marker="*",
+                   s=280, color="black", zorder=5, edgecolor="white",
+                   linewidth=1.2)
+        first = str(combination["first_signal"].iloc[0]).replace("_", " ")
+        second = str(combination["second_signal"].iloc[0]).replace("_", " ")
+        ax.set_xlabel(f"Sensitivity to {second}")
+        ax.set_ylabel(f"Sensitivity to {first}")
+        ax.set_title("The two leaders, layered\n(★ marks the best pair)",
+                     fontsize=10)
+        ax.grid(False)
+        fig.colorbar(im, ax=ax, shrink=0.8,
+                     label="CEC vs matched constant (%)")
+        fig.tight_layout()
+    return _save(fig, directory, name)
+
+
+def plot_feasibility(feasibility: pd.DataFrame, fan: pd.DataFrame,
+                     directory: str | Path, target_mean: float = 0.10,
+                     name: str = "fig29_savings_feasibility") -> Path:
+    """What survives when the contribution cannot move very far."""
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(1, 2, figsize=(12.5, 5.0))
+
+        ax = axes[0]
+        block = feasibility.sort_values("width")
+        ax.plot(block["width"] * 100, block["matched_value_pct"], marker="o",
+                markersize=6, color=_colour(0), linewidth=2.0)
+        unconstrained = float(block["matched_value_pct"].iloc[-1])
+        ax.axhline(unconstrained, color=_colour(1), linestyle="--",
+                   linewidth=1.6)
+        # Direct-labelled rather than in a legend box: the reference line and
+        # the rising curve leave no corner of this panel reliably empty.
+        ax.annotate(f"unconstrained ({unconstrained:+.2f}%)",
+                    (float(block["width"].iloc[0]) * 100, unconstrained),
+                    textcoords="offset points", xytext=(4, 6), fontsize=8,
+                    color=_colour(1))
+        ax.axhline(0, color="black", linewidth=1.2)
+        for _, row in block.iterrows():
+            if row["width"] in (0.05, 0.03):
+                ax.annotate(f"±{row['width']:.0%}: {row['matched_value_pct']:+.2f}%",
+                            (row["width"] * 100, row["matched_value_pct"]),
+                            textcoords="offset points", xytext=(6, -14),
+                            fontsize=8)
+        ax.set_xlabel("How far the rate may move from its average "
+                      "(± percentage points)")
+        ax.set_ylabel("CEC vs a constant rate saving the same (%)")
+        ax.set_title("Value of conditioning, by how far the\n"
+                     "contribution is allowed to move", fontsize=10)
+
+        ax = axes[1]
+        ax.fill_between(fan["age"], fan["q10"] * 100, fan["q90"] * 100,
+                        color=_colour(0), alpha=0.18, label="10th-90th percentile")
+        ax.fill_between(fan["age"], fan["q25"] * 100, fan["q75"] * 100,
+                        color=_colour(0), alpha=0.34, label="25th-75th percentile")
+        ax.plot(fan["age"], fan["q50"] * 100, color=_colour(0), linewidth=2.2,
+                label="median")
+        ax.axhline(target_mean * 100, color="black", linestyle="--",
+                   linewidth=1.4, label=f"career average ({target_mean:.0%})")
+        ax.set_xlabel("Age")
+        ax.set_ylabel("Realised savings rate (%)")
+        ax.set_title("What the unconstrained rule actually asks for",
+                     fontsize=10)
+        ax.legend(fontsize=8)
+        fig.tight_layout()
+    return _save(fig, directory, name)
+
+
+def plot_value_distribution(quantiles: pd.DataFrame, by_gamma: pd.DataFrame,
+                            directory: str | Path,
+                            name: str = "fig30_savings_value_distribution") -> Path:
+    """Whether conditioning raises the middle or lifts the bottom."""
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(1, 2, figsize=(12.5, 5.0))
+
+        ax = axes[0]
+        block = quantiles.sort_values("quantile")
+        ax.plot(block["quantile"] * 100, block["gain_pct"], marker="o",
+                markersize=6, color=_colour(0), linewidth=2.2)
+        ax.axhline(0, color="black", linewidth=1.2)
+        ax.set_xlabel("Percentile of retirement consumption")
+        ax.set_ylabel("Change vs no conditioning (%)")
+        ax.set_title("Where in the distribution the gain lands", fontsize=10)
+        for _, row in block.iloc[[0, -1]].iterrows():
+            ax.annotate(f"p{int(round(row['quantile'] * 100))}: "
+                        f"{row['gain_pct']:+.1f}%",
+                        (row["quantile"] * 100, row["gain_pct"]),
+                        textcoords="offset points", xytext=(8, -14),
+                        ha="left" if row["quantile"] < 0.5 else "right",
+                        fontsize=8)
+
+        ax = axes[1]
+        for i, gamma in enumerate(sorted(by_gamma["risk_aversion"].unique())):
+            gblock = by_gamma[by_gamma["risk_aversion"] == gamma] \
+                .sort_values("sensitivity")
+            ax.plot(gblock["sensitivity"], gblock["matched_value_pct"],
+                    marker=_marker(i), markersize=6, color=_colour(i),
+                    linewidth=2.0, label=f"γ = {gamma:g}")
+        ax.axhline(0, color="black", linewidth=1.2)
+        ax.set_xlabel("Sensitivity of the savings rate to the funded ratio")
+        ax.set_ylabel("CEC vs a constant rate saving the same (%)")
+        ax.set_title("Who wants it, and how much", fontsize=10)
+        ax.legend(fontsize=8)
+        fig.tight_layout()
+    return _save(fig, directory, name)
+
+
+def plot_when_it_matters(windows: pd.DataFrame, activity: pd.DataFrame,
+                         directory: str | Path,
+                         name: str = "fig31_savings_when_it_matters") -> Path:
+    """Which years of a career the balance is worth reading in."""
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(1, 2, figsize=(12.5, 5.0))
+
+        ax = axes[0]
+        block = windows.sort_values("matched_value_pct")
+        values = block["matched_value_pct"].to_numpy(dtype=float)
+        colours = [_colour(0) if v >= 0 else _colour(1) for v in values]
+        bars = ax.barh(range(len(values)), values, color=colours, height=0.6)
+        ax.set_yticks(range(len(values)))
+        ax.set_yticklabels([f"ages {w}" for w in block["window"]], fontsize=8)
+        span = max(float(np.abs(values).max()), 1e-9)
+        for bar, value in zip(bars, values):
+            ax.text(value + 0.03 * span * (1 if value >= 0 else -1),
+                    bar.get_y() + bar.get_height() / 2, f"{value:+.2f}%",
+                    va="center", ha="left" if value >= 0 else "right",
+                    fontsize=8)
+        ax.axvline(0, color="black", linewidth=1.2)
+        ax.set_xlim(min(0.0, values.min() - 0.25 * span),
+                    max(0.0, values.max() + 0.30 * span))
+        ax.set_xlabel("CEC vs a constant rate saving the same (%)")
+        ax.set_title("Conditioning switched on only for these ages",
+                     fontsize=10)
+        ax.grid(axis="y", alpha=0.0)
+
+        ax = axes[1]
+        ax.plot(activity["age"], activity["mean_abs_deviation"] * 100,
+                marker="o", markersize=4, color=_colour(0), linewidth=2.0,
+                markevery=3, label="average size of the adjustment")
+        ax.plot(activity["age"], activity["mean_deviation"] * 100,
+                marker="s", markersize=4, color=_colour(1), linewidth=2.0,
+                markevery=3, label="average direction of the adjustment")
+        ax.axhline(0, color="black", linewidth=1.2)
+        ax.set_xlabel("Age")
+        ax.set_ylabel("Deviation from the base rate (percentage points)")
+        ax.set_title("How active the rule is at each age", fontsize=10)
+        ax.legend(fontsize=8)
+        fig.tight_layout()
+    return _save(fig, directory, name)
+
+
+def plot_target_choice(targets: pd.DataFrame, paths: pd.DataFrame,
+                       directory: str | Path,
+                       name: str = "fig32_savings_target_choice") -> Path:
+    """Does the target have to be right, and does aiming higher help?"""
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(1, 2, figsize=(12.5, 5.0))
+
+        ax = axes[0]
+        for i, target in enumerate(sorted(targets["target"].unique())):
+            block = targets[targets["target"] == target].sort_values("factor")
+            ax.plot(block["factor"], block["matched_value_pct"],
+                    marker=_marker(i), markersize=6, color=_colour(i),
+                    linewidth=2.0, label=target)
+        ax.axhline(0, color="black", linewidth=1.2)
+        ax.axvline(1.0, color="grey", linewidth=1.0, linestyle=":")
+        ax.set_xlabel("Target scaled by")
+        ax.set_ylabel("CEC vs a constant rate saving the same (%)")
+        ax.set_title("Aiming higher than the median path", fontsize=10)
+        ax.legend(fontsize=8)
+
+        ax = axes[1]
+        for i, target in enumerate(sorted(paths["target"].unique())):
+            block = paths[paths["target"] == target].sort_values("age")
+            ax.plot(block["age"], block["multiple"], marker=_marker(i),
+                    markersize=4, color=_colour(i), linewidth=2.0,
+                    markevery=4, label=target)
+        ax.set_xlabel("Age")
+        ax.set_ylabel("Wealth as a multiple of current income")
+        ax.set_title("What each target actually asks for", fontsize=10)
+        ax.legend(fontsize=8)
+        fig.tight_layout()
+    return _save(fig, directory, name)
+
+
+def plot_accumulation_interactions(by_strategy: pd.DataFrame,
+                                   by_income: pd.DataFrame,
+                                   directory: str | Path,
+                                   name: str = "fig33_savings_interactions") -> Path:
+    """What the value of reading the balance depends on."""
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(1, 2, figsize=(12.5, 5.0))
+
+        ax = axes[0]
+        block = by_strategy.sort_values("matched_value_pct")
+        values = block["matched_value_pct"].to_numpy(dtype=float)
+        colours = [_colour(0) if v >= 0 else _colour(1) for v in values]
+        bars = ax.barh(range(len(values)), values, color=colours, height=0.6)
+        ax.set_yticks(range(len(values)))
+        ax.set_yticklabels(block["strategy"], fontsize=8)
+        span = max(float(np.abs(values).max()), 1e-9)
+        for bar, value in zip(bars, values):
+            ax.text(value + 0.03 * span * (1 if value >= 0 else -1),
+                    bar.get_y() + bar.get_height() / 2, f"{value:+.2f}%",
+                    va="center", ha="left" if value >= 0 else "right",
+                    fontsize=8)
+        ax.axvline(0, color="black", linewidth=1.2)
+        ax.set_xlim(min(0.0, values.min() - 0.25 * span),
+                    max(0.0, values.max() + 0.30 * span))
+        ax.set_xlabel("CEC vs a constant rate saving the same (%)")
+        ax.set_title("Value of conditioning, by what the money is invested in",
+                     fontsize=10)
+        ax.grid(axis="y", alpha=0.0)
+
+        ax = axes[1]
+        block = by_income.sort_values("volatility_factor")
+        ax.plot(block["volatility_factor"], block["matched_value_pct"],
+                marker="o", markersize=7, color=_colour(0), linewidth=2.2)
+        ax.axhline(0, color="black", linewidth=1.2)
+        ax.axvline(1.0, color="grey", linewidth=1.0, linestyle=":")
+        for _, row in block.iterrows():
+            ax.annotate(f"{row['matched_value_pct']:+.2f}%",
+                        (row["volatility_factor"], row["matched_value_pct"]),
+                        textcoords="offset points", xytext=(0, 9),
+                        ha="center", fontsize=8)
+        ax.set_xlabel("Labour-income shock volatility, relative to baseline")
+        ax.set_ylabel("CEC vs a constant rate saving the same (%)")
+        ax.set_title("Value of conditioning, by how risky the pay cheque is",
+                     fontsize=10)
         fig.tight_layout()
     return _save(fig, directory, name)

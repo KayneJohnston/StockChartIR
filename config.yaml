@@ -402,3 +402,111 @@ retirement_timing:
     - {key: wealth_multiple, params: {multiple: 30, min_age: 55, max_age: 70},
        label: "Wealth trigger 30x income"}
   lottery_rule: "Wealth trigger 25x income"
+
+# ---------------------------------------------------------------------------
+# Step 10 - conditioning the savings rate
+# ---------------------------------------------------------------------------
+saving:
+  enabled: true
+  n_paths: 20000
+  strategy: balanced_all_equity
+  # Same working-income floor as step 9, and for the same reason: this
+  # analysis changes working-life consumption, so the asymmetry between a
+  # floored retirement and an unfloored working life does not cancel.
+  working_income_floor: 0.25
+
+  # The model cannot identify the *level* of the savings rate -- that is set
+  # by the discount factor and risk aversion, which the return panel has no
+  # view on.  The shape search therefore pins the average rate here and asks
+  # only *when* to save it.  The constant-rate frontier is reported so the
+  # level question is visible rather than hidden.
+  target_mean_rate: 0.10
+  constant_rate_grid: [0.0, 0.05, 0.10, 0.15, 0.20, 0.30, 0.40]
+
+  shape_multiplier_grid: [0.0, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 3.0]
+  shape_sweeps: 2
+  rate_floor: 0.0
+  rate_cap: 0.40
+
+  # Conditioning sensitivities.  Negative values are included deliberately:
+  # "save less when you are behind" should be strongly negative, and if it is
+  # not, the machinery is wrong.
+  on_track_sensitivity: [-0.005, 0.0, 0.005, 0.010, 0.020, 0.050]
+  return_sensitivity: [-0.25, 0.0, 0.25, 0.50, 1.00]
+
+  # Do the savings-side and retirement-side conditioning gains add up?
+  combine_with_retirement: true
+  retirement_rule:
+    key: wealth_multiple
+    params: {multiple: 25, min_age: 55, max_age: 70}
+
+# ---------------------------------------------------------------------------
+# Step 11 -- the accumulation signal, taken apart
+# ---------------------------------------------------------------------------
+# `saving` above establishes *that* conditioning on the balance is worth
+# something.  This section asks how much of that survives the modelling
+# choices buried in the phrase "conditioning on the balance": which functional
+# form, which target, symmetric or not, how far the rate is allowed to move,
+# and at which ages the signal is informative at all.
+accumulation:
+  enabled: true
+  n_paths: 20000
+  strategy: balanced_all_equity
+  working_income_floor: 0.25
+  target_mean_rate: 0.10
+  rate_floor: 0.0
+  rate_cap: 0.40
+  constant_rate_grid: [0.0, 0.025, 0.05, 0.075, 0.10, 0.15, 0.20, 0.30]
+
+  # Sensitivity grids.  The level form measures the gap in income multiples,
+  # which run to roughly 10x by retirement, so its coefficient has to be two
+  # orders of magnitude smaller than the scale-free forms' to move the rate by
+  # a comparable amount.  That difference in units is exactly what makes the
+  # forms hard to compare by eye and worth comparing by simulation.
+  # The level grid runs further than it looks it should: 0.05 only moves the
+  # contribution by about 4 points for a path a quarter behind, where the
+  # scale-free forms reach 10-12.  A grid that stops short of the others'
+  # range would make the comparison a truncation rather than a test.
+  response_grids:
+    level: [0.0, 0.002, 0.005, 0.010, 0.020, 0.050, 0.100, 0.150]
+    proportional: [0.0, 0.02, 0.05, 0.10, 0.20, 0.40]
+    log: [0.0, 0.02, 0.05, 0.10, 0.20, 0.40]
+
+  # Behind and ahead are separate policies.  A negative "ahead" coefficient
+  # means saving *more* when already ahead, which should be bad; it is in the
+  # grid as a sign check.
+  asymmetry:
+    behind: [0.0, 0.05, 0.10, 0.20, 0.40]
+    ahead: [-0.05, 0.0, 0.02, 0.05, 0.10, 0.20, 0.40]
+
+  # Guardrails: move by `step` only once the funded ratio is more than `band`
+  # away from target.  The implementable version of the same idea.
+  bands: [0.10, 0.20, 0.35]
+  band_steps: [0.01, 0.02, 0.03, 0.05]
+
+  # Does the target have to be the model's own median path?
+  target_factors: [0.5, 0.75, 1.0, 1.5, 2.0]
+  flat_target_multiple: 8.0
+
+  # Horse race.  Every signal is signed so that positive means "save more" and
+  # bounded so one sensitivity grid is meaningful across all of them.
+  signals: [funded_ratio, wealth_level, investment_gain, return_1y,
+            return_5y, return_10y, income_shock, none]
+  signal_grid: [0.0, 0.02, 0.05, 0.10, 0.20, 0.40]
+
+  # Two signals at once.  They may be reading the same underlying state, in
+  # which case combining them is worth less than the better of the two -- the
+  # savings/retirement pair in docs/10 behaved exactly that way.
+  combination_grid: [0.0, 0.05, 0.10, 0.20, 0.40]
+
+  # How much of the value survives a rate confined to +/- width of the average?
+  feasibility_widths: [0.0, 0.01, 0.02, 0.03, 0.05, 0.075, 0.10, 0.15, 0.30]
+
+  # Which parts of a career is the balance informative in?
+  age_windows: [[25, 39], [40, 49], [50, 62], [25, 49], [40, 62], [25, 62]]
+
+  # Interactions.
+  strategy_interaction: [balanced_all_equity, sixty_forty, target_date_fund,
+                         bills_only]
+  income_volatility_factors: [0.5, 1.0, 1.5]
+  quantiles: [0.01, 0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95, 0.99]

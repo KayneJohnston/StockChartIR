@@ -34,6 +34,7 @@ import numpy as np
 import pandas as pd
 
 from . import lifecycle as lc
+from . import saving as sav
 from . import spending as spg
 from . import utility as ut
 from .bootstrap import BootstrapPaths
@@ -142,6 +143,9 @@ class FlexibleOutcome:
     bequest: np.ndarray                # (N,)
     ruin: np.ndarray                   # (N,) bool
     years_worked: np.ndarray           # (N,)
+    total_saved: np.ndarray            # (N,) real contributions over the career
+    mean_savings_rate: np.ndarray      # (N,) average rate while working
+    savings_rate_path: np.ndarray      # (N, H) rate applied each year (0 once retired)
 
     @property
     def n_paths(self) -> int:
@@ -159,8 +163,9 @@ def simulate_flexible(
     income: np.ndarray,
     retirement: RetirementRule,
     spending: spg.SpendingRule | None = None,
+    saving: "sav.SavingRule | None" = None,
 ) -> FlexibleOutcome:
-    """Lifecycle simulation in which each path chooses its own retirement date.
+    """Lifecycle simulation with a path-dependent retirement date and savings rate.
 
     The structure mirrors :func:`src.lifecycle.simulate` but cannot reuse its
     two-phase loop, because at any calendar step some paths are working and
@@ -169,9 +174,12 @@ def simulate_flexible(
     benefit, the opening withdrawal -- is instead recorded per path on the
     year that path retires.
 
-    With :class:`FixedAgeRule` at ``spec.age_retire`` this reproduces the
-    fixed-date engine exactly, which is asserted in
-    ``tests/test_retirement.py``.
+    ``saving`` optionally makes the contribution rate a function of age and
+    portfolio state (see :mod:`src.saving`); omitted, it is the flat
+    ``spec.savings_rate``. This is the general path-dependent engine for the
+    project: with :class:`FixedAgeRule` at ``spec.age_retire`` and a constant
+    savings rule it reproduces the fixed-date engine exactly, which is
+    asserted in ``tests/test_retirement.py``.
     """
     n_paths = paths.n_paths
     horizon = spec.horizon
@@ -183,6 +191,7 @@ def simulate_flexible(
             f"of the horizon ({horizon}); got {income.shape[1]}")
 
     rule = spending or spg.from_spec(spec.retirement_rule, spec.rule_rate)
+    saving_rule = saving or sav.ConstantRateRule(rate_value=spec.savings_rate)
     rp = lc.portfolio_returns(paths, strategy)
     inflation = paths.inflation[:, :horizon]
 
@@ -197,6 +206,9 @@ def simulate_flexible(
     prev_withdrawal = np.zeros(n_paths)
     income_sum = np.zeros(n_paths)
     years_worked = np.zeros(n_paths)
+    saved_total = np.zeros(n_paths)
+    rate_sum = np.zeros(n_paths)
+    rate_path = np.zeros((n_paths, horizon))
     ruined = np.zeros(n_paths, dtype=bool)
     last_return = np.zeros(n_paths)
     last_inflation = np.zeros(n_paths)
@@ -225,8 +237,14 @@ def simulate_flexible(
             prev_withdrawal[idx] = initial_withdrawal[idx]
 
         still_working = ~retired
-        contribution = np.where(still_working,
-                                spec.savings_rate * income[:, h], 0.0)
+        rate = saving_rule.rate(sav.SavingState(
+            age=age, year=h, wealth=available, current_income=income[:, h],
+            last_return=last_return, still_working=still_working,
+            returns_history=rp[:, :h], contributed=saved_total))
+        contribution = np.where(still_working, rate * income[:, h], 0.0)
+        saved_total += contribution
+        rate_sum += np.where(still_working, rate, 0.0)
+        rate_path[:, h] = np.where(still_working, rate, 0.0)
         income_sum += np.where(still_working, income[:, h], 0.0)
         years_worked += still_working.astype(float)
 
@@ -242,7 +260,7 @@ def simulate_flexible(
 
         consumption[:, h] = np.where(
             still_working,
-            (1.0 - spec.savings_rate) * income[:, h],
+            income[:, h] - contribution,
             benefit + withdrawal)
         wealth[:, h + 1] = np.maximum(
             available + contribution - withdrawal, 0.0) * (1.0 + rp[:, h])
@@ -266,6 +284,9 @@ def simulate_flexible(
         bequest=wealth[:, horizon].copy(),
         ruin=ruined,
         years_worked=years_worked.astype(int),
+        total_saved=saved_total,
+        mean_savings_rate=rate_sum / np.maximum(years_worked, 1.0),
+        savings_rate_path=rate_path,
     )
 
 
@@ -337,6 +358,11 @@ def evaluate(outcome: FlexibleOutcome, cfg: Mapping[str, Any],
         "median_retirement_consumption": float(np.median(retirement_consumption)),
         "p5_retirement_consumption": float(
             np.percentile(retirement_consumption, 5)),
+        "mean_savings_rate": float(outcome.mean_savings_rate.mean()),
+        "median_total_saved": float(np.median(outcome.total_saved)),
+        "median_working_consumption": float(np.median(np.array([
+            outcome.consumption[n, :outcome.years_worked[n]].mean()
+            for n in range(outcome.n_paths)]))),
     })
     return row
 
