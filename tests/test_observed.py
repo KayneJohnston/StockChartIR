@@ -7,6 +7,8 @@ called observed when *everything* that went into it was observed.
 """
 from __future__ import annotations
 
+import dataclasses
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -361,6 +363,51 @@ def test_country_with_no_data_keeps_its_fallback_label():
     available = np.zeros((3, 1), dtype=bool)
     observed = _masks([[0]] * 3, [[0]] * 3, [[0]] * 3)
     assert dl.derive_tiers(observed, available, ["B"]) == ["B"]
+
+
+def test_observation_masks_survive_saving_and_loading(tmp_path, toy_panel):
+    """A reloaded panel that lost its masks would silently fall back to the
+    coarser country tier, which is the confusion the masks exist to remove."""
+    shape = toy_panel.available.shape
+    observed = {"dom_eq": np.zeros(shape, dtype=bool),
+                "bond": np.ones(shape, dtype=bool),
+                "bill": np.ones(shape, dtype=bool),
+                "inflation": np.ones(shape, dtype=bool)}
+    panel = dl.Panel(
+        years=toy_panel.years, countries=toy_panel.countries,
+        tier=("B",) * len(toy_panel.countries),
+        dom_eq=toy_panel.dom_eq, intl_eq=toy_panel.intl_eq,
+        bond=toy_panel.bond, bill=toy_panel.bill,
+        inflation=toy_panel.inflation,
+        real_exchange_rate=toy_panel.real_exchange_rate,
+        available=toy_panel.available, name="masked", observed=observed)
+    reloaded = dl.Panel.load(panel.save(tmp_path / "p.npz"))
+    assert sorted(reloaded.observed) == sorted(observed)
+    for key, values in observed.items():
+        assert np.array_equal(reloaded.observed[key], values), key
+    # And the mask still beats the tier fallback, which would say otherwise.
+    assert not reloaded.observed_mask("dom_eq").any()
+    assert reloaded.observed_mask("bond").any()
+
+
+def test_a_panel_saved_without_masks_still_loads(tmp_path, toy_panel):
+    reloaded = dl.Panel.load(toy_panel.save(tmp_path / "p.npz"))
+    assert reloaded.observed == {}
+    assert reloaded.tier == toy_panel.tier
+
+
+def test_subsetting_carries_the_masks(toy_panel):
+    shape = toy_panel.available.shape
+    observed = {k: np.ones(shape, dtype=bool)
+                for k in ("dom_eq", "bond", "bill", "inflation")}
+    observed["dom_eq"][:, 0] = False
+    panel = dataclasses.replace(toy_panel, observed=observed)
+    kept = panel.subset(list(toy_panel.countries[:2]))
+    assert not kept.observed_mask("dom_eq")[:, 0].any()
+    # The mask is intersected with availability, so compare against that
+    # rather than against every calendar year.
+    assert np.array_equal(kept.observed_mask("dom_eq")[:, 1],
+                          kept.available[:, 1])
 
 
 def test_empty_masks_leave_every_label_alone():

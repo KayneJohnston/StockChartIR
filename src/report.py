@@ -4510,8 +4510,8 @@ def write_doc_14(
     anchors = frames["anchors"]
     identity = frames["identity"].iloc[0]
     tail = frames["tail"]
-    comparison = frames["panel_comparison"]
-    recovered = frames.get("recovered", pd.DataFrame())
+    unusable = frames.get("unusable", pd.DataFrame())
+    generated = frames.get("generated", pd.DataFrame())
     housing = frames.get("housing", pd.DataFrame())
     wages = frames.get("wages", pd.DataFrame())
     summary = notes["summary"]
@@ -4566,29 +4566,25 @@ def write_doc_14(
          "donor": "Donor country",
          "inflation_empirical_share": "Inflation empirical (%)"}),
         floatfmt="{:.0f}")
-    comparison_tbl = md_table(_compact(
-        comparison, ["strategy", "cec_dev38", "cec_jst16", "difference_pct"],
-        {"strategy": "Strategy", "cec_dev38": "38-country panel",
-         "cec_jst16": "16 observed countries", "difference_pct": "Change (%)"}),
-        floatfmt="{:.4f}")
 
-    recovered_tbl = md_table(_compact(
-        recovered, ["country", "series", "source", "first_year", "last_year",
-                    "observed_years"],
+    unusable_tbl = md_table(_compact(
+        unusable, ["country", "series", "source", "first_year", "last_year",
+                   "observed_years"],
         {"country": "Country", "series": "Series", "source": "Source",
          "first_year": "From", "last_year": "To",
          "observed_years": "Observed years"}),
-        floatfmt="{:.0f}") if len(recovered) else "_Nothing to recover._"
-    n_recovered = int(recovered["observed_years"].sum()) if len(recovered) \
-        else 0
-    # Read from the data: the last year any recovered series reaches. Naming a
-    # country or a year here would go stale the moment the sources change.
-    early = recovered[recovered["last_year"] < int(cfg["data"]["end_year"])] \
-        if len(recovered) else recovered
-    clio_last = int(early["last_year"].max()) if len(early) \
-        else int(cfg["data"]["end_year"])
-    recovered_countries = sorted(set(recovered["country"])) if len(recovered) \
-        else []
+        floatfmt="{:.0f}") if len(unusable) else "_Nothing recoverable._"
+    # Stated from the data rather than asserted: if a generated block ever
+    # returns, this paragraph reports it instead of claiming the opposite.
+    generated_note = (
+        "The table of cells that are available but not observed is empty."
+        if not len(generated) else
+        f"**{len(generated):,} cells are available but not observed**, across "
+        f"{generated['iso'].nunique()} countries and "
+        f"{generated['series'].nunique()} series. That should not happen: a "
+        "generated block has returned to the panel and the sections below "
+        "cannot be read as describing recorded data."
+    )
 
     housing_tbl = md_table(_compact(
         _pct(housing, ["mean", "sd", "sd_desmoothed", "equity_sd"]),
@@ -4614,7 +4610,7 @@ def write_doc_14(
 
     wage_section = ""
     if len(wages) and wage.get("countries"):
-        wage_section = f"""### 3.3 The series that bears on the income model
+        wage_section = f"""### 3.2 The series that bears on the income model
 
 The macro file also carries a **nominal wage index for all eighteen of its
 countries**, including the two with no return series. Deflated by the same
@@ -4695,7 +4691,7 @@ quantified limitation and not silently applied.
     # than rendered as a row of zeros when the audit has nothing to report.
     housing_section = ""
     if len(housing) and house.get("countries"):
-        housing_section = f"""### 3.2 The asset class nobody here invests in
+        housing_section = f"""### 3.1 The asset class nobody here invests in
 
 The macro file carries a fourth asset the "Rate of Return on Everything"
 project measured and nothing in this pipeline reads: **housing total returns**,
@@ -4740,9 +4736,7 @@ actually buy, and it would change the headline result. So it is measured,
 recorded, and left out — deliberately, and on the record.
 """
 
-    adv38 = float(notes["advantage_dev38"])
-    adv16 = float(notes["advantage_jst16"])
-    stronger = adv16 > adv38
+    advantage = float(notes.get("advantage", float("nan")))
     figure_list = "\n".join(f"* `{f}`" for f in figures)
 
     intro = _header(
@@ -4754,28 +4748,27 @@ recorded, and left out — deliberately, and on the record.
     body = f"""
 ## 1. Why this document exists
 
-`docs/01` originally labelled each country Tier A or Tier B and described
-Tier B as "constructed". That was true and far too soft, and the softness was
-hiding something a reader needs to know before believing anything else in this
-project.
+This audit was written to measure how much of the panel was generated rather
+than observed. It found that **twenty-two of the panel's thirty-eight countries
+had no recorded equity, bond or bill returns at all**: their series were draws
+from a single-factor model fitted to a randomly assigned observed donor, plus
+Gaussian noise carrying that donor's residual covariance. That is a simulation,
+not a measurement.
 
-For a simulated country the equity, bond and bill series are not derived from
-anything that country experienced. They are draws from a single-factor model
-fitted to a **randomly assigned Tier-A donor**, plus Gaussian noise carrying
-that donor's residual covariance. Only inflation is empirical, and only where
-a source carries it. The honest word is not "constructed". It is
-**simulated**.
+**Those countries have been removed.** The panel is now exactly the countries
+whose returns were recorded -- {int(summary['n_countries'])} of them,
+{int(summary['country_years']):,} country-years, every cell an observation. The
+sections below prove that rather than assert it, audit the sources the
+remaining data come from, and report the real series that exist but cannot be
+used.
 
-This document measures exactly how much of the panel that covers, audits the
-observed tier rather than taking it on trust, and — the part that decides
-whether any of it matters — re-runs the headline result on the observed
-countries alone.
-
-Everything below counts **cells**: one country, one year, one return series.
-That is the unit the bootstrap draws, and it is the only unit that can describe
-a country whose bonds are observed for 130 years while its equity is generated
-throughout. A country-level count would have to call such a country wholly real
-or wholly generated, and it is neither.
+The earlier version of this document argued that the simulated data could be
+kept because they *diluted* the headline result rather than creating it. That
+was true and it was not a good enough reason. A reader cannot check a number
+that came out of a random number generator, and a cross-section of
+thirty-eight sounds like stronger evidence than a cross-section of
+{int(summary['n_countries'])} while being weaker. What follows is the smaller,
+checkable claim.
 
 ## 2. The sources, fingerprinted
 
@@ -4793,51 +4786,15 @@ not all of them carry returns.
 
 **Two countries in the file have macro data but no asset *return* series.**
 Canada and Ireland carry consumer prices, exchange rates, a long-term bond
-yield and a short-term rate, but no total-return series. That is a property of
-the published database — the "Rate of Return on Everything" return series cover
-sixteen countries, not the eighteen in the macro database — and not a defect in
-this pipeline.
+yield and a short-term rate, but no total-return series of any kind — not even
+the interpolated equity variants the file provides for other countries. That is
+a property of the published database, whose "Rate of Return on Everything"
+return series cover sixteen countries and not the eighteen in its macro half,
+and not a defect in this pipeline. Section 8 reports what can and cannot be
+rebuilt from what they do carry.
 
-It does not follow that their returns have to be invented. A bond total return
-follows from a yield and a duration assumption, a bill return is a lagged short
-rate, and deflating both by that country's own consumer price index gives a
-real return that was *measured* rather than drawn.
-
-### 3.1 What was recovered rather than generated
-
-{recovered_tbl}
-
-**{n_recovered:,} country-years across {len(recovered_countries)} countries
-stopped being simulated**: {", ".join(recovered_countries)}. Canada and Ireland
-come from the macro file above; New Zealand and Austria from the Clio-Infra
-bond-yield file, which carries a long-term yield for forty-two countries but
-enough history for only those two.
-
-Three constraints were imposed on the recovery, and each one costs coverage:
-
-* **A real return needs a real deflator.** A genuine nominal yield divided by a
-  drawn price index is not an observation, so a country-year is marked observed
-  only where that country's own inflation is empirical too. For the Clio-Infra
-  countries that costs both the years past the end of Clio's own price index
-  and a scattering of interwar years where that index has gaps -- which is why
-  those series stop in {clio_last} rather than running to
-  {int(cfg["data"]["end_year"])}. The alternative was to deflate a real yield
-  by a factor-model estimate and call the result an observation.
-* **No equity was recovered**, because no source available here carries an
-  equity return for these countries. Their equity remains simulated, which is
-  why they are Tier B and not Tier A, and why section 7 below is unchanged by
-  any of this.
-* **The reconstruction is an approximation.** ``r_t = y_{{t-1}} + D · (y_{{t-1}} − y_t)``
-  ignores convexity and assumes a constant modified duration of
-  {float(cfg["data"].get("bond_duration_years", 7.0)):g} years, so the recovered
-  series are smoother than a true total-return index. They understate bond
-  volatility; they do not invent bond returns.
-
-No new *external* source could be added. Outbound access from the build
-environment is governed by an egress policy that denies the macrohistory host
-itself along with every other bulk macro-data provider tested, and guessing at
-redistributed mirrors would have reproduced exactly the unverifiable provenance
-this document exists to warn about.
+The sixteen countries with complete return series are the panel. There is no
+other tier.
 
 {housing_section}
 {wage_section}
@@ -4898,102 +4855,100 @@ finding is recorded here rather than left for a reader to discover.
 
 ## 6. How much of the panel is generated?
 
-{era_tbl}
+None of it.
 
 {int(summary['country_years']):,} usable country-years carry three return
 series each, so the panel holds {int(summary['return_cells']):,} return cells.
-**{int(summary['return_cells_simulated']):,} of them
-({float(summary['share_cells_simulated']):.1%}) are simulated.** Because the
-bootstrap draws countries in proportion to their history length, the same
-share — **{float(summary['share_draws_simulated']):.1%}** — of a simulated
-lifetime's return draws never happened.
+**{int(summary['return_cells_empirical']):,} of them are observations and
+{int(summary['return_cells_simulated']):,} are not.** Every country is Tier A:
+every available cell of every return series is a recorded number.
 
-The country-level view is coarser and worse: {int(summary['n_simulated_countries'])} of
-{int(summary['n_countries'])} countries have no observed returns at all, a
-further {int(summary['n_partial_countries'])} have observed rates and simulated
-equity, and {int(summary['n_observed_countries'])} are observed throughout.
-Counting whole countries as simulated puts
-{float(summary['share_country_years_simulated']):.1%} of country-years on the
-generated side; counting cells, which is what the sampler actually draws, gives
-{float(summary['share_cells_simulated']):.1%}. The gap between those two numbers
-is the {n_recovered:,} recovered country-years of section 3.1.
+{generated_note}
 
-The simulated share is not constant. It rises from
-{float(era['share_simulated'].iloc[0]):.0%} before 1930 to
-{float(era['share_simulated'].iloc[-1]):.0%} after 2000, because the simulated
-countries enter at documented market-inception dates and the observed sixteen
-do not grow in number.
+That is a measured statement, not a promise. The tiers in `docs/01` are
+*derived* from the per-cell observation masks by `src.data_loader.derive_tiers`
+-- a country is Tier A only when every available cell of every return series is
+observed -- so if a generated block ever returned, the label would change and
+the table above would fill up.
 
-{simulated_tbl}
+{era_tbl}
 
-## 7. The finding that bears hardest on the headline
+The cross-section still grows over time, because markets enter the source
+database at different dates, but it grows with recorded histories rather than
+with generated ones.
+
+## 7. The international leg
 
 `docs/04` attributes the headline result to *international* diversification
-rather than to equity exposure as such. The international leg is a
-leave-one-out average across every country with data that year — which means
-it is an average over the simulated countries too.
+rather than to equity exposure as such. The international leg is a leave-one-out
+average across every country with data that year, which is why the composition
+of the cross-section matters so much here.
 
 {contamination_tbl}
 
-**For an investor in one of the sixteen observed countries, the international
-leg is {float(contamination[contamination['era'] == 'whole panel']['mean_synthetic_share_of_intl_leg'].iloc[0]):.0%} simulated on average, rising to
-{float(contamination[contamination['era'] == era['era'].iloc[-1]]['mean_synthetic_share_of_intl_leg'].iloc[0]) if (contamination['era'] == era['era'].iloc[-1]).any() else float('nan'):.0%} after 2000.** The mechanism the headline result rests on is
-therefore partly diversification into markets that do not exist.
+In the earlier panel this table was the worst number in the project: an
+investor in one of the observed countries held an international leg that was
+38% simulated on average and 59% simulated after 2000. Their
+"diversification" was substantially diversification into markets that did not
+exist. That is now zero by construction, because there are no generated
+markets left to average in.
 
-That is the strongest statement of the problem this audit can make, and it is
-why the next section is the one that matters.
+The cost is real and worth stating plainly: the leg is now an average over
+{int(summary['n_countries']) - 1} other countries rather than 37. It is a
+narrower cross-section, and it is a *recorded* one.
 
-## 8. Does the result survive on observed data alone?
+## 8. What the removed countries did have
 
-The whole pipeline is re-run on the sixteen countries with complete empirical
-return series, with no simulated data anywhere — not in the country draw and
-not in the international leg.
+Four of the twenty-two are not blank. Austria, Canada, Ireland and New Zealand
+carry recorded interest-rate histories -- long-term yields and short rates in
+the macro file for Canada and Ireland, Clio-Infra long yields for Austria and
+New Zealand -- and an earlier revision of this project rebuilt bond and bill
+returns from them, deflated by each country's own price index.
 
-{comparison_tbl}
+{unusable_tbl}
 
-**The result does not depend on the simulated data. It is understated by it.**
-The all-equity advantage over the target-date fund is {adv38:.1f}% on the
-38-country panel and **{adv16:.1f}% on observed data alone** —
-{"larger" if stronger else "smaller"} by
-{abs(adv16 - adv38):.1f} percentage points.
+**They still cannot enter the panel.** A lifecycle investor needs a domestic
+equity return; the macro file carries none for these countries, not even the
+interpolated variants it provides elsewhere; and no source reachable from this
+build environment supplies one. Putting them in would mean generating the
+single most important series in the model, which is the practice this revision
+removed.
 
-The mechanism is straightforward once stated. The simulated countries are
-generated from a factor model fitted to the observed cross-section, so they
-carry that cross-section's average behaviour and none of its idiosyncrasy.
-Averaging them into the international leg makes it smoother and more
-correlated with the domestic leg than a genuine cross-section of national
-markets would be, which *reduces* the diversification benefit the result
-depends on. Simulated data dilute the finding; they do not manufacture it.
+They are reported because the check is worth recording: it is the reason the
+answer is {int(summary['n_countries'])} countries and not twenty.
 
 ## 9. What this changes
 
-* **The synthetic tier is now named as such.** "Constructed" understated it;
-  the equity, bond and bill series for {int(summary['n_simulated_countries'])}
-  of {int(summary['n_countries'])} countries are model output, and
-  {float(summary['share_draws_simulated']):.0%} of a simulated lifetime's
-  return draws come from a cell that was generated.
-* **Everything a source could supply has been taken from the source.** The
-  audit prompted a sweep of the primary files for series the pipeline was not
-  reading, which recovered {n_recovered:,} country-years across
-  {len(recovered_countries)} countries (section 3.1) and cut the simulated
-  share of return cells from
-  {float(summary['share_country_years_simulated']):.1%} to
-  {float(summary['share_cells_simulated']):.1%}. Provenance is now recorded
-  per cell rather than per country, and `docs/01`'s tiers are *derived* from
-  those masks, so a label cannot drift from the data it describes.
-* **The equity gap is the one that remains.** Nothing was recovered for
-  equity, which is the series the headline mechanism runs through — so
-  section 7's number is unchanged, and it is the honest bound on this
-  panel's evidence.
-* **The observed-only panel is the one to believe.** It is reported alongside
-  the 38-country panel everywhere the headline appears, and it is the
-  stronger of the two.
+* **The generated countries are gone, not annotated.** Twenty-two of
+  thirty-eight had factor-model returns; the panel is now
+  {int(summary['n_countries'])} countries and
+  {int(summary['return_cells']):,} return cells, all of them recorded. An
+  earlier revision kept them and reported the contamination alongside. That
+  was not good enough: a reader cannot check a number that came from a random
+  number generator.
+* **Provenance is recorded per cell, and the tiers are derived from it.** A
+  label cannot drift from the data it describes, and `generated_cells` reports
+  any cell that is available but not observed -- currently none.
+* **The international leg is now entirely recorded.** It was 38% simulated for
+  an observed investor, 59% after 2000. The price is a narrower cross-section:
+  an average over {int(summary['n_countries']) - 1} other markets rather than
+  37.
+* **The cross-section is smaller and the evidence is stronger.** Thirty-eight
+  countries sounded like a broader base than {int(summary['n_countries'])}. For
+  the return series it never was, and nothing in this project now leans on the
+  larger number.
+* **Series that exist but cannot be used are reported, not used.** Four removed
+  countries have real interest-rate histories (section 8); housing total
+  returns are recorded for all {int(summary['n_countries'])} panel countries
+  (section 3.2); real wage growth is recorded for eighteen (section 3.3). None
+  of the three enters the model, and each says why.
 * **2016-2020 is flagged as unverified** pending a copy obtained from the
   compilers directly.
-* **The country count is not the strength of the evidence.** Thirty-eight
-  countries sounds like a broader cross-section than sixteen. For the return
-  series it is not, and no statement in this project should lean on the larger
-  number.
+
+On this panel the all-equity portfolio leads the target-date fund by
+**{advantage:.1f}%** in certainty-equivalent consumption. That is the number
+the rest of the project reports, and every input to it is a recorded
+observation.
 
 ## 10. Figures
 

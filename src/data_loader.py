@@ -55,37 +55,38 @@ TIER_A_ISO: Tuple[str, ...] = (
     "GBR", "ITA", "JPN", "NLD", "NOR", "PRT", "SWE", "USA",
 )
 
-#: The 22 remaining developed markets used to reach the paper's 38-country
-#: cross-section.  Membership rule (see docs/01, section 2):  IMF "advanced
-#: economies" that host an investable equity market -- i.e. excluding
-#: Andorra, Macao SAR, Puerto Rico and San Marino -- plus Poland, which
-#: FTSE Russell reclassified as a Developed Market in September 2018.
+#: Countries that were once carried in this panel with *generated* returns and
+#: have since been removed. They are recorded rather than deleted outright so
+#: the removal is documented and cannot be undone by accident.
 #:
-#: Each entry maps ISO-3 -> (display name, Clio-Infra column or None,
-#: earliest plausible year of an organised domestic equity market).
-TIER_B_SPEC: Mapping[str, Tuple[str, str | None, int]] = {
-    "AUT": ("Austria", "Austria", 1890),
-    "CAN": ("Canada", "Canada", 1890),
-    "HRV": ("Croatia", "Croatia", 1993),
-    "CYP": ("Cyprus", "Cyprus", 1996),
-    "CZE": ("Czech Republic", "Czech Republic", 1993),
-    "EST": ("Estonia", "Estonia", 1996),
-    "GRC": ("Greece", "Greece", 1890),
-    "HKG": ("Hong Kong SAR", None, 1947),
-    "ISL": ("Iceland", "Iceland", 1993),
-    "IRL": ("Ireland", "Ireland", 1922),
-    "ISR": ("Israel", "Israel", 1949),
-    "KOR": ("Korea", "South Korea", 1956),
-    "LVA": ("Latvia", "Latvia", 1996),
-    "LTU": ("Lithuania", "Lithuania", 1993),
-    "LUX": ("Luxembourg", "Luxembourg", 1929),
-    "MLT": ("Malta", "Malta", 1992),
-    "NZL": ("New Zealand", "New Zealand", 1890),
-    "POL": ("Poland", "Poland", 1991),
-    "SGP": ("Singapore", "Singapore", 1965),
-    "SVK": ("Slovakia", "Slovakia", 1993),
-    "SVN": ("Slovenia", "Slovenia", 1990),
-    "TWN": ("Taiwan", None, 1962),
+#: The panel formerly ran to thirty-eight developed markets. Twenty-two of them
+#: had no equity, bond or bill return series in any source available here, and
+#: their returns were drawn from a single-factor model fitted to a randomly
+#: assigned observed donor. That is a simulation, not a measurement, and no
+#: result should rest on it -- so the whole block is gone and the panel is now
+#: exactly the countries whose returns were recorded.
+#:
+#: Four of them (Austria, Canada, Ireland, New Zealand) do have real
+#: interest-rate histories, and `src.observed` still recovers them for the
+#: provenance audit. They cannot re-enter the panel: a lifecycle investor needs
+#: a domestic *equity* return, no source available here carries one for them,
+#: and inventing it is the practice this removal exists to end.
+REMOVED_SIMULATED: Tuple[str, ...] = (
+    "AUT", "CAN", "HRV", "CYP", "CZE", "EST", "GRC", "HKG", "ISL", "IRL",
+    "ISR", "KOR", "LVA", "LTU", "LUX", "MLT", "NZL", "POL", "SGP", "SVK",
+    "SVN", "TWN",
+)
+
+#: Display names for every country this project names, whether or not it is in
+#: the panel -- the audit reports on the removed ones too.
+REMOVED_NAMES: Mapping[str, str] = {
+    "AUT": "Austria", "CAN": "Canada", "HRV": "Croatia", "CYP": "Cyprus",
+    "CZE": "Czech Republic", "EST": "Estonia", "GRC": "Greece",
+    "HKG": "Hong Kong SAR", "ISL": "Iceland", "IRL": "Ireland",
+    "ISR": "Israel", "KOR": "Korea", "LVA": "Latvia", "LTU": "Lithuania",
+    "LUX": "Luxembourg", "MLT": "Malta", "NZL": "New Zealand",
+    "POL": "Poland", "SGP": "Singapore", "SVK": "Slovakia",
+    "SVN": "Slovenia", "TWN": "Taiwan",
 }
 
 ISO_TO_NAME: Dict[str, str] = {
@@ -94,7 +95,7 @@ ISO_TO_NAME: Dict[str, str] = {
     "FRA": "France", "GBR": "United Kingdom", "ITA": "Italy",
     "JPN": "Japan", "NLD": "Netherlands", "NOR": "Norway",
     "PRT": "Portugal", "SWE": "Sweden", "USA": "United States",
-    **{iso: spec[0] for iso, spec in TIER_B_SPEC.items()},
+    **REMOVED_NAMES,
 }
 
 
@@ -148,8 +149,8 @@ class Panel:
     name: str = "panel"
     provenance: Tuple[str, ...] = ()
     #: ``series -> (T, C)`` boolean, True where the cell was *observed* rather
-    #: than generated. Empty for a panel that is empirical throughout, in
-    #: which case every available cell is observed by construction.
+    #: than generated. May be empty, in which case :meth:`observed_mask` falls
+    #: back to the country tier -- see there for what that means.
     observed: Mapping[str, np.ndarray] = dataclasses.field(default_factory=dict)
 
     # -- basic geometry -----------------------------------------------------
@@ -261,6 +262,12 @@ class Panel:
             name=np.array(self.name),
             provenance=np.array(self.provenance if self.provenance
                                 else [''] * len(self.countries)),
+            # Per-cell provenance, one array per series under an "observed_"
+            # prefix. Dropping it here would silently downgrade a reloaded
+            # panel to the coarser country-level fallback, which is exactly
+            # the confusion the masks exist to remove.
+            **{f"observed_{k}": np.asarray(v, dtype=bool)
+               for k, v in self.observed.items()},
         )
         return path
 
@@ -278,6 +285,9 @@ class Panel:
                 inflation=blob["inflation"],
                 real_exchange_rate=blob["real_exchange_rate"],
                 available=blob["available"],
+                observed={key[len("observed_"):]: blob[key]
+                          for key in blob.files
+                          if key.startswith("observed_")},
                 name=str(blob["name"]),
                 provenance=tuple(str(v) for v in blob["provenance"])
                 if "provenance" in blob else (),
@@ -663,7 +673,7 @@ def build_tier_a(cfg: Mapping[str, Any], hedge_ratio: float = 0.0,
         inflation=inflation[:, idx],
         real_exchange_rate=rer[:, idx],
         available=available[:, idx],
-        name="jst16",
+        name="observed",
         provenance=provenance,
     )
 
@@ -671,259 +681,6 @@ def build_tier_a(cfg: Mapping[str, Any], hedge_ratio: float = 0.0,
 # ---------------------------------------------------------------------------
 # Tier B: calibrated developed-market extension
 # ---------------------------------------------------------------------------
-@dataclasses.dataclass(frozen=True)
-class FactorFit:
-    """Country-level factor loadings estimated on the Tier-A cross-section."""
-
-    iso: str
-    alpha: Dict[str, float]
-    beta: Dict[str, float]
-    resid_cov: np.ndarray
-    resid_keys: Tuple[str, ...]
-
-
-def world_factors(panel: Panel) -> Dict[str, np.ndarray]:
-    """Equally weighted cross-country mean of each core series, by year."""
-    out: Dict[str, np.ndarray] = {}
-    for key in CORE_SERIES:
-        arr = np.where(panel.available, panel.series(key), np.nan)
-        with np.errstate(invalid="ignore"), warnings.catch_warnings():
-            warnings.simplefilter("ignore", RuntimeWarning)
-            out[key] = np.nanmean(arr, axis=1)
-    return out
-
-
-def fit_factor_model(panel: Panel) -> List[FactorFit]:
-    """Regress each Tier-A country's series on the corresponding world factor.
-
-    The residual covariance is retained so that synthetic countries inherit
-    the empirical cross-asset correlation structure (equity/bond/bill/CPI)
-    of a real developed market rather than an assumed one.
-    """
-    factors = world_factors(panel)
-    keys = CORE_SERIES
-    fits: List[FactorFit] = []
-    for c, iso in enumerate(panel.countries):
-        alpha: Dict[str, float] = {}
-        beta: Dict[str, float] = {}
-        residuals: Dict[str, np.ndarray] = {}
-        mask_all = panel.available[:, c]
-        for key in keys:
-            if key == "intl_eq":
-                # The international leg is rebuilt from scratch for the full
-                # panel, so it needs no country-specific factor fit.
-                alpha[key], beta[key] = 0.0, 1.0
-                residuals[key] = np.zeros(int(mask_all.sum()))
-                continue
-            y = panel.series(key)[:, c]
-            x = factors[key]
-            mask = mask_all & np.isfinite(y) & np.isfinite(x)
-            if mask.sum() < 10:
-                alpha[key], beta[key] = float(np.nanmean(y)), 1.0
-                residuals[key] = np.zeros(int(mask_all.sum()))
-                continue
-            design = np.column_stack([np.ones(mask.sum()), x[mask]])
-            coef, *_ = np.linalg.lstsq(design, y[mask], rcond=None)
-            alpha[key], beta[key] = float(coef[0]), float(coef[1])
-            resid = y[mask] - design @ coef
-            residuals[key] = resid
-        # Align residual vectors on the common set of usable years.
-        common = mask_all & np.all(
-            [np.isfinite(panel.series(k)[:, c]) for k in keys], axis=0
-        )
-        stack = []
-        for key in keys:
-            y = panel.series(key)[:, c]
-            x = factors[key]
-            stack.append(y[common] - (alpha[key] + beta[key] * x[common]))
-        resid_mat = np.vstack(stack) if common.sum() > 5 else np.zeros((len(keys), 2))
-        cov = np.cov(resid_mat) if resid_mat.shape[1] > 2 else np.eye(len(keys)) * 1e-4
-        cov = np.atleast_2d(cov)
-        fits.append(FactorFit(iso=iso, alpha=alpha, beta=beta,
-                              resid_cov=cov, resid_keys=keys))
-    return fits
-
-
-def _clio_inflation_for(iso: str, clio: pd.DataFrame,
-                        years: np.ndarray) -> np.ndarray:
-    column = TIER_B_SPEC[iso][1]
-    if column is None or column not in clio.columns:
-        return np.full(years.size, np.nan)
-    series = clio[column].reindex(years)
-    return series.to_numpy(dtype=float)
-
-
-def _jst_inflation_for(iso: str, jst: pd.DataFrame,
-                       years: np.ndarray) -> np.ndarray:
-    sub = jst[jst["iso"] == iso]
-    if sub.empty:
-        return np.full(years.size, np.nan)
-    return (
-        sub.set_index("year")["inflation"].reindex(years).to_numpy(dtype=float)
-    )
-
-
-def build_tier_b(
-    tier_a: Panel,
-    cfg: Mapping[str, Any],
-    jst: pd.DataFrame,
-) -> Tuple[np.ndarray, ...]:
-    """Generate the calibrated Tier-B block.
-
-    Returns ``(isos, dom_eq, bond, bill, inflation, cpi, xrusd, usd_gross,
-    fx_gain)`` for the Tier-B countries, aligned to ``tier_a.years``.
-
-    Construction (documented in docs/01 section 4):
-
-    1. Inflation is empirical wherever a source carries it -- JST CPI for
-       Canada and Ireland, Clio-Infra CPI inflation for the remainder.
-       Where no source exists the world inflation factor plus a donor-scaled
-       idiosyncratic shock is used.
-    2. Real equity/bond/bill returns are drawn from the single-factor model
-       ``x_{i,t} = alpha_i + beta_i * f_t + eps_{i,t}`` whose parameters are
-       resampled from the empirical Tier-A cross-section (a "typical
-       developed market" draw) and whose residuals inherit that donor's
-       cross-asset covariance.
-    3. Coverage starts at the later of the panel start and a documented
-       market-inception year, so the synthetic cross-section reproduces the
-       staggered entry of the real developed-market universe.
-    """
-    data_cfg = cfg["data"]
-    years = tier_a.years
-    rng = np.random.default_rng(int(data_cfg["extension"]["seed"]))
-    factors = world_factors(tier_a)
-    fits = fit_factor_model(tier_a)
-    clio = load_clio_wide(data_cfg["clio_inflation"])
-    clio_yields = load_clio_wide(data_cfg["clio_bond_yield"])
-
-    isos = list(TIER_B_SPEC)
-    notes: List[str] = []
-    n_t, n_b = years.size, len(isos)
-    dom_eq = np.full((n_t, n_b), np.nan)
-    bond = np.full((n_t, n_b), np.nan)
-    bill = np.full((n_t, n_b), np.nan)
-    inflation = np.full((n_t, n_b), np.nan)
-    #: True where that country-year's inflation came from a published price
-    #: index rather than from the factor model. It gates the observed flag on
-    #: every *real* return built here: a genuine nominal yield deflated by a
-    #: drawn CPI is not an observation.
-    empirical_inflation = np.zeros((n_t, n_b), dtype=bool)
-
-    world_infl = factors["inflation"]
-    keys = list(CORE_SERIES)
-    idx_of = {k: i for i, k in enumerate(keys)}
-
-    for b, iso in enumerate(isos):
-        donor = fits[int(rng.integers(len(fits)))]
-        start_year = max(int(years[0]), int(TIER_B_SPEC[iso][2]))
-        active = years >= start_year
-
-        # --- inflation: empirical where a primary source exists -----------
-        infl = _jst_inflation_for(iso, jst, years)
-        if not np.isfinite(infl).any():
-            infl = _clio_inflation_for(iso, clio, years)
-        infl_missing = ~np.isfinite(infl) & active
-        if infl_missing.any():
-            sd = float(np.sqrt(max(donor.resid_cov[idx_of["inflation"],
-                                                   idx_of["inflation"]], 1e-8)))
-            draw = (donor.alpha["inflation"]
-                    + donor.beta["inflation"] * np.nan_to_num(world_infl)
-                    + rng.normal(0.0, sd, size=n_t))
-            infl = np.where(infl_missing, draw, infl)
-        inflation[:, b] = np.where(active, infl, np.nan)
-        empirical_inflation[:, b] = active & ~infl_missing & np.isfinite(infl)
-        n_active = int(active.sum())
-        n_empirical = int((active & ~infl_missing).sum()) if n_active else 0
-        share = n_empirical / n_active if n_active else 0.0
-        source = "JST CPI" if iso in ("CAN", "IRL") else (
-            "Clio-Infra CPI" if TIER_B_SPEC[iso][1] else "none")
-        notes.append(
-            f"Tier-B calibrated: inflation {source} "
-            f"({share:.0%} of {n_active} active years empirical, remainder "
-            f"factor-model); equity/bond/bill simulated from donor "
-            f"{donor.iso}; market inception {start_year}"
-        )
-
-        # --- asset returns: factor model with donor residual covariance ---
-        sub_keys = ["dom_eq", "bond", "bill"]
-        sub_idx = [idx_of[k] for k in sub_keys]
-        cov = donor.resid_cov[np.ix_(sub_idx, sub_idx)]
-        cov = cov + np.eye(len(sub_keys)) * 1e-10
-        try:
-            chol = np.linalg.cholesky(cov)
-        except np.linalg.LinAlgError:  # pragma: no cover - degenerate donors
-            chol = np.diag(np.sqrt(np.clip(np.diag(cov), 1e-10, None)))
-        shocks = rng.standard_normal((n_t, len(sub_keys))) @ chol.T
-        for j, key in enumerate(sub_keys):
-            fitted = (donor.alpha[key]
-                      + donor.beta[key] * np.nan_to_num(factors[key])
-                      + shocks[:, j])
-            fitted = np.maximum(fitted, GROSS_RETURN_FLOOR - 1.0)
-            target = {"dom_eq": dom_eq, "bond": bond, "bill": bill}[key]
-            target[:, b] = np.where(active & np.isfinite(factors[key]),
-                                    fitted, np.nan)
-
-    # ---- replace simulated series with observed ones where they exist -----
-    # Four of these countries do have real interest-rate histories, in the
-    # macro file (Canada, Ireland) or in Clio-Infra (New Zealand, Austria).
-    # A bond return follows from a long yield and a duration; a bill return is
-    # a short rate. Simulating a series the sources can supply would be
-    # indefensible, so those cells are overwritten and recorded.
-    duration = float(data_cfg.get("bond_duration_years", 7.0))
-    observed_mask = {key: np.zeros((n_t, n_b), dtype=bool)
-                     for key in ("dom_eq", "bond", "bill", "inflation")}
-    for b, iso in enumerate(isos):
-        recovered: Dict[str, np.ndarray] = {}
-        if iso in obs.JST_RATE_ONLY:
-            recovered = obs.rates_from_jst(jst, iso, years, duration)
-        else:
-            column = next((c for c, code in obs.CLIO_BOND_COUNTRIES.items()
-                           if code == iso), None)
-            if column is not None:
-                recovered = {"bond": obs.bond_from_clio(
-                    clio_yields, column, years, inflation[:, b], duration)}
-        # A real return is observed only if *both* its nominal series and its
-        # deflator are. Years whose CPI came from the factor model keep the
-        # simulated return rather than a half-observed one.
-        active = empirical_inflation[:, b]
-        for key, values in recovered.items():
-            target = {"dom_eq": dom_eq, "bond": bond, "bill": bill}[key]
-            usable = np.isfinite(values) & active
-            if not usable.any():
-                continue
-            target[usable, b] = values[usable]
-            observed_mask[key][usable, b] = True
-            source = ("JST rates" if iso in obs.JST_RATE_ONLY
-                      else "Clio-Infra yields")
-            notes[b] += (f"; {key} OBSERVED from {source} "
-                         f"({int(usable.sum())} years)")
-    observed_mask["inflation"] = empirical_inflation.copy()
-
-    # Nominal CPI level and USD exchange rate are needed to fold Tier-B
-    # countries into the international equity leg.  CPI is cumulated from
-    # the inflation series; the USD rate is cumulated from a PPP-consistent
-    # rule (relative inflation against the world basket), which keeps the
-    # real exchange rate stationary by construction for synthetic markets.
-    cpi = np.full((n_t, n_b), np.nan)
-    xrusd = np.full((n_t, n_b), np.nan)
-    world_infl_filled = np.nan_to_num(world_infl)
-    for b in range(n_b):
-        active = np.isfinite(inflation[:, b])
-        if not active.any():
-            continue
-        first = int(np.flatnonzero(active)[0])
-        level, fx = 100.0, 1.0
-        for t in range(first, n_t):
-            if not active[t]:
-                break
-            level *= (1.0 + inflation[t, b])
-            fx *= (1.0 + inflation[t, b]) / (1.0 + world_infl_filled[t])
-            cpi[t, b] = level
-            xrusd[t, b] = fx
-    return (np.array(isos, dtype=object), dom_eq, bond, bill,
-            inflation, cpi, xrusd, tuple(notes), observed_mask)
-
-
 # ---------------------------------------------------------------------------
 # Panel assembly
 # ---------------------------------------------------------------------------
@@ -961,122 +718,39 @@ def _fx_gain_from_levels(xrusd: np.ndarray) -> np.ndarray:
 def build_panel(cfg: Mapping[str, Any], mode: str | None = None,
                 hedge_ratio: float | None = None,
                 hedge_cost: float | None = None) -> Panel:
-    """Build the requested panel.
+    """Build the country panel.
+
+    Every country in it has a recorded equity, bond, bill and inflation
+    history. There is no generated block and no ``mode`` that produces one:
+    the panel used to carry twenty-two developed markets whose returns were
+    drawn from a factor model, and those are gone. See
+    :data:`REMOVED_SIMULATED`.
 
     Parameters
     ----------
     mode:
-        ``"jst16"`` returns the fully empirical panel; ``"dev38"`` appends
-        the calibrated developed-market extension and *recomputes* the
-        international equity leg over the enlarged cross-section.  Defaults
-        to ``cfg["bootstrap"]["panel"]``.
+        Accepted for backward compatibility and for the robustness harness,
+        which names panels by string. ``"jst16"`` and ``"observed"`` both
+        mean the only panel there is; ``"dev38"`` names the simulated panel
+        and is refused with an explanation rather than silently aliased, so a
+        stale config cannot quietly resurrect it.
     """
     mode = mode or cfg["bootstrap"]["panel"]
+    if mode == "dev38":
+        raise ValueError(
+            "panel 'dev38' no longer exists: its twenty-two extra countries "
+            "had factor-model returns rather than recorded ones and were "
+            "removed. Use 'observed' (or its old name 'jst16')."
+        )
+    if mode not in ("jst16", "observed"):
+        raise ValueError(
+            f"unknown panel mode {mode!r}; expected 'observed' or 'jst16'")
     data_cfg = cfg["data"]
     hedge_ratio = float(data_cfg.get("hedge_ratio", 0.0)
                         if hedge_ratio is None else hedge_ratio)
     hedge_cost = float(data_cfg.get("hedge_cost", 0.0)
                        if hedge_cost is None else hedge_cost)
-    tier_a = build_tier_a(cfg, hedge_ratio, hedge_cost)
-    if mode == "jst16":
-        return tier_a
-    if mode != "dev38":
-        raise ValueError(f"unknown panel mode {mode!r}")
-    if not cfg["data"]["extension"]["enabled"]:
-        raise ValueError("dev38 requested but data.extension.enabled is false")
-
-    jst = add_real_returns(load_jst(cfg))
-    (b_iso, b_eq, b_bond, b_bill, b_infl, b_cpi, b_fx,
-     b_notes, b_observed) = build_tier_b(tier_a, cfg, jst)
-
-    years = tier_a.years
-    isos = list(tier_a.countries) + [str(i) for i in b_iso]
-    tiers = ["A"] * tier_a.n_countries + ["B"] * len(b_iso)
-    notes = list(tier_a.provenance) + list(b_notes)
-
-    dom_eq = np.column_stack([tier_a.dom_eq, b_eq])
-    bond = np.column_stack([tier_a.bond, b_bond])
-    bill = np.column_stack([tier_a.bill, b_bill])
-    inflation = np.column_stack([tier_a.inflation, b_infl])
-
-    # Re-derive the nominal inputs needed for the international leg.
-    jst_fx = _usd_gross_equity(jst)
-    window = jst_fx[jst_fx["year"].between(years[0] - 1, years[-1])]
-    a_usd_gross = _pivot(window, "usd_gross_eq", years, tier_a.countries)
-    a_fx_gain = _pivot(window, "fx_gain", years, tier_a.countries)
-    a_cpi = _pivot(window, "cpi", years, tier_a.countries)
-    a_xrusd = _pivot(window, "xrusd", years, tier_a.countries)
-
-    b_fx_gain = _fx_gain_from_levels(b_fx)
-    b_nominal_eq = (1.0 + b_eq) * (1.0 + b_infl) - 1.0
-    b_usd_gross = (1.0 + b_nominal_eq) * b_fx_gain
-
-    usd_gross = np.column_stack([a_usd_gross, b_usd_gross])
-    fx_gain = np.column_stack([a_fx_gain, b_fx_gain])
-    cpi = np.column_stack([a_cpi, b_cpi])
-    xrusd = np.column_stack([a_xrusd, b_fx])
-
-    winsor = float(cfg["data"].get("international_winsor_pct", 0.0))
-    intl_eq = build_international_leg(
-        usd_gross, fx_gain, inflation,
-        weighting=cfg["data"]["international_weighting"],
-        winsor_pct=winsor,
-    )
-    if hedge_ratio > 0.0:
-        a_eq_tr = _pivot(window, "eq_tr", years, tier_a.countries)
-        a_bill_nom = _pivot(window, "bill_rate", years, tier_a.countries)
-        b_bill_nominal = (1.0 + b_bill) * (1.0 + b_infl) - 1.0
-        hedged = build_hedged_international_leg(
-            np.column_stack([a_eq_tr, b_nominal_eq]),
-            np.column_stack([a_bill_nom, b_bill_nominal]),
-            inflation, hedge_cost=hedge_cost, winsor_pct=winsor)
-        intl_eq = blend_international_legs(intl_eq, hedged, hedge_ratio)
-    rer = build_real_exchange_rate(cpi, xrusd)
-
-    available = (
-        np.isfinite(dom_eq) & np.isfinite(intl_eq) & np.isfinite(bond)
-        & np.isfinite(bill) & np.isfinite(inflation)
-    )
-    # Tier-A cells are observed by construction; the simulated block carries
-    # its own per-cell mask, with the international leg counted as observed
-    # only where it is an average over observed markets -- which, being a
-    # cross-country average, it never wholly is. It is therefore recorded
-    # separately by `src.provenance` rather than forced into a binary here.
-    n_a = tier_a.n_countries
-    observed = {}
-    for key in ("dom_eq", "bond", "bill", "inflation"):
-        block = np.zeros((years.size, len(isos)), dtype=bool)
-        block[:, :n_a] = True
-        block[:, n_a:] = b_observed[key]
-        observed[key] = block
-    observed["intl_eq"] = np.zeros((years.size, len(isos)), dtype=bool)
-
-    tiers = derive_tiers(observed, available, tiers)
-
-    keep = available.sum(axis=0) >= int(cfg["data"]["min_observations"])
-    idx = np.flatnonzero(keep)
-    if idx.size != len(isos):
-        LOGGER.warning(
-            "dropping countries with < %s usable years: %s",
-            cfg["data"]["min_observations"],
-            [isos[i] for i in range(len(isos)) if i not in set(idx.tolist())],
-        )
-
-    return Panel(
-        years=years,
-        countries=tuple(isos[i] for i in idx),
-        tier=tuple(tiers[i] for i in idx),
-        dom_eq=dom_eq[:, idx],
-        intl_eq=intl_eq[:, idx],
-        bond=bond[:, idx],
-        bill=bill[:, idx],
-        inflation=inflation[:, idx],
-        real_exchange_rate=rer[:, idx],
-        available=available[:, idx],
-        name="dev38",
-        provenance=tuple(notes[i] for i in idx),
-        observed={k: v[:, idx] for k, v in observed.items()},
-    )
+    return build_tier_a(cfg, hedge_ratio, hedge_cost)
 
 
 # ---------------------------------------------------------------------------

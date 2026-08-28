@@ -402,42 +402,92 @@ def wage_summary(audit: pd.DataFrame, cfg: Mapping[str, Any]) -> Dict[str, Any]:
     }
 
 
-def recovered_series(panel: dl.Panel) -> pd.DataFrame:
-    """What was rebuilt from published rates rather than generated.
+def unusable_observed_series(cfg: Mapping[str, Any],
+                             jst: pd.DataFrame) -> pd.DataFrame:
+    """Real series that exist in the sources but cannot enter the panel.
 
-    One row per recovered country-series: the source, the span, and how many
-    country-years stopped being simulated because of it. Empty when nothing was
-    recovered, which is the correct output for a wholly empirical panel.
+    Four of the removed countries -- Austria, Canada, Ireland and New Zealand
+    -- do have recorded interest-rate histories: long-term yields and short
+    rates in the macro file for two of them, Clio-Infra long yields for the
+    other two. A bond total return follows from a yield and a duration, a bill
+    return is a lagged short rate, and deflating both by that country's own
+    price index gives a real return that was measured.
+
+    None of that gets them into the panel. A lifecycle investor needs a
+    domestic *equity* return, no source available here carries one for these
+    countries, and inventing it is the practice this project removed. They are
+    reported so the reader can see what was checked and why it was not enough.
     """
-    years = np.asarray(panel.years)
-    cells = observed_cells(panel)
+    data = cfg["data"]
+    years = np.arange(int(data["start_year"]), int(data["end_year"]) + 1)
+    duration = float(data.get("bond_duration_years", 7.0))
+    clio = dl.load_clio_wide(data["clio_bond_yield"])
     rows: List[Dict[str, Any]] = []
-    for i, iso in enumerate(panel.countries):
-        if panel.tier[i] != "B":
-            continue
-        note = panel.provenance[i] if i < len(panel.provenance) else ""
-        source = ("Jordà–Schularick–Taylor yields and short rates"
-                  if "JST rates" in note else "Clio-Infra bond yields")
-        for key, values in cells.items():
-            column = values[:, i]
-            n = int(column.sum())
-            if not n:
+    for iso in dl.REMOVED_SIMULATED:
+        recovered: Dict[str, np.ndarray] = {}
+        source = ""
+        if iso in obs.JST_RATE_ONLY:
+            recovered = obs.rates_from_jst(jst, iso, years, duration)
+            source = "Jordà–Schularick–Taylor yields and short rates"
+        else:
+            column = next((c for c, code in obs.CLIO_BOND_COUNTRIES.items()
+                           if code == iso), None)
+            if column is not None:
+                inflation = _clio_country_inflation(cfg, iso, years)
+                recovered = {"bond": obs.bond_from_clio(
+                    clio, column, years, inflation, duration)}
+                source = "Clio-Infra bond yields"
+        for key, values in recovered.items():
+            finite = np.isfinite(values)
+            if not finite.any():
                 continue
             rows.append({
                 "iso": iso,
                 "country": dl.ISO_TO_NAME.get(iso, iso),
                 "series": key,
                 "source": source,
-                "first_year": int(years[column].min()),
-                "last_year": int(years[column].max()),
-                "observed_years": n,
+                "first_year": int(years[finite].min()),
+                "last_year": int(years[finite].max()),
+                "observed_years": int(finite.sum()),
+                "equity_available": False,
             })
+    columns = ["iso", "country", "series", "source", "first_year", "last_year",
+               "observed_years", "equity_available"]
     if not rows:
-        return pd.DataFrame(columns=["iso", "country", "series", "source",
-                                     "first_year", "last_year",
-                                     "observed_years"])
+        return pd.DataFrame(columns=columns)
     return pd.DataFrame.from_records(rows).sort_values(["iso", "series"]) \
         .reset_index(drop=True)
+
+
+def _clio_country_inflation(cfg: Mapping[str, Any], iso: str,
+                            years: np.ndarray) -> np.ndarray:
+    """That country's own Clio-Infra CPI inflation, or NaN where absent."""
+    names = {code: name for name, code in obs.CLIO_BOND_COUNTRIES.items()}
+    column = names.get(iso)
+    if column is None:
+        return np.full(years.size, np.nan)
+    clio = dl.load_clio_wide(cfg["data"]["clio_inflation"])
+    if column not in clio.columns:
+        return np.full(years.size, np.nan)
+    return clio[column].reindex(years).to_numpy(dtype=float)
+
+
+def generated_cells(panel: dl.Panel) -> pd.DataFrame:
+    """Every panel cell that is available but not observed.
+
+    Expected to be empty, and reported rather than asserted so that the
+    document states a measured fact instead of a hope. A non-empty result
+    means a generated block has come back into the panel.
+    """
+    years = np.asarray(panel.years)
+    rows: List[Dict[str, Any]] = []
+    for key, values in observed_cells(panel).items():
+        gap = panel.available & ~values
+        for t, i in zip(*np.nonzero(gap)):
+            rows.append({"series": key, "iso": panel.countries[i],
+                         "year": int(years[t])})
+    return pd.DataFrame.from_records(rows) if rows else pd.DataFrame(
+        columns=["series", "iso", "year"])
 
 
 def _returns_source(tier: str, seen: Mapping[str, int]) -> str:

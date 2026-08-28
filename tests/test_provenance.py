@@ -8,6 +8,8 @@ reported as cleaner than it is.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -128,36 +130,60 @@ class TestCountryProvenance:
                      ["inflation_empirical_share"].iloc[0]) == pytest.approx(1.0)
 
 
-class TestRecoveredSeries:
-    def test_it_reports_only_the_partly_observed_countries(self, partial_panel
-                                                           ) -> None:
-        frame = pv.recovered_series(partial_panel)
+ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture(scope="module")
+def real_cfg():
+    """The live config, skipped when the raw workbook is not checked out."""
+    if not (ROOT / "data" / "raw" / "JST_macrohistory.xlsx").exists():
+        pytest.skip("raw JST workbook is not present")
+    return dl.load_config(ROOT / "config.yaml")
+
+
+class TestGeneratedCells:
+    def test_a_fully_observed_panel_has_none(self, observed_panel) -> None:
+        """The claim docs/14 makes about the panel, tested rather than hoped."""
+        assert pv.generated_cells(observed_panel).empty
+
+    def test_it_finds_a_generated_block_if_one_returns(self, partial_panel
+                                                       ) -> None:
+        frame = pv.generated_cells(partial_panel)
+        assert not frame.empty
+        assert set(frame["series"]) == {"dom_eq"}
         assert set(frame["iso"]) == {partial_panel.countries[2]}
-        assert set(frame["series"]) == {"bond", "bill"}, (
-            "equity is simulated for this country and must not be listed"
-        )
 
-    def test_it_counts_the_years_that_stopped_being_simulated(
-            self, partial_panel) -> None:
-        frame = pv.recovered_series(partial_panel)
+    def test_it_counts_one_row_per_cell(self, partial_panel) -> None:
         usable = int(partial_panel.available[:, 2].sum())
-        assert int(frame["observed_years"].sum()) == 2 * usable
+        assert len(pv.generated_cells(partial_panel)) == usable
 
-    def test_a_panel_with_nothing_recovered_gives_an_empty_frame(
-            self, mixed_panel) -> None:
-        frame = pv.recovered_series(mixed_panel)
-        assert frame.empty
-        assert "observed_years" in frame.columns, (
-            "callers sum this column, so it must exist even when empty"
+    def test_the_empty_frame_still_has_its_columns(self, observed_panel
+                                                   ) -> None:
+        """Callers read .nunique() off these even when nothing is wrong."""
+        frame = pv.generated_cells(observed_panel)
+        assert list(frame.columns) == ["series", "iso", "year"]
+
+
+class TestUnusableSeries:
+    def test_it_reports_the_rate_histories_that_cannot_be_used(
+            self, real_cfg) -> None:
+        jst = dl.load_jst(real_cfg)
+        frame = pv.unusable_observed_series(real_cfg, jst)
+        assert set(frame["iso"]) <= set(dl.REMOVED_SIMULATED), (
+            "only removed countries belong here; a panel country would mean "
+            "the panel is missing data it has"
         )
+        assert (frame["series"] != "dom_eq").all(), (
+            "no equity is recoverable for any of them -- that is why they "
+            "cannot come back"
+        )
+        assert not frame["equity_available"].any()
 
-    def test_the_span_comes_from_the_mask_not_the_calendar(self, partial_panel
-                                                           ) -> None:
-        frame = pv.recovered_series(partial_panel).set_index("series")
-        years = np.asarray(partial_panel.years)
-        column = partial_panel.available[:, 2]
-        assert int(frame.loc["bond", "first_year"]) == int(years[column].min())
-        assert int(frame.loc["bond", "last_year"]) == int(years[column].max())
+    def test_every_reported_series_is_long_enough_to_matter(self, real_cfg
+                                                            ) -> None:
+        frame = pv.unusable_observed_series(real_cfg, dl.load_jst(real_cfg))
+        assert (frame["observed_years"] >= 30).all()
+        assert (frame["last_year"] >= frame["first_year"]).all()
 
 
 class TestHousingAudit:

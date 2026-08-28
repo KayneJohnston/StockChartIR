@@ -1817,7 +1817,8 @@ def step14_provenance(cfg: Dict[str, Any],
     countries = pvn.country_provenance(panel)
     era = pvn.simulated_share_by_era(panel)
     contamination = pvn.international_leg_contamination(panel)
-    recovered = pvn.recovered_series(panel)
+    unusable = pvn.unusable_observed_series(cfg, dl.load_jst(cfg))
+    generated = pvn.generated_cells(panel)
     housing = pvn.housing_audit(raw, panel)
     wages = pvn.wage_audit(raw, panel, cfg)
     anchors = pvn.anchor_check(raw)
@@ -1833,7 +1834,14 @@ def step14_provenance(cfg: Dict[str, Any],
         failed = list(anchors[~anchors["within_tolerance"]]["what"])
         LOGGER.warning("provenance: anchor checks FAILED for %s", failed)
 
-    # The comparison that decides whether any of this matters.
+    if len(generated):
+        LOGGER.error("provenance: %d panel cells are available but not "
+                     "observed; a generated block has returned",
+                     len(generated))
+
+    # There is no second panel to compare against any more: the simulated one
+    # was removed rather than reported alongside. What the headline needs from
+    # this step is the advantage itself, on the only panel there is.
     gamma = float(cfg["utility"]["baseline_risk_aversion"])
     column = f"cec_crra_gamma{gamma:g}"
     # Read from state when step 4 ran in the same session, and from its table
@@ -1842,19 +1850,7 @@ def step14_provenance(cfg: Dict[str, Any],
     headline = state.get("headline")
     if headline is None:
         headline = pd.read_csv(tables_dir / "headline_lifecycle_metrics.csv")
-    dev38 = headline.set_index("strategy")[column]
-    jst16 = pd.read_csv(
-        tables_dir / "robustness_panel_jst16_fully_empirical_countries_only.csv"
-    ).set_index("strategy")[column]
-    shared = [k for k in dev38.index if k in jst16.index]
-    labels = dict(zip(headline["strategy"], headline["label"]))
-    comparison = pd.DataFrame({
-        "strategy": [labels.get(k, k) for k in shared],
-        "cec_dev38": [float(dev38[k]) for k in shared],
-        "cec_jst16": [float(jst16[k]) for k in shared],
-    })
-    comparison["difference_pct"] = (comparison["cec_jst16"]
-                                    / comparison["cec_dev38"] - 1.0) * 100.0
+    observed_cec = headline.set_index("strategy")[column]
 
     def advantage(series: pd.Series) -> float:
         return (float(series["balanced_all_equity"])
@@ -1866,13 +1862,13 @@ def step14_provenance(cfg: Dict[str, Any],
                         (countries, "provenance_by_country"),
                         (era, "provenance_by_era"),
                         (contamination, "provenance_intl_contamination"),
-                        (recovered, "provenance_recovered_series"),
+                        (unusable, "provenance_unusable_series"),
+                        (generated, "provenance_generated_cells"),
                         (housing, "provenance_housing_audit"),
                         (wages, "provenance_wage_audit"),
                         (anchors, "provenance_anchor_checks"),
                         (identity, "provenance_identity_check"),
-                        (tail, "provenance_tail_variance"),
-                        (comparison, "provenance_panel_comparison")):
+                        (tail, "provenance_tail_variance")):
         _save_table(frame, tables, name)
 
     figures = [str(plots.plot_provenance(era, contamination, tail, countries,
@@ -1886,19 +1882,18 @@ def step14_provenance(cfg: Dict[str, Any],
         Path("docs") / "14_data_provenance.md", cfg,
         {"digests": digests, "coverage": coverage, "countries": countries,
          "era": era, "contamination": contamination, "anchors": anchors,
-         "recovered": recovered, "housing": housing, "wages": wages,
-         "identity": identity, "tail": tail, "panel_comparison": comparison},
+         "unusable": unusable, "generated": generated,
+         "housing": housing, "wages": wages,
+         "identity": identity, "tail": tail},
         figures,
         {"elapsed_seconds": elapsed, "summary": summary,
          "tail_verdict": verdict, "housing": pvn.housing_summary(housing),
          "wages": pvn.wage_summary(wages, cfg),
-         "advantage_dev38": advantage(dev38),
-         "advantage_jst16": advantage(jst16)})
-    LOGGER.info("docs/14 written (%.0fs); %.1f%% of country-years simulated, "
-                "%.1f%% of the international leg", elapsed,
-                100 * summary["share_country_years_simulated"],
-                100 * float(contamination[contamination["era"] == "whole panel"]
-                            ["mean_synthetic_share_of_intl_leg"].iloc[0]))
+         "advantage": advantage(observed_cec)})
+    LOGGER.info("docs/14 written (%.0fs); %d of %d return cells generated "
+                "across %d countries", elapsed,
+                summary["return_cells_simulated"], summary["return_cells"],
+                summary["n_countries"])
     state.update({"provenance_summary": summary,
                   "provenance_countries": countries})
     return state
