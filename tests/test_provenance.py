@@ -212,6 +212,71 @@ class TestHousingAudit:
         assert got["sd"] == pytest.approx(float(frame["sd"].median()))
 
 
+class TestWageAudit:
+    @pytest.fixture()
+    def jst_wages(self, observed_panel) -> pd.DataFrame:
+        rows = []
+        for iso in observed_panel.countries:
+            for i, year in enumerate(observed_panel.years):
+                rows.append({"iso": iso, "year": int(year),
+                             "wage": 100.0 * 1.05 ** i,
+                             "cpi": 100.0 * 1.03 ** i})
+        return pd.DataFrame.from_records(rows)
+
+    def test_it_measures_the_growth_the_source_records(self, jst_wages,
+                                                       observed_panel,
+                                                       toy_config) -> None:
+        frame = pv.wage_audit(jst_wages, observed_panel, toy_config,
+                              min_years=5)
+        assert len(frame) == len(observed_panel.countries)
+        assert frame["geometric_mean"].to_numpy() == pytest.approx(
+            1.05 / 1.03 - 1.0)
+
+    def test_a_frame_without_wages_audits_nothing(self, jst_wages,
+                                                  observed_panel,
+                                                  toy_config) -> None:
+        frame = pv.wage_audit(jst_wages.drop(columns=["wage"]),
+                              observed_panel, toy_config, min_years=5)
+        assert frame.empty
+
+    def test_a_history_too_short_to_average_is_dropped(self, jst_wages,
+                                                       observed_panel,
+                                                       toy_config) -> None:
+        """A geometric mean over a handful of years measures the decade, not
+        the country."""
+        frame = pv.wage_audit(jst_wages, observed_panel, toy_config,
+                              min_years=pv.MIN_WAGE_YEARS)
+        assert frame.empty, "the toy panel is shorter than the threshold"
+
+    def test_the_model_profile_is_read_from_the_config(self, toy_config
+                                                       ) -> None:
+        got = pv.income_profile_growth(toy_config)
+        span = (int(toy_config["lifecycle"]["age_retire"])
+                - int(toy_config["lifecycle"]["age_start"]))
+        assert got["career_years"] == span - 1
+        assert got["peak_multiple"] >= got["end_multiple"], (
+            "a concave profile cannot end above its own peak"
+        )
+
+    def test_the_summary_reports_both_sides_of_the_gap(self, jst_wages,
+                                                       observed_panel,
+                                                       toy_config) -> None:
+        frame = pv.wage_audit(jst_wages, observed_panel, toy_config,
+                              min_years=5)
+        got = pv.wage_summary(frame, toy_config)
+        assert got["measured"] == pytest.approx(1.05 / 1.03 - 1.0)
+        assert "model_implied_growth" in got
+        # The two components are reported as compounding, not as substitutes.
+        assert got["combined_growth"] == pytest.approx(
+            (1 + got["measured"]) * (1 + got["model_implied_growth"]) - 1)
+
+    def test_the_summary_of_an_empty_audit_still_carries_the_model(
+            self, toy_config) -> None:
+        got = pv.wage_summary(pd.DataFrame(), toy_config)
+        assert got["countries"] == 0
+        assert np.isfinite(got["model_implied_growth"])
+
+
 class TestPanelShares:
     def test_shares_are_consistent_with_the_availability_mask(self, mixed_panel
                                                               ) -> None:

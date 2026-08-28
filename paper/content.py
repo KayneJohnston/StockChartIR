@@ -834,6 +834,74 @@ def section_data(ctx: Any) -> List[Flowable]:
             "reported here rather than added to the investable set.",
             max_height=8.5 * cm))
 
+    wg = pr.get("wages", {})
+    if wg.get("countries"):
+        out.append(ctx.h3("3.6.3 The series that bears on our income model"))
+        out.append(ctx.p(
+            f"The same file carries a nominal wage index for all "
+            f"{wg['countries']} of its countries, including the two with no "
+            f"return series. Deflated by each country's own consumer prices it "
+            f"measures economy-wide <b>real wage growth</b> over "
+            f"{wg['country_years']:,} country-years "
+            f"({wg['first_year']}–{wg['last_year']}). The median country "
+            f"compounded real wages at <b>{pc(wg['measured'], 2)} a year</b>, "
+            f"from {pc(wg['lowest'], 2)} ({wg['lowest_country']}) to "
+            f"{pc(wg['highest'], 2)} ({wg['highest_country']}) — which over "
+            f"the {wg['career_years']}-year career we simulate compounds to "
+            f"{f2(wg['career_multiple'], 2)}×."))
+        out.extend(ctx.table(
+            rows_from(wg["frame"],
+                      ["country", "years", "geometric_mean", "sd",
+                       "career_multiple"],
+                      ["Country", "Years", "Real wage growth p.a.", "s.d.",
+                       "Compounded over a career"],
+                      {"country": str, "years": lambda v: f"{int(v)}",
+                       "geometric_mean": lambda v: pc(v, 2),
+                       "sd": lambda v: pc(v, 1),
+                       "career_multiple": lambda v: f2(v, 2)}),
+            "Measured real wage growth, and what our income profile assumes",
+            note=(f"Geometric means, because they are what compound across a "
+                  f"career. Our deterministic profile implies "
+                  f"{pc(wg['model_growth'], 2)} a year over the same span."),
+            col_widths=[ctx.width * 0.26, ctx.width * 0.11, ctx.width * 0.24,
+                        ctx.width * 0.13, ctx.width * 0.26]))
+        out.append(ctx.p(
+            f"<b>Our income profile has no term for it.</b> Section 4.3 sets "
+            f"real labour income as a deterministic hump peaking at age "
+            f"{wg['model_peak_age']:.0f} at "
+            f"{f2(wg['model_peak_multiple'], 2)}× starting income and ending "
+            f"the career at {f2(wg['model_end_multiple'], 2)}× — an average of "
+            f"{pc(wg['model_growth'], 2)} a year. That is an <i>age</i> "
+            f"effect: the progression a worker earns by getting older. "
+            f"Economy-wide wage growth is a different quantity, lifting the "
+            f"whole distribution regardless of age, and in the "
+            f"Cocco–Gomes–Maenhout estimation our profile is taken from the "
+            f"two are separated by construction and are therefore additive. A "
+            f"worker facing both would see roughly "
+            f"{pc(wg['combined_growth'], 2)} a year."))
+        out.append(ctx.p(
+            "That caveat decides the size of the gap rather than its "
+            "existence: whether the components add depends on how the source "
+            "profile was estimated, and one fitted to a panel that still "
+            "carried time effects would already absorb part of the growth. "
+            "What is not in doubt is that the quantity is measurable, that "
+            "eighteen countries measure it, and that nothing in our pipeline "
+            "reads it."))
+        out.append(ctx.p(
+            "The direction is the one that matters for reading this paper. "
+            "Understating income growth understates human capital throughout "
+            "the career, and human capital is the bond-like asset in the "
+            "standard lifecycle argument — so having less of it <i>weakens</i> "
+            "the case for holding equity when young. The bias runs against our "
+            "conclusion rather than toward it, as most of the known biases "
+            "here do. The effect on the savings analysis of Sections 12 and 13 "
+            "is genuinely ambiguous, because faster income growth raises both "
+            "what a given savings rate accumulates and the consumption it must "
+            "replace, and this audit does not resolve it. Re-estimating the "
+            "income process is a modelling change rather than a data one, so "
+            "we record it as a quantified limitation rather than apply it "
+            "silently."))
+
     out.append(ctx.h3("Is the primary source genuine?"))
     out.append(ctx.p(
         "The workbook was obtained from a redistributed copy rather than "

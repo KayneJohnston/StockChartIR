@@ -1819,6 +1819,7 @@ def step14_provenance(cfg: Dict[str, Any],
     contamination = pvn.international_leg_contamination(panel)
     recovered = pvn.recovered_series(panel)
     housing = pvn.housing_audit(raw, panel)
+    wages = pvn.wage_audit(raw, panel, cfg)
     anchors = pvn.anchor_check(raw)
     identity = pvn.identity_check(raw)
     tail = pvn.tail_variance_test(
@@ -1867,6 +1868,7 @@ def step14_provenance(cfg: Dict[str, Any],
                         (contamination, "provenance_intl_contamination"),
                         (recovered, "provenance_recovered_series"),
                         (housing, "provenance_housing_audit"),
+                        (wages, "provenance_wage_audit"),
                         (anchors, "provenance_anchor_checks"),
                         (identity, "provenance_identity_check"),
                         (tail, "provenance_tail_variance"),
@@ -1884,11 +1886,12 @@ def step14_provenance(cfg: Dict[str, Any],
         Path("docs") / "14_data_provenance.md", cfg,
         {"digests": digests, "coverage": coverage, "countries": countries,
          "era": era, "contamination": contamination, "anchors": anchors,
-         "recovered": recovered, "housing": housing,
+         "recovered": recovered, "housing": housing, "wages": wages,
          "identity": identity, "tail": tail, "panel_comparison": comparison},
         figures,
         {"elapsed_seconds": elapsed, "summary": summary,
          "tail_verdict": verdict, "housing": pvn.housing_summary(housing),
+         "wages": pvn.wage_summary(wages, cfg),
          "advantage_dev38": advantage(dev38),
          "advantage_jst16": advantage(jst16)})
     LOGGER.info("docs/14 written (%.0fs); %.1f%% of country-years simulated, "

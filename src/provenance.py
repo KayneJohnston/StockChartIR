@@ -243,6 +243,104 @@ def housing_summary(audit: pd.DataFrame) -> Dict[str, Any]:
     }
 
 
+#: Shortest wage history worth taking a geometric mean of. Below about thirty
+#: years the mean is dominated by which decade the series happens to cover.
+MIN_WAGE_YEARS = 30
+
+
+def wage_audit(jst: pd.DataFrame, panel: dl.Panel, cfg: Mapping[str, Any],
+               min_years: int = MIN_WAGE_YEARS) -> pd.DataFrame:
+    """Measured real wage growth against what the income model assumes.
+
+    The lifecycle income profile is ``log Y(a) = log Y0 + b1·(a−a0) +
+    b2·(a−a0)²`` -- a pure *age* effect, capturing the career progression a
+    worker earns by getting older. It carries no term for the productivity
+    growth that lifts the entire wage distribution regardless of age, and the
+    macro file measures exactly that, for all eighteen of its countries.
+
+    One row per country: the geometric mean real wage growth it recorded and
+    what a career's worth of it compounds to. The two components are additive
+    in a fully specified income process, so this is a calibration gap rather
+    than a duplicate of the hump.
+    """
+    if "wage" not in jst.columns:
+        return pd.DataFrame()
+    years = np.asarray(panel.years)
+    isos = sorted({str(i) for i in jst["iso"].dropna().unique()})
+    growth = obs.wage_growth(jst, isos, years)
+    career = int(cfg["lifecycle"]["age_retire"]) - int(
+        cfg["lifecycle"]["age_start"])
+    rows: List[Dict[str, Any]] = []
+    for j, iso in enumerate(isos):
+        column = growth[:, j]
+        finite = np.isfinite(column)
+        if finite.sum() < int(min_years):
+            continue
+        # Geometric, because it is what compounds across a career.
+        geometric = float(np.exp(np.mean(np.log1p(column[finite]))) - 1.0)
+        rows.append({
+            "iso": iso,
+            "country": dl.ISO_TO_NAME.get(iso, iso),
+            "years": int(finite.sum()),
+            "first_year": int(years[finite].min()),
+            "last_year": int(years[finite].max()),
+            "mean": float(np.mean(column[finite])),
+            "geometric_mean": geometric,
+            "sd": float(np.std(column[finite], ddof=1)),
+            "career_multiple": float((1.0 + geometric) ** career),
+            "in_return_panel": iso in panel.countries,
+        })
+    return pd.DataFrame.from_records(rows)
+
+
+def income_profile_growth(cfg: Mapping[str, Any]) -> Dict[str, Any]:
+    """What the model's own age profile implies, for the same comparison."""
+    life = cfg["lifecycle"]
+    income = life["income"]
+    start, retire = int(life["age_start"]), int(life["age_retire"])
+    ages = np.arange(start, retire)
+    offset = ages - start
+    profile = np.exp(np.log(float(income["initial_real_income"]))
+                     + float(income["b1"]) * offset
+                     + float(income["b2"]) * offset ** 2)
+    span = profile.size - 1
+    b1, b2 = float(income["b1"]), float(income["b2"])
+    return {
+        "career_years": span,
+        "peak_age": float(start - b1 / (2.0 * b2)) if b2 else float("nan"),
+        "peak_multiple": float(profile.max() / profile[0]),
+        "end_multiple": float(profile[-1] / profile[0]),
+        "implied_growth": float((profile[-1] / profile[0]) ** (1.0 / span)
+                                - 1.0) if span else float("nan"),
+    }
+
+
+def wage_summary(audit: pd.DataFrame, cfg: Mapping[str, Any]) -> Dict[str, Any]:
+    """Headline numbers for the prose, including the gap being reported."""
+    model = income_profile_growth(cfg)
+    if audit.empty:
+        return {"countries": 0, **{f"model_{k}": v for k, v in model.items()}}
+    measured = float(audit["geometric_mean"].median())
+    combined = (1.0 + measured) * (1.0 + model["implied_growth"]) - 1.0
+    return {
+        "countries": int(len(audit)),
+        "country_years": int(audit["years"].sum()),
+        "first_year": int(audit["first_year"].min()),
+        "last_year": int(audit["last_year"].max()),
+        "measured": measured,
+        "lowest": float(audit["geometric_mean"].min()),
+        "highest": float(audit["geometric_mean"].max()),
+        "lowest_country": str(audit.loc[audit["geometric_mean"].idxmin(),
+                                        "country"]),
+        "highest_country": str(audit.loc[audit["geometric_mean"].idxmax(),
+                                         "country"]),
+        "career_multiple": float((1.0 + measured) ** model["career_years"]),
+        "outside_return_panel": int((~audit["in_return_panel"]).sum()),
+        "combined_growth": combined,
+        **{f"model_{k}": v for k, v in model.items()},
+    }
+
+
 def recovered_series(panel: dl.Panel) -> pd.DataFrame:
     """What was rebuilt from published rates rather than generated.
 

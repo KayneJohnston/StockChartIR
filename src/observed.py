@@ -216,6 +216,42 @@ def desmooth(series: np.ndarray, rho: float | None = None) -> np.ndarray:
     return out
 
 
+def wage_growth(jst: pd.DataFrame, isos: Sequence[str],
+                years: np.ndarray) -> np.ndarray:
+    """Real growth in the economy-wide wage index, ``(T, C)``.
+
+    The macro file carries a nominal wage index for all eighteen countries in
+    it, including the two with no return series. Deflating its growth rate by
+    the same country's consumer prices gives economy-wide *real* wage growth --
+    a directly measured quantity that the lifecycle model's income profile
+    currently has no term for.
+
+    This is not the same thing as the hump in that profile. The hump is
+    individual career progression, which a worker earns by getting older; this
+    is the productivity growth that lifts the whole wage distribution
+    regardless of age. A fully specified income process carries both.
+    """
+    if "wage" not in jst.columns:
+        raise KeyError(
+            "the frame has no 'wage' column; pass the workbook frame from "
+            "`data_loader.load_jst`, which retains it"
+        )
+    out = np.full((years.size, len(isos)), np.nan)
+    for j, iso in enumerate(isos):
+        block = jst[jst["iso"] == iso].sort_values("year")
+        if block.empty:
+            continue
+        wage = _aligned(block, "wage", years)
+        cpi = _aligned(block, "cpi", years)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            nominal = wage / np.roll(wage, 1) - 1.0
+            inflation = cpi / np.roll(cpi, 1) - 1.0
+        nominal[0] = np.nan
+        inflation[0] = np.nan
+        out[:, j] = _real(nominal, inflation)
+    return out
+
+
 def coverage_report(observed: Mapping[str, np.ndarray],
                     iso: str) -> Dict[str, Any]:
     """How many years each recovered series actually covers."""

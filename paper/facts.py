@@ -333,6 +333,48 @@ class Facts:
             "tail_p_value": p_value,
             "comparison": comparison,
             "housing": self._housing(),
+            "wages": self._wages(),
+        }
+
+    def _wages(self) -> Dict[str, Any]:
+        """Measured real wage growth against what the income model assumes."""
+        try:
+            audit = self.table("provenance_wage_audit")
+        except FileNotFoundError:                       # pragma: no cover
+            return {"countries": 0}
+        if audit.empty:
+            return {"countries": 0}
+        life = self.cfg["lifecycle"]
+        income = life["income"]
+        start, retire = int(life["age_start"]), int(life["age_retire"])
+        offset = np.arange(retire - start)
+        profile = np.exp(np.log(float(income["initial_real_income"]))
+                         + float(income["b1"]) * offset
+                         + float(income["b2"]) * offset ** 2)
+        span = profile.size - 1
+        model_growth = float((profile[-1] / profile[0]) ** (1.0 / span) - 1.0)
+        measured = float(audit["geometric_mean"].median())
+        return {
+            "countries": int(len(audit)),
+            "country_years": int(audit["years"].sum()),
+            "first_year": int(audit["first_year"].min()),
+            "last_year": int(audit["last_year"].max()),
+            "measured": measured,
+            "lowest": float(audit["geometric_mean"].min()),
+            "highest": float(audit["geometric_mean"].max()),
+            "lowest_country": str(
+                audit.loc[audit["geometric_mean"].idxmin(), "country"]),
+            "highest_country": str(
+                audit.loc[audit["geometric_mean"].idxmax(), "country"]),
+            "career_years": span,
+            "career_multiple": float((1.0 + measured) ** span),
+            "model_growth": model_growth,
+            "model_peak_age": float(
+                start - float(income["b1"]) / (2.0 * float(income["b2"]))),
+            "model_peak_multiple": float(profile.max() / profile[0]),
+            "model_end_multiple": float(profile[-1] / profile[0]),
+            "combined_growth": (1.0 + measured) * (1.0 + model_growth) - 1.0,
+            "frame": audit,
         }
 
     def _housing(self) -> Dict[str, Any]:

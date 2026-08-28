@@ -254,6 +254,51 @@ def test_housing_without_the_column_raises_rather_than_returning_nan():
 
 
 # ---------------------------------------------------------------------------
+# wage growth
+# ---------------------------------------------------------------------------
+@pytest.fixture()
+def jst_wages():
+    """Nominal wages rising 5% a year against prices rising 3%."""
+    years = np.arange(1990, 2001)
+    return pd.DataFrame({
+        "iso": ["XXX"] * years.size,
+        "year": years,
+        "wage": 100.0 * 1.05 ** np.arange(years.size),
+        "cpi": 100.0 * 1.03 ** np.arange(years.size),
+    })
+
+
+def test_wage_growth_is_deflated_by_the_countrys_own_prices(jst_wages):
+    years = np.arange(1990, 2001)
+    got = obs.wage_growth(jst_wages, ["XXX"], years)
+    assert np.isnan(got[0, 0]), "the first year has no previous wage"
+    assert got[1:, 0] == pytest.approx(1.05 / 1.03 - 1.0)
+
+
+def test_wage_growth_without_the_column_raises(jst_wages):
+    with pytest.raises(KeyError, match="wage"):
+        obs.wage_growth(jst_wages.drop(columns=["wage"]), ["XXX"],
+                        np.array([1990, 1991]))
+
+
+def test_wage_growth_of_an_absent_country_is_nan(jst_wages):
+    got = obs.wage_growth(jst_wages, ["XXX", "ZZZ"], np.arange(1990, 2001))
+    assert got.shape == (11, 2)
+    assert np.isnan(got[:, 1]).all()
+
+
+def test_wage_growth_does_not_borrow_another_countrys_prices(jst_wages):
+    other = jst_wages.copy()
+    other["iso"] = "YYY"
+    other["cpi"] = 100.0 * 1.40 ** np.arange(len(other))
+    combined = pd.concat([jst_wages, other], ignore_index=True)
+    years = np.arange(1990, 2001)
+    alone = obs.wage_growth(jst_wages, ["XXX"], years)
+    mixed = obs.wage_growth(combined, ["XXX"], years)
+    assert mixed[1:, 0] == pytest.approx(alone[1:, 0])
+
+
+# ---------------------------------------------------------------------------
 # summarise
 # ---------------------------------------------------------------------------
 def test_summarise_names_the_source_per_country():

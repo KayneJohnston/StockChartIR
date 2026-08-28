@@ -4510,8 +4510,10 @@ def write_doc_14(
     comparison = frames["panel_comparison"]
     recovered = frames.get("recovered", pd.DataFrame())
     housing = frames.get("housing", pd.DataFrame())
+    wages = frames.get("wages", pd.DataFrame())
     summary = notes["summary"]
     house = notes.get("housing", {})
+    wage = notes.get("wages", {})
     verdict = notes["tail_verdict"]
 
     digest_tbl = md_table(_compact(
@@ -4596,6 +4598,72 @@ def write_doc_14(
          "sd": "s.d. (as published)", "autocorrelation": "Autocorrelation",
          "sd_desmoothed": "s.d. de-smoothed", "equity_sd": "Equity s.d."}),
         floatfmt="{:.3f}") if len(housing) else "_Not audited._"
+
+    wage_tbl = md_table(_compact(
+        wages, ["country", "years", "first_year", "last_year",
+                "geometric_mean", "sd", "career_multiple"],
+        {"country": "Country", "years": "Years", "first_year": "From",
+         "last_year": "To", "geometric_mean": "Real wage growth p.a.",
+         "sd": "s.d.", "career_multiple": "Compounded over a career"}),
+        floatfmt="{:.4f}") if len(wages) else "_Not audited._"
+
+    wage_section = ""
+    if len(wages) and wage.get("countries"):
+        wage_section = f"""### 3.3 The series that bears on the income model
+
+The macro file also carries a **nominal wage index for all eighteen of its
+countries**, including the two with no return series. Deflated by the same
+country's consumer prices it gives economy-wide *real wage growth*, measured
+over {int(wage.get('country_years', 0)):,} country-years
+({int(wage.get('first_year', 0))}-{int(wage.get('last_year', 0))}).
+
+{wage_tbl}
+
+The median country compounded real wages at
+**{float(wage.get('measured', float('nan'))):.2%} a year**, from
+{float(wage.get('lowest', float('nan'))):.2%}
+({wage.get('lowest_country', '')}) to
+{float(wage.get('highest', float('nan'))):.2%}
+({wage.get('highest_country', '')}). Over the
+{int(wage.get('model_career_years', 0))}-year career this model simulates, the
+median rate compounds to
+**{float(wage.get('career_multiple', float('nan'))):.2f}x**.
+
+**The lifecycle income profile has no term for it.** `docs/03` section 3 sets
+real labour income as a deterministic hump,
+`log Y(a) = log Y0 + b1(a-a0) + b2(a-a0)^2`, peaking at age
+{float(wage.get('model_peak_age', float('nan'))):.0f} at
+{float(wage.get('model_peak_multiple', float('nan'))):.2f}x starting income and
+ending the career at {float(wage.get('model_end_multiple', float('nan'))):.2f}x
+-- an average of
+{float(wage.get('model_implied_growth', float('nan'))):.2%} a year. That is an
+*age* effect: the progression a worker earns by getting older. Economy-wide
+wage growth is a different thing, lifting the whole distribution regardless of
+age, and in the Cocco-Gomes-Maenhout estimation this profile is taken from, the
+two are separated by construction and are therefore additive. A worker facing
+both would see roughly
+{float(wage.get('combined_growth', float('nan'))):.2%} a year rather than
+{float(wage.get('model_implied_growth', float('nan'))):.2%}.
+
+That caveat is worth stating precisely, because it decides the size of the gap
+rather than its existence: whether the two components add depends on how the
+source profile was estimated, and a profile fitted to a panel that still
+carried time effects would already absorb part of the growth. What is not in
+doubt is that the number is measurable, that eighteen countries measure it, and
+that nothing in this pipeline reads it.
+
+**Which way it biases the result.** Understating income growth understates
+human capital throughout the career. Human capital is the bond-like asset in
+the standard lifecycle argument, so having less of it *weakens* the case for
+holding equity when young -- the same direction as the other known biases in
+this replication, and against the paper's conclusion rather than toward it.
+The effect on the savings analysis in `docs/10` and `docs/11` is genuinely
+ambiguous, because faster income growth raises both what a given savings rate
+accumulates and the consumption it has to replace, and this audit does not
+resolve that. Re-estimating the income process is a modelling change rather
+than a data-extraction one, so it is recorded here as a documented,
+quantified limitation and not silently applied.
+"""
 
     # Built ahead of the prose so the whole subsection can be omitted rather
     # than rendered as a row of zeros when the audit has nothing to report.
@@ -4744,6 +4812,7 @@ redistributed mirrors would have reproduced exactly the unverifiable provenance
 this document exists to warn about.
 
 {housing_section}
+{wage_section}
 ## 4. Is the workbook genuine?
 
 The file was obtained from a redistributed copy rather than downloaded from

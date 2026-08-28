@@ -87,18 +87,40 @@ draws from a randomly assigned observed donor, not series derived from anything
 those countries experienced.
 
 The audit prompted a sweep of the primary files for series the pipeline was not
-reading. Four more countries have real interest-rate histories in the sources
-even though their return series are absent -- Canada and Ireland in the
-Jordà-Schularick-Taylor macro file, New Zealand and Austria in Clio-Infra -- so
-their bonds and bills are now rebuilt from published yields and short rates
-rather than generated. That converted **531 country-years** from simulated to
-observed and cut the simulated share from 39.6% to 34.3%. Nothing was recovered
-for equity, which is the series the headline mechanism runs through, so the
-international-leg figure is unchanged. No new external source could be added:
-outbound access from the build environment is denied to the macrohistory host
-and every other bulk macro-data provider tested, and guessing at redistributed
-mirrors would have reproduced exactly the unverifiable provenance this audit
-exists to warn about.
+reading. It turned up three things.
+
+**Bonds and bills for four more countries.** Canada and Ireland carry a long
+yield, a short rate and a price index in the Jordà-Schularick-Taylor macro file
+but no return series; New Zealand and Austria carry a long yield in Clio-Infra.
+Their bonds and bills are now rebuilt from those published rates rather than
+generated, converting **531 country-years** from simulated to observed and
+cutting the simulated share from 39.6% to 34.3%. Nothing was recovered for
+equity -- the series the headline mechanism runs through -- so the
+international-leg figure is unchanged.
+
+**Housing total returns, 1,805 country-years across all 16 observed
+countries.** Fully empirical, and nothing in the project read them. Median real
+return 6.6% against 6.9% for the same countries' equity, at a standard
+deviation of 8.9% versus 21.0%. They stay out of the investable set and
+`docs/14` section 3.2 says why: median lag-one autocorrelation is +0.34 against
++0.06 for equity, and undoing that appraisal smoothing takes the standard
+deviation to 12.0%. Most of the apparent free lunch is a measurement artefact.
+
+**Real wage growth for all 18 macro countries, 2,269 country-years.** The
+median country compounded real wages at 1.41% a year. The lifecycle income
+profile has no term for it -- its hump is an *age* effect implying 1.18% a
+year, and in the Cocco-Gomes-Maenhout estimation it comes from the two are
+separate and additive. `docs/14` section 3.3 records this as a quantified
+limitation rather than applying it, because re-estimating the income process is
+a modelling change, not a data one. The bias runs *against* the paper's
+conclusion: less human capital weakens the case for early equity.
+
+No new external source could be added: outbound access from the build
+environment is denied to the macrohistory host and every other bulk macro-data
+provider tested, and guessing at redistributed mirrors would have reproduced
+exactly the unverifiable provenance this audit exists to warn about. Sixteen
+countries is the ceiling on observed *equity* here, and that is stated as a
+limit rather than worked around.
 
 The 16 countries with real Jordà-Schularick-Taylor return series pass every
 authenticity check -- five independently known annual returns land within
@@ -506,7 +528,7 @@ python main.py --config other.yaml  # a different parameterisation
 │   ├── provenance.py     # what is observed, what is simulated, and does it matter
 │   ├── plots.py          # publication-quality figures
 │   └── report.py         # Markdown report generation
-├── tests/                # 486 unit + integration tests
+├── tests/                # 510 unit + integration tests
 ├── results/
 │   ├── figures/          # 39 PNGs
 │   └── tables/           # 110+ CSVs
