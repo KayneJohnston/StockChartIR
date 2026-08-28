@@ -34,6 +34,15 @@ def _war_years_text() -> str:
     return " and ".join(f"{low}\u2013{high}" for low, high in WAR_YEARS)
 
 
+def _panel_wage_extremes(audit: pd.DataFrame) -> Dict[str, Any]:
+    """Delegate to the pipeline's own definition so the two cannot diverge."""
+    try:
+        from src.provenance import panel_wage_extremes
+    except ImportError:                                 # pragma: no cover
+        return {}
+    return panel_wage_extremes(audit)
+
+
 TABLES = Path("results/tables")
 FIGURES = Path("results/figures")
 
@@ -392,6 +401,7 @@ class Facts:
             "model_end_multiple": float(profile[-1] / profile[0]),
             "combined_growth": (1.0 + measured) * (1.0 + model_growth) - 1.0,
             "war_years": _war_years_text(),
+            **_panel_wage_extremes(audit),
             "frame": audit,
         }
 

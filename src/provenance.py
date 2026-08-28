@@ -311,8 +311,38 @@ def wage_audit(jst: pd.DataFrame, panel: dl.Panel, cfg: Mapping[str, Any],
             "sd": float(np.std(column[finite], ddof=1)),
             "career_multiple": float((1.0 + geometric) ** career),
             "in_return_panel": iso in panel.countries,
+            # The country's own largest single-year move, kept as columns
+            # rather than as frame attributes so it survives a round trip
+            # through CSV -- which is how the paper reads this table.
+            "best_year": int(years[finite][np.argmax(column[finite])]),
+            "best_value": float(np.max(column[finite])),
+            "worst_year": int(years[finite][np.argmin(column[finite])]),
+            "worst_value": float(np.min(column[finite])),
         })
     return pd.DataFrame.from_records(rows)
+
+
+def panel_wage_extremes(audit: pd.DataFrame) -> Dict[str, Any]:
+    """The single largest rise and fall anywhere in the wage panel.
+
+    Quoted in the prose as evidence that the war years dominate the spread, so
+    they are located from the data rather than written down. Read back out of
+    the audit's own per-country columns, which means it works identically on a
+    live frame and on one reloaded from CSV.
+    """
+    needed = {"best_value", "worst_value", "best_year", "worst_year"}
+    if audit.empty or not needed <= set(audit.columns):
+        return {}
+    best = audit.loc[audit["best_value"].idxmax()]
+    worst = audit.loc[audit["worst_value"].idxmin()]
+    return {
+        "extreme_highest_country": str(best["country"]),
+        "extreme_highest_year": int(best["best_year"]),
+        "extreme_highest_value": float(best["best_value"]),
+        "extreme_lowest_country": str(worst["country"]),
+        "extreme_lowest_year": int(worst["worst_year"]),
+        "extreme_lowest_value": float(worst["worst_value"]),
+    }
 
 
 def income_profile_growth(cfg: Mapping[str, Any]) -> Dict[str, Any]:
@@ -349,6 +379,7 @@ def wage_summary(audit: pd.DataFrame, cfg: Mapping[str, Any]) -> Dict[str, Any]:
         "measured_ex_war": ex_war,
         "war_shifted_by": ex_war - measured,
         "war_years": " and ".join(f"{low}-{high}" for low, high in WAR_YEARS),
+        **panel_wage_extremes(audit),
         "countries": int(len(audit)),
         "country_years": int(audit["years"].sum()),
         "first_year": int(audit["first_year"].min()),

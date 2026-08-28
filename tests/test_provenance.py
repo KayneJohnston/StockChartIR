@@ -310,6 +310,46 @@ class TestWageAudit:
         assert (frame["geometric_mean"] > frame["geometric_mean_ex_war"]).all()
         assert frame["geometric_mean_ex_war"].to_numpy() == pytest.approx(0.02)
 
+    def test_the_extremes_survive_a_csv_round_trip(self, jst_wages,
+                                                   observed_panel,
+                                                   toy_config) -> None:
+        """The paper reads this table back from disk, so frame attributes
+        would silently lose them."""
+        import io
+        frame = pv.wage_audit(jst_wages, observed_panel, toy_config,
+                              min_years=5)
+        live = pv.panel_wage_extremes(frame)
+        reloaded = pv.panel_wage_extremes(
+            pd.read_csv(io.StringIO(frame.to_csv(index=False))))
+        assert live.keys() == reloaded.keys()
+        for key in ("extreme_highest_country", "extreme_lowest_country",
+                    "extreme_highest_year", "extreme_lowest_year"):
+            assert live[key] == reloaded[key], key
+        # CSV is decimal text, so the values come back close rather than
+        # identical; what must not change is which observation they name.
+        for key in ("extreme_highest_value", "extreme_lowest_value"):
+            assert live[key] == pytest.approx(reloaded[key], rel=1e-9), key
+        assert live["extreme_highest_value"] >= live["extreme_lowest_value"]
+
+    def test_extremes_of_a_frame_without_the_columns_are_empty(self) -> None:
+        assert pv.panel_wage_extremes(pd.DataFrame()) == {}
+        assert pv.panel_wage_extremes(pd.DataFrame({"country": ["X"]})) == {}
+
+    def test_the_extremes_name_the_country_that_holds_them(
+            self, observed_panel, toy_config) -> None:
+        rows = []
+        for k, iso in enumerate(observed_panel.countries):
+            for i, year in enumerate(observed_panel.years):
+                # Only the last country gets a spike, so it must be named.
+                spike = 3.0 if (k == 2 and i == 5) else 1.01
+                rows.append({"iso": iso, "year": int(year),
+                             "wage": 100.0 * spike ** i, "cpi": 100.0})
+        frame = pv.wage_audit(pd.DataFrame.from_records(rows), observed_panel,
+                              toy_config, min_years=5)
+        got = pv.panel_wage_extremes(frame)
+        assert got["extreme_highest_country"] == dl.ISO_TO_NAME.get(
+            observed_panel.countries[2], observed_panel.countries[2])
+
     def test_the_summary_of_an_empty_audit_still_carries_the_model(
             self, toy_config) -> None:
         got = pv.wage_summary(pd.DataFrame(), toy_config)

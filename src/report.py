@@ -4636,7 +4636,12 @@ median rate compounds to
 
 **The war years carry more of that spread than the economics does**, which is
 why the table reports the series both ways. The largest single observations in
-the panel are Belgium 1919 (+151%) and Finland 1918 (-66%): a wage index
+the panel are {wage.get('extreme_highest_country', '')}
+{int(wage.get('extreme_highest_year', 0))}
+({float(wage.get('extreme_highest_value', float('nan'))):+.0%}) and
+{wage.get('extreme_lowest_country', '')}
+{int(wage.get('extreme_lowest_year', 0))}
+({float(wage.get('extreme_lowest_value', float('nan'))):+.0%}): a wage index
 spanning occupation, rationing, suppressed prices and post-war repricing is
 measuring those at least as much as it is measuring wages. Dropping
 {wage.get('war_years', 'the war years')} lifts the median to
