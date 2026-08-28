@@ -22,6 +22,7 @@ from typing import Any, Dict, List, Mapping, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
+from src import accumulation as acc
 from src import bootstrap as bs
 from src import data_loader as dl
 from src import glidepath as gp
@@ -69,6 +70,24 @@ def _apply_quick(cfg: Dict[str, Any]) -> Dict[str, Any]:
     if "saving" in cfg:
         cfg["saving"]["n_paths"] = 2000
         cfg["saving"]["shape_sweeps"] = 1
+    if "accumulation" in cfg:
+        cfg["accumulation"]["n_paths"] = 2000
+        cfg["accumulation"]["response_grids"] = {
+            "level": [0.0, 0.01], "proportional": [0.0, 0.1],
+            "log": [0.0, 0.1]}
+        cfg["accumulation"]["asymmetry"] = {"behind": [0.0, 0.1],
+                                            "ahead": [-0.05, 0.0, 0.1]}
+        cfg["accumulation"]["bands"] = [0.20]
+        cfg["accumulation"]["band_steps"] = [0.02, 0.05]
+        cfg["accumulation"]["target_factors"] = [1.0, 1.5]
+        cfg["accumulation"]["signal_grid"] = [0.0, 0.1]
+        cfg["accumulation"]["combination_grid"] = [0.0, 0.1]
+        cfg["accumulation"]["feasibility_widths"] = [0.0, 0.05, 0.30]
+        cfg["accumulation"]["age_windows"] = [[25, 39], [40, 62], [25, 62]]
+        cfg["accumulation"]["constant_rate_grid"] = [0.0, 0.05, 0.10, 0.20]
+        cfg["accumulation"]["strategy_interaction"] = ["balanced_all_equity",
+                                                       "bills_only"]
+        cfg["accumulation"]["income_volatility_factors"] = [0.5, 1.5]
     if "retirement_timing" in cfg:
         cfg["retirement_timing"]["n_paths"] = 4000
     if "hedging" in cfg:
@@ -1240,16 +1259,335 @@ def step10_saving(cfg: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Step 11
+# ---------------------------------------------------------------------------
+def _base_savings_schedule(cfg: Dict[str, Any], state: Dict[str, Any],
+                           spec: lc.LifecycleSpec, target_mean: float,
+                           gamma: float) -> Tuple[np.ndarray, str]:
+    """The deterministic profile that conditioning is measured on top of.
+
+    Step 10 already solved this, so it is reused when available -- from the
+    live pipeline state, or failing that from the table it wrote. Running
+    step 11 on its own falls back to a flat rate, which changes the base but
+    not the question being asked, so the fallback is named in the document
+    rather than hidden.
+    """
+    frame = state.get("saving_profiles")
+    if frame is None:
+        path = Path(cfg["run"]["table_dir"]) / "saving_solved_profiles.csv"
+        if path.exists():
+            frame = pd.read_csv(path)
+    if frame is not None and len(frame):
+        block = frame[np.isclose(frame["risk_aversion"], gamma)] \
+            .sort_values("age")
+        if len(block) >= spec.n_working:
+            schedule = np.full(spec.horizon, target_mean)
+            schedule[:spec.n_working] = \
+                block["savings_rate"].to_numpy(dtype=float)[:spec.n_working]
+            return schedule, "the solved age profile from docs/10"
+    return (np.full(spec.horizon, target_mean),
+            f"a flat {target_mean:.0%} rate (step 10 was not run)")
+
+
+def step11_accumulation(cfg: Dict[str, Any],
+                        state: Dict[str, Any]) -> Dict[str, Any]:
+    """Take the accumulation signal apart; write docs/11."""
+    acc_cfg = cfg.get("accumulation", {})
+    if not acc_cfg.get("enabled", False):
+        LOGGER.info("accumulation study disabled; skipping step 11")
+        return state
+    LOGGER.info("=== STEP 11: taking the accumulation signal apart ===")
+    started = time.perf_counter()
+
+    panel = state["panel"]
+    spec = dataclasses.replace(
+        state.get("spec") or lc.spec_from_config(cfg),
+        working_income_floor=float(acc_cfg["working_income_floor"]))
+    gammas = [float(g) for g in cfg["utility"]["risk_aversions"]]
+    baseline_gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    metric = f"cec_gamma{baseline_gamma:g}"
+    n_paths = int(acc_cfg["n_paths"])
+    target_mean = float(acc_cfg["target_mean_rate"])
+    floor, cap = float(acc_cfg["rate_floor"]), float(acc_cfg["rate_cap"])
+    tables = cfg["run"]["table_dir"]
+    figure_dir = cfg["run"]["figure_dir"]
+
+    sampler = bs.from_config(panel, cfg, horizon_years=spec.horizon)
+    paths = sampler.sample(n_paths,
+                           chunk_size=int(cfg["bootstrap"]["chunk_size"]))
+    rng = np.random.default_rng(int(cfg["run"]["seed"]))
+    income = rt.extended_income(
+        spec, n_paths, shocks=lc.draw_income_shocks(n_paths, spec.horizon, rng))
+    strategies = lc.build_strategies(cfg, spec)
+    strategy = strategies[str(acc_cfg["strategy"])]
+    fixed = rt.FixedAgeRule(age=spec.age_retire)
+
+    def simulate(rule, *, strat=None, inc=None, sp=None):
+        return rt.simulate_flexible(paths, strat or strategy, sp or spec,
+                                    income if inc is None else inc, fixed,
+                                    saving=rule)
+
+    def make_run(strat=None, inc=None, sp=None):
+        """A ``rule -> summary row`` callable for one arm of the study."""
+        def run(rule):
+            return rt.evaluate(simulate(rule, strat=strat, inc=inc, sp=sp),
+                               cfg, sp or spec, gammas)
+        return run
+
+    def frontier_for(run) -> pd.DataFrame:
+        rows = []
+        for rate in acc_cfg["constant_rate_grid"]:
+            row = dict(run(sav.ConstantRateRule(rate_value=float(rate))))
+            row["savings_rate"] = float(rate)
+            rows.append(row)
+        return pd.DataFrame.from_records(rows)
+
+    run = make_run()
+    frontier = frontier_for(run)
+    scorer = acc.MatchedScorer.from_frontier(frontier, metric)
+
+    base, base_label = _base_savings_schedule(cfg, state, spec, target_mean,
+                                              baseline_gamma)
+    baseline_outcome = simulate(sav.AgeProfileRule(base))
+    model_target = sav.wealth_to_income_target(baseline_outcome, income,
+                                               spec.horizon)
+    LOGGER.info("step 11 base profile: %s", base_label)
+
+    # --- 1. functional form -----------------------------------------------
+    forms = acc.sweep_response_forms(
+        run, metric, scorer, base, model_target,
+        {str(k): [float(v) for v in grid]
+         for k, grid in acc_cfg["response_grids"].items()},
+        floor=floor, cap=cap)
+    best_form_row = forms.loc[forms["matched_value_pct"].idxmax()]
+    best_form = str(best_form_row["form"])
+    best_k = float(best_form_row["sensitivity"])
+    LOGGER.info("best response form: %s, k=%g (%+.2f%%)", best_form, best_k,
+                float(best_form_row["matched_value_pct"]))
+
+    ratio_grid = np.linspace(0.2, 2.0, 19)
+    reference_year = min(20, spec.n_working - 1)
+    policy_rows: List[Dict[str, Any]] = []
+    for form in forms["form"].unique():
+        block = forms[forms["form"] == form]
+        k = float(block.loc[block["matched_value_pct"].idxmax(), "sensitivity"])
+        rule = acc.FundedRatioRule(target=model_target, base=base,
+                                   k_behind=k, form=str(form),
+                                   floor=floor, cap=cap)
+        rates = acc.policy_curve(rule, reference_year,
+                                 float(model_target[reference_year]),
+                                 ratio_grid)
+        policy_rows.extend({"form": str(form), "sensitivity": k,
+                            "age": int(spec.ages[reference_year]),
+                            "funded_ratio": float(r), "savings_rate": float(v)}
+                           for r, v in zip(ratio_grid, rates))
+    policy = pd.DataFrame.from_records(policy_rows)
+
+    # --- 2. asymmetry ------------------------------------------------------
+    asymmetry = acc.sweep_asymmetry(
+        run, metric, scorer, base, model_target,
+        [float(v) for v in acc_cfg["asymmetry"]["behind"]],
+        [float(v) for v in acc_cfg["asymmetry"]["ahead"]],
+        form=best_form, floor=floor, cap=cap)
+
+    # --- 3. coarse guardrails ---------------------------------------------
+    bands = acc.sweep_bands(run, metric, scorer, base, model_target,
+                            [float(v) for v in acc_cfg["bands"]],
+                            [float(v) for v in acc_cfg["band_steps"]],
+                            floor=floor, cap=cap)
+
+    # --- 4. which target ---------------------------------------------------
+    target_set = {
+        "model median path": model_target,
+        "published ladder": acc.ladder_target(spec),
+        f"flat {float(acc_cfg['flat_target_multiple']):g}x income":
+            acc.flat_target(spec, float(acc_cfg["flat_target_multiple"])),
+    }
+    targets = acc.sweep_targets(run, metric, scorer, base, target_set,
+                                [float(v) for v in acc_cfg["target_factors"]],
+                                best_k, form=best_form, floor=floor, cap=cap)
+    target_paths = pd.concat([
+        pd.DataFrame({"target": name, "age": spec.ages[:spec.n_working],
+                      "multiple": np.asarray(values)[:spec.n_working]})
+        for name, values in target_set.items()], ignore_index=True)
+
+    # --- 5. which signal ---------------------------------------------------
+    income_profile = income.mean(axis=0)
+    signals = {name: acc.make_signal(name, target=model_target,
+                                     income_profile=income_profile,
+                                     form=best_form)
+               for name in acc_cfg["signals"]}
+    race = acc.signal_race(run, metric, scorer, base, signals,
+                           [float(v) for v in acc_cfg["signal_grid"]],
+                           floor=floor, cap=cap)
+    signal_best = acc.best_by(race, "signal")
+    no_conditioning = float(race[race["signal"] == "none"]["matched_value_pct"]
+                            .iloc[0]) if (race["signal"] == "none").any() else 0.0
+
+    # The two leading signals, layered.  They may be reading the same state.
+    ranked = signal_best.sort_values("matched_value_pct", ascending=False)
+    pair = [str(k) for k in ranked["signal"] if k != "none"][:2]
+    if len(pair) < 2:
+        raise ValueError(
+            "the combination sweep needs at least two live signals; "
+            f"accumulation.signals gave {pair}")
+    combo_grid = [float(v) for v in acc_cfg["combination_grid"]]
+    combination = acc.sweep_combination(
+        run, metric, scorer, base, signals[pair[0]], signals[pair[1]],
+        combo_grid, combo_grid, first_name=pair[0], second_name=pair[1],
+        floor=floor, cap=cap)
+
+    # --- 6. feasibility ----------------------------------------------------
+    feasibility = acc.feasibility_frontier(
+        run, metric, scorer, base, model_target, best_k,
+        [float(v) for v in acc_cfg["feasibility_widths"]], target_mean,
+        form=best_form)
+
+    best_rule = acc.FundedRatioRule(target=model_target, base=base,
+                                    k_behind=best_k, form=best_form,
+                                    floor=floor, cap=cap)
+    best_outcome = simulate(best_rule)
+    fan = acc.rate_fan(best_outcome, spec)
+    activity = acc.activity_profile(baseline_outcome, best_outcome, spec)
+    quantile_gain = acc.quantile_gain(baseline_outcome, best_outcome,
+                                      [float(q) for q in acc_cfg["quantiles"]])
+
+    # --- 7. when it matters ------------------------------------------------
+    windows = acc.age_window_value(
+        run, metric, scorer, base, model_target, best_k,
+        [(int(lo), int(hi)) for lo, hi in acc_cfg["age_windows"]],
+        form=best_form, floor=floor, cap=cap)
+
+    # --- 8. who wants it ---------------------------------------------------
+    gamma_rows: List[Dict[str, Any]] = []
+    for gamma in gammas:
+        gamma_scorer = acc.MatchedScorer.from_frontier(
+            frontier, f"cec_gamma{gamma:g}")
+        for k in acc_cfg["signal_grid"]:
+            rule = acc.FundedRatioRule(target=model_target, base=base,
+                                       k_behind=float(k), form=best_form,
+                                       floor=floor, cap=cap)
+            row = dict(run(rule))
+            gamma_rows.append({
+                "risk_aversion": gamma, "sensitivity": float(k),
+                "cec": float(row[f"cec_gamma{gamma:g}"]),
+                "mean_savings_rate": float(row["mean_savings_rate"]),
+                "matched_value_pct": gamma_scorer.value_pct(
+                    float(row[f"cec_gamma{gamma:g}"]),
+                    float(row["mean_savings_rate"])),
+            })
+    by_gamma = pd.DataFrame.from_records(gamma_rows)
+
+    # --- 9. what it interacts with ----------------------------------------
+    strategy_rows: List[Dict[str, Any]] = []
+    for key in acc_cfg["strategy_interaction"]:
+        arm_run = make_run(strat=strategies[str(key)])
+        arm_scorer = acc.MatchedScorer.from_frontier(
+            frontier_for(arm_run), metric)
+        rule = acc.FundedRatioRule(target=model_target, base=base,
+                                   k_behind=best_k, form=best_form,
+                                   floor=floor, cap=cap)
+        strategy_rows.append(acc.score_rule(
+            arm_run, rule, metric, arm_scorer,
+            strategy=str(key).replace("_", " ")))
+    by_strategy = pd.DataFrame.from_records(strategy_rows)
+
+    income_rows: List[Dict[str, Any]] = []
+    for factor in acc_cfg["income_volatility_factors"]:
+        arm_spec = dataclasses.replace(
+            spec,
+            permanent_shock_sd=spec.permanent_shock_sd * float(factor),
+            transitory_shock_sd=spec.transitory_shock_sd * float(factor))
+        arm_rng = np.random.default_rng(int(cfg["run"]["seed"]))
+        arm_income = rt.extended_income(
+            arm_spec, n_paths,
+            shocks=lc.draw_income_shocks(n_paths, spec.horizon, arm_rng))
+        arm_run = make_run(inc=arm_income, sp=arm_spec)
+        arm_scorer = acc.MatchedScorer.from_frontier(
+            frontier_for(arm_run), metric)
+        arm_target = sav.wealth_to_income_target(
+            simulate(sav.AgeProfileRule(base), inc=arm_income, sp=arm_spec),
+            arm_income, spec.horizon)
+        rule = acc.FundedRatioRule(target=arm_target, base=base,
+                                   k_behind=best_k, form=best_form,
+                                   floor=floor, cap=cap)
+        income_rows.append(acc.score_rule(arm_run, rule, metric, arm_scorer,
+                                          volatility_factor=float(factor)))
+    by_income = pd.DataFrame.from_records(income_rows)
+
+    # Every sweep is scored against a matched constant rate, but each also sits
+    # on top of an age profile that is itself worth something; the saved tables
+    # carry both so a reader does not have to subtract by hand. `by_gamma` is
+    # excluded because its baseline differs at each risk aversion.
+    for frame, name, net_out in (
+            (frontier, "acc_constant_rate_frontier", False),
+            (forms, "acc_response_forms", True),
+            (policy, "acc_policy_curves", False),
+            (asymmetry, "acc_asymmetry", True),
+            (bands, "acc_guardrail_bands", True),
+            (targets, "acc_target_choice", True),
+            (target_paths, "acc_target_paths", False),
+            (race, "acc_signal_race", True),
+            (signal_best, "acc_signal_best", True),
+            (combination, "acc_signal_combination", True),
+            (feasibility, "acc_feasibility", True),
+            (fan, "acc_rate_fan", False),
+            (activity, "acc_activity_profile", False),
+            (quantile_gain, "acc_quantile_gain", False),
+            (by_gamma, "acc_by_risk_aversion", False),
+            (windows, "acc_age_windows", True),
+            (by_strategy, "acc_by_strategy", True),
+            (by_income, "acc_by_income_volatility", True)):
+        _save_table(acc.increment_over(frame, no_conditioning) if net_out
+                    else frame, tables, name)
+
+    figures = [
+        str(plots.plot_response_forms(forms, policy, figure_dir)),
+        str(plots.plot_asymmetry(asymmetry, figure_dir)),
+        str(plots.plot_signal_race(signal_best, race, combination,
+                                   figure_dir)),
+        str(plots.plot_feasibility(feasibility, fan, figure_dir, target_mean)),
+        str(plots.plot_value_distribution(quantile_gain, by_gamma, figure_dir)),
+        str(plots.plot_when_it_matters(windows, activity, figure_dir)),
+        str(plots.plot_target_choice(targets, target_paths, figure_dir)),
+        str(plots.plot_accumulation_interactions(by_strategy, by_income,
+                                                 figure_dir)),
+    ]
+
+    elapsed = time.perf_counter() - started
+    rp.write_doc_11(
+        Path("docs") / "11_accumulation_signal.md", cfg,
+        {"forms": forms, "policy": policy, "asymmetry": asymmetry,
+         "bands": bands, "targets": targets, "race": race,
+         "signal_best": signal_best, "combination": combination,
+         "feasibility": feasibility,
+         "fan": fan, "activity": activity, "quantile_gain": quantile_gain,
+         "by_gamma": by_gamma, "windows": windows,
+         "by_strategy": by_strategy, "by_income": by_income,
+         "frontier": frontier},
+        figures,
+        {"elapsed_seconds": elapsed, "base_label": base_label,
+         "best_form": best_form, "best_k": best_k,
+         "n_paths": n_paths, "reference_age": int(spec.ages[reference_year]),
+         "no_conditioning_pct": no_conditioning},
+    )
+    LOGGER.info("docs/11 written (%.0fs)", elapsed)
+    state.update({"accumulation_forms": forms,
+                  "accumulation_signals": signal_best})
+    return state
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
          4: step4_report, 5: step5_sensitivity, 6: step6_spending,
          7: step7_glide_path, 8: step8_hedging, 9: step9_retirement_timing,
-         10: step10_saving}
+         10: step10_saving, 11: step11_accumulation}
 
 
 def run(config_path: str = "config.yaml",
-        steps: Sequence[int] = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10),
+        steps: Sequence[int] = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11),
         quick: bool = False) -> Dict[str, Any]:
     """Execute the pipeline and return the accumulated state."""
     cfg = dl.load_config(config_path)
@@ -1279,8 +1617,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--steps", nargs="+", type=int,
-                        default=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
-                        choices=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+                        default=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+                        choices=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
     parser.add_argument("--quick", action="store_true",
                         help="small N for smoke tests")
     parser.add_argument("--verbose", action="store_true")

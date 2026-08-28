@@ -145,6 +145,7 @@ class FlexibleOutcome:
     years_worked: np.ndarray           # (N,)
     total_saved: np.ndarray            # (N,) real contributions over the career
     mean_savings_rate: np.ndarray      # (N,) average rate while working
+    savings_rate_path: np.ndarray      # (N, H) rate applied each year (0 once retired)
 
     @property
     def n_paths(self) -> int:
@@ -207,6 +208,7 @@ def simulate_flexible(
     years_worked = np.zeros(n_paths)
     saved_total = np.zeros(n_paths)
     rate_sum = np.zeros(n_paths)
+    rate_path = np.zeros((n_paths, horizon))
     ruined = np.zeros(n_paths, dtype=bool)
     last_return = np.zeros(n_paths)
     last_inflation = np.zeros(n_paths)
@@ -237,10 +239,12 @@ def simulate_flexible(
         still_working = ~retired
         rate = saving_rule.rate(sav.SavingState(
             age=age, year=h, wealth=available, current_income=income[:, h],
-            last_return=last_return, still_working=still_working))
+            last_return=last_return, still_working=still_working,
+            returns_history=rp[:, :h], contributed=saved_total))
         contribution = np.where(still_working, rate * income[:, h], 0.0)
         saved_total += contribution
         rate_sum += np.where(still_working, rate, 0.0)
+        rate_path[:, h] = np.where(still_working, rate, 0.0)
         income_sum += np.where(still_working, income[:, h], 0.0)
         years_worked += still_working.astype(float)
 
@@ -282,6 +286,7 @@ def simulate_flexible(
         years_worked=years_worked.astype(int),
         total_saved=saved_total,
         mean_savings_rate=rate_sum / np.maximum(years_worked, 1.0),
+        savings_rate_path=rate_path,
     )
 
 

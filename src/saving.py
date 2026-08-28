@@ -23,6 +23,10 @@ The two are measured separately: the best deterministic age profile is solved
 first, and conditioning rules are then scored against *that*, not against a
 flat rate. Everything is also reported at a matched average lifetime savings
 rate, which separates saving *smarter* from simply saving *more*.
+
+:mod:`src.accumulation` takes the conditioning half of this apart -- which
+functional form, which target, symmetric or not, how far the rate may move,
+and which signal -- and is where the rules here are stress-tested.
 """
 
 from __future__ import annotations
@@ -39,7 +43,13 @@ from . import lifecycle as lc
 
 @dataclasses.dataclass(frozen=True)
 class SavingState:
-    """What a savings rule may condition on, at the start of one working year."""
+    """What a savings rule may condition on, at the start of one working year.
+
+    Only backward-looking quantities are carried, and ``returns_history`` is
+    deliberately a slice of the *already realised* return matrix rather than
+    the whole thing: a rule that could see ``rp[:, h:]`` would be solving a
+    different problem.
+    """
 
     age: int
     year: int                       # 0-based index into the horizon
@@ -47,10 +57,39 @@ class SavingState:
     current_income: np.ndarray      # (N,) this year's real labour income
     last_return: np.ndarray         # (N,) portfolio return of the year just gone
     still_working: np.ndarray       # (N,) bool
+    returns_history: np.ndarray | None = None   # (N, year) realised returns
+    contributed: np.ndarray | None = None       # (N,) real contributions so far
 
     @property
     def wealth_to_income(self) -> np.ndarray:
         return self.wealth / np.maximum(self.current_income, 1e-12)
+
+    def trailing_return(self, years: int) -> np.ndarray:
+        """Annualised real portfolio return over the last ``years`` years.
+
+        Zero where there is no history yet, and truncated to whatever history
+        exists, so a 10-year signal is simply weaker early in a career rather
+        than undefined.
+        """
+        history = self.returns_history
+        if history is None or history.shape[1] == 0 or years <= 0:
+            return np.zeros(self.wealth.shape)
+        window = history[:, -min(int(years), history.shape[1]):]
+        log = np.log1p(np.clip(window, -0.999999, None))
+        return np.expm1(log.mean(axis=1))
+
+    @property
+    def investment_gain(self) -> np.ndarray:
+        """Wealth relative to what was paid in: the market's contribution.
+
+        ``(W - contributions) / contributions``. Zero before anything has been
+        contributed. This is the part of the balance the investor did not save,
+        which is a different signal from either the balance or recent returns.
+        """
+        paid = self.contributed
+        if paid is None:
+            return np.zeros(self.wealth.shape)
+        return np.where(paid > 1e-9, (self.wealth - paid) / np.maximum(paid, 1e-9), 0.0)
 
 
 class SavingRule(abc.ABC):
