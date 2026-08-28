@@ -1227,7 +1227,9 @@ def section_methods(ctx: Any) -> List[Flowable]:
         f"deviations {float(lc['income']['permanent_shock_sd']):.2f} and "
         f"{float(lc['income']['transitory_shock_sd']):.2f}. The permanent "
         f"shock is a cumulative sum, so income dispersion widens over a "
-        f"career; the transitory shock is i.i.d."))
+        f"career; the transitory shock is i.i.d. The profile is an age effect "
+        f"and carries no economy-wide wage growth; Section 3.6.3 measures what "
+        f"that leaves out and which way it biases the result."))
     out.append(ctx.p(
         f"The social-security benefit uses the US primary-insurance-amount "
         f"bend-point schedule rather than a flat replacement rate, applying "
@@ -3837,7 +3839,27 @@ def section_limitations(ctx: Any) -> List[Flowable]:
     ]))
 
     out.append(ctx.h2("16.3 What the lifecycle model omits"))
-    out.extend(ctx.bullets([
+    hs, wg = pr.get("housing", {}), pr.get("wages", {})
+    housing_bullet = (
+        "<b>No housing.</b> For most households the primary residence is the "
+        "largest asset and the mortgage the largest liability, and both "
+        "interact with inflation in ways the financial portfolio does not. "
+        "This is the single largest omission and it is not a small one."
+        + (f" We do hold the data: Section 3.6.1 audits "
+           f"{hs['country_years']:,} country-years of observed housing "
+           f"returns and explains why an appraisal-smoothed index is not a "
+           f"fourth sleeve. That is a reason not to use it as written, not a "
+           f"reason the omission does not matter." if hs.get("countries")
+           else ""))
+    wage_bullet = (
+        f"<b>No economy-wide wage growth.</b> The income profile is an age "
+        f"effect only. Section 3.6.3 measures what that leaves out — a median "
+        f"{pc(wg['measured'], 2)} a year across {wg['countries']} countries, "
+        f"which compounds to {f2(wg['career_multiple'], 2)}× over a career — "
+        f"and finds the bias runs against our conclusion, because less human "
+        f"capital weakens rather than strengthens the case for early equity."
+    ) if wg.get("countries") else ""
+    out.extend(ctx.bullets([x for x in [
         "<b>No taxes.</b> Every return is pre-tax and every withdrawal is "
         "untaxed. Tax-deferred and taxable accounts behave differently under "
         "the same allocation, and the asymmetric treatment of capital gains "
@@ -3847,10 +3869,8 @@ def section_limitations(ctx: Any) -> List[Flowable]:
         "all-equity index and a target-date fund would move the results in the "
         "direction of the cheaper vehicle, which on current pricing is usually "
         "the index.",
-        "<b>No housing.</b> For most households the primary residence is the "
-        "largest asset and the mortgage the largest liability, and both "
-        "interact with inflation in ways the financial portfolio does not. "
-        "This is the single largest omission and it is not a small one.",
+        housing_bullet,
+        wage_bullet,
         "<b>No annuities.</b> A real annuity is the natural competitor to a "
         "withdrawal rule and is absent entirely.",
         "<b>No disutility of labour.</b> This is why the retirement-timing "
@@ -3864,7 +3884,7 @@ def section_limitations(ctx: Any) -> List[Flowable]:
         "investor executes it. Section 14.6 prices the cost of a constrained "
         "contribution but nothing prices the probability that a saver "
         "abandons an all-equity portfolio in the middle of a 60% drawdown.",
-    ]))
+    ] if x]))
 
     out.append(ctx.h2("16.4 Specification sensitivities we know about"))
     out.append(ctx.p(

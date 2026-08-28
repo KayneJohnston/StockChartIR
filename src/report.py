@@ -1288,9 +1288,12 @@ its economic mechanism**, which is what the paper's contribution actually is.
 3. **No mortality risk.** Every investor lives to exactly {cfg['lifecycle']['age_death']}. Real longevity
    uncertainty would raise the cost of ruin and, if anything, strengthen the
    case against strategies with higher ruin probabilities.
-4. **Labour income is not linked to the drawn country.** See
-   `03_lifecycle_utility_model.md`, section 3.1. The bias runs against the
-   paper's conclusion, not toward it.
+4. **Labour income is not linked to the drawn country, and carries no
+   economy-wide growth term.** See `03_lifecycle_utility_model.md`, section
+   3.1. `14_data_provenance.md` section 3.3 measures the second half of that:
+   eighteen countries recorded real wage growth the income profile has no term
+   for. Both biases run against the paper's conclusion, not toward it -- less
+   human capital weakens the case for holding equity when young.
 5. **Epstein-Zin is evaluated ex ante.** See `03`, section 7.4. The
    specification nests CRRA exactly, so cross-strategy comparisons are
    like-for-like, but the level is not full recursive utility.
