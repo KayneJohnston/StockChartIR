@@ -39,6 +39,22 @@ resampling, and under uniform country weighting.
 See [`docs/04_replicated_results_and_tables.md`](docs/04_replicated_results_and_tables.md)
 for the full analysis and the caveats.
 
+## The working paper
+
+A full academic writeup of the whole project — abstract, data, methodology,
+the baseline replication, all eight extensions, discussion, limitations and
+four appendices, with all 33 figures and 43 tables — is at
+[`paper/lifecycle_asset_allocation.pdf`](paper/lifecycle_asset_allocation.pdf)
+(57 pages).
+
+```bash
+python paper/build_paper.py
+```
+
+Every number in its prose is resolved at build time from `results/tables/`, so
+the paper cannot drift away from the pipeline that produced it. See
+[`paper/README.md`](paper/README.md).
+
 ## Documentation
 
 | Document | Contents |
