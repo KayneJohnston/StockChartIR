@@ -1,0 +1,16 @@
+# Pipeline
+numpy>=2.0
+pandas>=2.0
+matplotlib>=3.8
+PyYAML>=6.0
+openpyxl>=3.1          # reads the Jordà-Schularick-Taylor workbook
+
+# Tests
+pytest>=8.0
+
+# paper/build_paper.py only.  The working paper is typeset with ReportLab
+# rather than LaTeX so that it builds anywhere the pipeline runs; it also
+# needs the Liberation TrueType family (Debian/Ubuntu: fonts-liberation) for
+# Greek and mathematical glyphs, and falls back to ReportLab's built-in faces
+# if they are absent.
+reportlab>=4.0

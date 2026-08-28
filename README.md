@@ -39,6 +39,22 @@ resampling, and under uniform country weighting.
 See [`docs/04_replicated_results_and_tables.md`](docs/04_replicated_results_and_tables.md)
 for the full analysis and the caveats.
 
+## The working paper
+
+A full academic writeup of the whole project — abstract, data, methodology,
+the baseline replication, all eight extensions, discussion, limitations and
+four appendices, with all 33 figures and 43 tables — is at
+[`paper/lifecycle_asset_allocation.pdf`](paper/lifecycle_asset_allocation.pdf)
+(57 pages).
+
+```bash
+python paper/build_paper.py
+```
+
+Every number in its prose is resolved at build time from `results/tables/`, so
+the paper cannot drift away from the pipeline that produced it. See
+[`paper/README.md`](paper/README.md).
+
 ## Documentation
 
 | Document | Contents |
@@ -54,9 +70,69 @@ for the full analysis and the caveats.
 | [`docs/09_retirement_timing.md`](docs/09_retirement_timing.md) | Retirement as a path-dependent decision; value of conditioning on markets; the retirement-date lottery |
 | [`docs/10_savings_rate.md`](docs/10_savings_rate.md) | When to save over a career, and whether the rate should respond to the portfolio |
 | [`docs/11_accumulation_signal.md`](docs/11_accumulation_signal.md) | The savings-rate signal taken apart: functional form, asymmetry, target choice, eight competing signals, feasibility bands, and where the value lands |
+| [`docs/12_full_allocation.md`](docs/12_full_allocation.md) | The full four-asset weight simplex -- domestic equity, international equity, bonds and bills -- solved at every year of the lifecycle |
+| [`docs/13_leverage.md`](docs/13_leverage.md) | Borrowing to invest: the optimal leverage ratio and allocation at each price of credit, and the break-even spread |
+| [`docs/14_data_provenance.md`](docs/14_data_provenance.md) | **Which numbers were observed and which were generated** -- source fingerprints, authenticity checks on the primary file, and whether the headline survives on observed data alone |
 
-All eleven are **generated** by `main.py` from live pipeline objects -- edit
+All fourteen are **generated** by `main.py` from live pipeline objects -- edit
 `src/report.py`, not the Markdown.
+
+## How much of this data is real
+
+**34.3% of the panel's return cells are simulated** -- one cell being one
+country, one year, one return series, which is the unit the bootstrap actually
+draws -- and so is 38% of an observed investor's international leg (59% after
+2000). `docs/14` audits this in full: 18 of the 38 countries are factor-model
+draws from a randomly assigned observed donor, not series derived from anything
+those countries experienced.
+
+The audit prompted a sweep of the primary files for series the pipeline was not
+reading. It turned up three things.
+
+**Bonds and bills for four more countries.** Canada and Ireland carry a long
+yield, a short rate and a price index in the Jordà-Schularick-Taylor macro file
+but no return series; New Zealand and Austria carry a long yield in Clio-Infra.
+Their bonds and bills are now rebuilt from those published rates rather than
+generated, converting **531 country-years** from simulated to observed and
+cutting the simulated share from 39.6% to 34.3%. Nothing was recovered for
+equity -- the series the headline mechanism runs through -- so the
+international-leg figure is unchanged.
+
+**Housing total returns, 1,805 country-years across all 16 observed
+countries.** Fully empirical, and nothing in the project read them. Median real
+return 6.6% against 6.9% for the same countries' equity, at a standard
+deviation of 8.9% versus 21.0%. They stay out of the investable set and
+`docs/14` section 3.2 says why: median lag-one autocorrelation is +0.34 against
++0.06 for equity, and undoing that appraisal smoothing takes the standard
+deviation to 12.0%. Most of the apparent free lunch is a measurement artefact.
+
+**Real wage growth for all 18 macro countries, 2,269 country-years.** The
+median country compounded real wages at 1.41% a year. The lifecycle income
+profile has no term for it -- its hump is an *age* effect implying 1.18% a
+year, and in the Cocco-Gomes-Maenhout estimation it comes from the two are
+separate and additive. `docs/14` section 3.3 records this as a quantified
+limitation rather than applying it, because re-estimating the income process is
+a modelling change, not a data one. The bias runs *against* the paper's
+conclusion: less human capital weakens the case for early equity.
+
+No new external source could be added: outbound access from the build
+environment is denied to the macrohistory host and every other bulk macro-data
+provider tested, and guessing at redistributed mirrors would have reproduced
+exactly the unverifiable provenance this audit exists to warn about. Sixteen
+countries is the ceiling on observed *equity* here, and that is stated as a
+limit rather than worked around.
+
+The 16 countries with real Jordà-Schularick-Taylor return series pass every
+authenticity check -- five independently known annual returns land within
+tolerance, and the internal accounting identity fails at the rate a genuine
+spliced-source database should. One finding does not pass: all 16 countries
+show a variance collapse over 2016-2020 (sign-test p = 3e-05), so those five
+years are flagged as unverified.
+
+**The headline is stronger on observed data alone** -- 11.2% against 7.3% --
+so the simulated countries dilute the result rather than create it. But the
+honest evidence base for the return series is sixteen countries, not
+thirty-eight, and nothing here should lean on the larger number.
 
 ## Sensitivity
 
@@ -421,6 +497,8 @@ python main.py --steps 1 8          # panel + currency-hedging sweep only
 python main.py --steps 1 9          # panel + retirement-timing analysis only
 python main.py --steps 1 10         # panel + savings-rate analysis only
 python main.py --steps 11           # the accumulation-signal deep dive
+python main.py --steps 12 13        # the full allocation solve and leverage
+python main.py --steps 14           # the data provenance audit
 python main.py --config other.yaml  # a different parameterisation
 ```
 
@@ -444,12 +522,16 @@ python main.py --config other.yaml  # a different parameterisation
 │   ├── retirement.py     # path-dependent retirement + saving engine
 │   ├── saving.py         # savings-rate rules and shape optimiser
 │   ├── accumulation.py   # response forms, signal horse race, feasibility bands
+│   ├── allocation.py     # the four-asset simplex solved at every age
+│   ├── leverage.py       # levered evaluator and the cost-of-credit sweep
+│   ├── observed.py       # series recovered from published rates, not generated
+│   ├── provenance.py     # what is observed, what is simulated, and does it matter
 │   ├── plots.py          # publication-quality figures
 │   └── report.py         # Markdown report generation
-├── tests/                # 312 unit + integration tests
+├── tests/                # 510 unit + integration tests
 ├── results/
-│   ├── figures/          # 25 PNGs
-│   └── tables/           # 40+ CSVs
+│   ├── figures/          # 39 PNGs
+│   └── tables/           # 110+ CSVs
 ├── config.yaml           # every tunable parameter
 └── main.py               # entry point
 ```
@@ -480,10 +562,19 @@ every country by provenance:
 
 * **Tier A (16 countries)** -- equity, bond, bill and inflation series are all
   empirical, from JST/JKKST. This is where the empirical content lives.
-* **Tier B (22 countries)** -- inflation is empirical wherever a source exists;
+* **Tier B (4 countries)** -- Canada, Ireland, New Zealand and Austria.
+  Inflation is empirical, and bonds and bills are **observed**, rebuilt from
+  published long yields and short rates via `r_t = y_{t-1} + D(y_{t-1} - y_t)`
+  and deflated by the country's own price index. Their equity is still
+  generated, which is why they are not Tier A.
+* **Tier C (18 countries)** -- inflation is empirical wherever a source exists;
   equity, bond and bill returns are **calibrated proxies** generated by a
   single-factor model fitted to the Tier-A cross-section, with donor-inherited
   residual covariance and documented market-inception dates.
+
+The tiers are *derived* from a per-cell record of what was observed
+(`Panel.observed_mask`, `data_loader.derive_tiers`) rather than asserted beside
+it, so a label cannot drift from the data it describes.
 
 The entire analysis is reported a second time on the Tier-A-only panel. The
 ranking is unchanged and the all-equity advantage is in fact *larger* there, so

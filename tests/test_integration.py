@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 import main
@@ -58,8 +59,30 @@ class TestPipeline:
     def test_panel_has_the_target_cross_section(self, pipeline_state) -> None:
         _, state, _ = pipeline_state
         panel = state["panel"]
-        assert panel.n_countries == 38
-        assert sum(1 for t in panel.tier if t == "A") == 16
+        assert panel.n_countries == 16
+        assert all(t == "A" for t in panel.tier)
+
+    def test_no_country_year_in_the_panel_is_generated(self, pipeline_state
+                                                       ) -> None:
+        """The whole point of the panel: every cell in it was recorded.
+
+        Tiers are derived from the observation masks, so this is a statement
+        about the data rather than about the labels -- if a generated block
+        ever came back, derive_tiers would label it and this would fail.
+        """
+        _, state, _ = pipeline_state
+        panel = state["panel"]
+        for key in dl.TIERED_SERIES:
+            assert np.array_equal(panel.observed_mask(key), panel.available), (
+                f"{key} has cells that are available but not observed"
+            )
+
+    def test_the_simulated_panel_cannot_be_rebuilt(self, pipeline_state
+                                                   ) -> None:
+        """A stale config must not quietly resurrect the generated countries."""
+        cfg, _, _ = pipeline_state
+        with pytest.raises(ValueError, match="no longer exists"):
+            dl.build_panel(cfg, "dev38")
 
     def test_every_strategy_is_simulated(self, pipeline_state) -> None:
         cfg, state, _ = pipeline_state

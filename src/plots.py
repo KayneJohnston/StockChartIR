@@ -103,8 +103,9 @@ def plot_country_returns(summary: pd.DataFrame, directory: str | Path,
     meta = summary.drop_duplicates("iso").set_index("iso")[["tier", "n_years"]]
     wide = wide.join(meta)
 
-    panels = [("A", "Tier A - fully empirical (JST / JKKST)"),
-              ("B", "Tier B - calibrated proxy")]
+    panels = [("A", "Tier A - observed returns (JST / JKKST)"),
+              ("B", "Tier B - rates observed, equity simulated"),
+              ("C", "Tier C - simulated returns")]
     present = [(tier, title) for tier, title in panels
                if (wide["tier"] == tier).any()]
 
@@ -1451,5 +1452,346 @@ def plot_accumulation_interactions(by_strategy: pd.DataFrame,
         ax.set_ylabel("CEC vs a constant rate saving the same (%)")
         ax.set_title("Value of conditioning, by how risky the pay cheque is",
                      fontsize=10)
+        fig.tight_layout()
+    return _save(fig, directory, name)
+
+
+# ---------------------------------------------------------------------------
+# Step 12 - the whole allocation, solved
+# ---------------------------------------------------------------------------
+#: One colour per asset, held fixed everywhere the four sleeves are drawn.
+ASSET_COLOURS: Mapping[str, str] = {
+    "dom_eq": PALETTE[0], "intl_eq": PALETTE[2],
+    "bond": PALETTE[1], "bill": PALETTE[4],
+}
+ASSET_NAMES: Mapping[str, str] = {
+    "dom_eq": "Domestic equity", "intl_eq": "International equity",
+    "bond": "Bonds", "bill": "Bills",
+}
+
+
+def plot_full_allocation(schedules: pd.DataFrame, deviation: pd.DataFrame,
+                         directory: str | Path, retire_age: int = 63,
+                         name: str = "fig34_full_allocation") -> Path:
+    """The solved four-asset schedule, and what each age of it is worth."""
+    assets = list(ASSET_NAMES)
+    gammas = sorted(schedules["risk_aversion"].unique())
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(1, len(gammas) + 1,
+                                 figsize=(4.6 * (len(gammas) + 1), 4.8))
+
+        for ax, gamma in zip(axes, gammas):
+            block = schedules[schedules["risk_aversion"] == gamma] \
+                .sort_values("age")
+            ax.stackplot(block["age"],
+                         *[block[a] * 100 for a in assets],
+                         labels=[ASSET_NAMES[a] for a in assets],
+                         colors=[ASSET_COLOURS[a] for a in assets],
+                         edgecolor="white", linewidth=0.3)
+            ax.axvline(retire_age, color="black", linestyle="--",
+                       linewidth=1.2)
+            ax.annotate("retires", (retire_age, 101), fontsize=8,
+                        ha="center", va="bottom")
+            ax.set_xlim(block["age"].min(), block["age"].max())
+            ax.set_ylim(0, 100)
+            ax.set_xlabel("Age")
+            ax.set_ylabel("Portfolio weight (%)")
+            ax.set_title(f"Solved allocation, γ = {gamma:g}", fontsize=10)
+            ax.grid(False)
+        axes[0].legend(fontsize=8, loc="lower left", framealpha=0.9,
+                       facecolor="white")
+
+        ax = axes[-1]
+        for i, gamma in enumerate(gammas):
+            block = deviation[deviation["risk_aversion"] == gamma] \
+                .sort_values("age")
+            ax.plot(block["age"], block["cost_of_resetting_bp"],
+                    marker=_marker(i), markersize=3.5, markevery=4,
+                    color=_colour(i), linewidth=1.7, label=f"γ = {gamma:g}")
+        ax.axhline(1.0, color="black", linestyle=":", linewidth=1.2)
+        ax.annotate("1 basis point", (float(deviation["age"].min()), 1.0),
+                    textcoords="offset points", xytext=(4, 5), fontsize=8)
+        ax.set_yscale("symlog", linthresh=1.0)
+        ax.set_xlabel("Age")
+        ax.set_ylabel("Cost of resetting that age to the average (bp)")
+        ax.set_title("What each age's allocation is worth", fontsize=10)
+        ax.legend(fontsize=8)
+        fig.tight_layout()
+    return _save(fig, directory, name)
+
+
+def plot_allocation_comparison(comparison: pd.DataFrame, phases: pd.DataFrame,
+                               directory: str | Path,
+                               name: str = "fig35_allocation_comparison") -> Path:
+    """The solved schedule against the benchmarks, and its phase averages."""
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(1, 2, figsize=(12.5, 5.0))
+
+        ax = axes[0]
+        gammas = sorted(comparison["risk_aversion"].unique())
+        strategies = list(comparison[comparison["risk_aversion"] == gammas[0]]
+                          .sort_values("cec", ascending=False)["strategy"])
+        width = 0.8 / max(len(gammas), 1)
+        positions = np.arange(len(strategies))
+        for i, gamma in enumerate(gammas):
+            block = comparison[comparison["risk_aversion"] == gamma] \
+                .set_index("strategy").reindex(strategies)
+            ax.barh(positions + i * width, block["gap_to_best_pct"],
+                    height=width * 0.9, color=_colour(i),
+                    label=f"γ = {gamma:g}")
+        ax.set_yticks(positions + width * (len(gammas) - 1) / 2.0)
+        ax.set_yticklabels([s.replace("_", " ") for s in strategies],
+                           fontsize=8)
+        ax.axvline(0, color="black", linewidth=1.2)
+        ax.set_xlabel("Gap to the best schedule at that risk aversion (%)")
+        ax.set_title("The solved schedule against the benchmarks", fontsize=10)
+        ax.grid(axis="y", alpha=0.0)
+        ax.legend(fontsize=8, loc="lower left")
+
+        ax = axes[1]
+        assets = list(ASSET_NAMES)
+        labels = [f"γ = {r.risk_aversion:g}\n{r.phase}"
+                  for r in phases.itertuples()]
+        bottom = np.zeros(len(phases))
+        x = np.arange(len(phases))
+        for a in assets:
+            values = phases[a].to_numpy(dtype=float) * 100
+            ax.bar(x, values, bottom=bottom, color=ASSET_COLOURS[a],
+                   label=ASSET_NAMES[a], width=0.62, edgecolor="white",
+                   linewidth=0.6)
+            bottom += values
+        ax.set_xticks(x)
+        ax.set_xticklabels(labels, fontsize=8)
+        ax.set_ylim(0, 100)
+        ax.set_ylabel("Average weight (%)")
+        ax.set_title("Average solved weights by phase", fontsize=10)
+        ax.grid(axis="x", alpha=0.0)
+        ax.legend(fontsize=8, ncol=2, loc="lower center")
+        fig.tight_layout()
+    return _save(fig, directory, name)
+
+
+# ---------------------------------------------------------------------------
+# Step 13 - leverage
+# ---------------------------------------------------------------------------
+def plot_leverage_surface(sweep: pd.DataFrame, optimal: pd.DataFrame,
+                          directory: str | Path,
+                          name: str = "fig36_leverage_surface") -> Path:
+    """What leverage is worth across the price of credit."""
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(1, 2, figsize=(13.0, 5.0))
+
+        ax = axes[0]
+        for i, spread in enumerate(sorted(sweep["spread"].unique())):
+            block = sweep[sweep["spread"] == spread].sort_values("leverage")
+            ax.plot(block["leverage"], block["vs_unlevered_pct"],
+                    marker=_marker(i), markersize=5, color=_colour(i),
+                    linewidth=1.9, label=f"{spread:.1%} over bills")
+        ax.axhline(0, color="black", linewidth=1.2)
+        ax.set_xlabel("Leverage ratio")
+        ax.set_ylabel("CEC vs the unlevered portfolio (%)")
+        ax.set_title("The value of borrowing, by what it costs", fontsize=10)
+        ax.legend(fontsize=8, title="Annual spread", title_fontsize=8)
+
+        ax = axes[1]
+        block = optimal.sort_values("spread")
+        ax.plot(block["spread"] * 100, block["leverage"], marker="o",
+                markersize=7, color=_colour(0), linewidth=2.2,
+                drawstyle="steps-post")
+        ax.axhline(1.0, color="black", linestyle="--", linewidth=1.2)
+        # Left end: the right end is where the step function lands on the line
+        # and the point labels already crowd it.
+        ax.annotate("unlevered", (float(block["spread"].min()) * 100, 1.0),
+                    textcoords="offset points", xytext=(4, 6), fontsize=8,
+                    ha="left")
+        for _, row in block.iterrows():
+            ax.annotate(f"{row['vs_unlevered_pct']:+.2f}%",
+                        (row["spread"] * 100, row["leverage"]),
+                        textcoords="offset points", xytext=(0, 9),
+                        ha="center", fontsize=7.5)
+        ax.set_xlabel("Annual borrowing spread over the real bill rate (%)")
+        ax.set_ylabel("Optimal leverage ratio")
+        ax.set_title("Optimal leverage collapses as credit gets dearer",
+                     fontsize=10)
+        fig.tight_layout()
+    return _save(fig, directory, name)
+
+
+def plot_leverage_detail(detail: pd.DataFrame, schedule: pd.DataFrame,
+                         directory: str | Path,
+                         name: str = "fig37_leverage_detail") -> Path:
+    """What leverage does to the shape of the outcome, and to its age profile."""
+    quantiles = [1, 5, 10, 25, 50, 75, 90, 95, 99]
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(1, 2, figsize=(12.5, 5.0))
+
+        ax = axes[0]
+        base = detail[np.isclose(detail["leverage"], 1.0)].iloc[0]
+        for i, (_, row) in enumerate(
+                detail[~np.isclose(detail["leverage"], 1.0)].iterrows()):
+            change = [(row[f"p{q}_retirement_consumption"]
+                       / base[f"p{q}_retirement_consumption"] - 1.0) * 100.0
+                      for q in quantiles]
+            ax.plot(quantiles, change, marker=_marker(i), markersize=5,
+                    color=_colour(i), linewidth=1.9,
+                    label=f"{row['leverage']:g}× leverage")
+        ax.axhline(0, color="black", linewidth=1.2)
+        # The top percentile runs to several hundred percent while the left
+        # tail moves by a few; on a linear axis the tail that matters is a
+        # flat line at zero.
+        ax.set_yscale("symlog", linthresh=10.0)
+        ax.set_xlabel("Percentile of retirement consumption")
+        ax.set_ylabel("Change vs the unlevered portfolio (%), symlog")
+        ax.set_title("Leverage widens both tails", fontsize=10)
+        ax.legend(fontsize=8, loc="upper left")
+
+        ax = axes[1]
+        for i, spread in enumerate(sorted(schedule["spread"].unique())):
+            block = schedule[schedule["spread"] == spread].sort_values("age")
+            ax.plot(block["age"], block["leverage"], color=_colour(i),
+                    linewidth=0.9, alpha=0.35)
+            smooth = block["leverage"].rolling(5, center=True,
+                                               min_periods=1).mean()
+            ax.plot(block["age"], smooth, marker=_marker(i), markersize=3.5,
+                    markevery=5, color=_colour(i), linewidth=2.0,
+                    label=f"{spread:.1%} over bills")
+        ax.axhline(1.0, color="black", linestyle="--", linewidth=1.2)
+        ax.set_xlabel("Age")
+        ax.set_ylabel("Solved leverage ratio")
+        ax.set_title("Solving a leverage ratio for every age\n"
+                     "(faint: raw solution, bold: 5-year mean)", fontsize=10)
+        ax.legend(fontsize=8, title="Annual spread", title_fontsize=8)
+        fig.tight_layout()
+    return _save(fig, directory, name)
+
+
+# ---------------------------------------------------------------------------
+# Step 14 - where the data comes from
+# ---------------------------------------------------------------------------
+def plot_provenance(era: pd.DataFrame, contamination: pd.DataFrame,
+                    tail: pd.DataFrame, countries: pd.DataFrame,
+                    directory: str | Path,
+                    name: str = "fig38_data_provenance") -> Path:
+    """How much of the panel is observed, and how much is generated."""
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(1, 3, figsize=(16.5, 5.0))
+
+        ax = axes[0]
+        block = era.copy()
+        x = np.arange(len(block))
+        # Cells, not country-years: one country, one year, one return series.
+        # Mixing the two units here would understate the observed bar.
+        total = block.get("return_cells", block["country_years"]).to_numpy(float)
+        simulated = block["simulated"].to_numpy(float)
+        empirical = total - simulated
+        ax.bar(x, empirical, color=_colour(0), width=0.62,
+               label="observed (Jordà–Schularick–Taylor)")
+        ax.bar(x, simulated, bottom=empirical, color=_colour(1), width=0.62,
+               label="simulated (factor model)")
+        for i, row in enumerate(block.itertuples()):
+            ax.text(i, total[i] * 1.02,
+                    f"{row.share_simulated:.0%}", ha="center", fontsize=8,
+                    color=_colour(1))
+        ax.set_xticks(x)
+        ax.set_xticklabels(block["era"], fontsize=8)
+        ax.set_ylabel("Return cells in the panel (country x year x series)")
+        ax.set_title("The simulated share grows over time\n"
+                     "(label = share simulated)", fontsize=10)
+        ax.legend(fontsize=8, loc="upper left")
+        ax.grid(axis="x", alpha=0.0)
+
+        ax = axes[1]
+        block = contamination[contamination["era"] != "whole panel"]
+        x = np.arange(len(block))
+        values = block["mean_synthetic_share_of_intl_leg"].to_numpy(float) * 100
+        ax.bar(x, values, color=_colour(1), width=0.62)
+        for i, v in enumerate(values):
+            ax.text(i, v + 1.2, f"{v:.0f}%", ha="center", fontsize=8)
+        whole = contamination[contamination["era"] == "whole panel"]
+        if len(whole):
+            level = float(whole["mean_synthetic_share_of_intl_leg"].iloc[0]) * 100
+            ax.axhline(level, color="black", linestyle="--", linewidth=1.3)
+            ax.annotate(f"whole panel: {level:.0f}%", (len(block) - 0.5, level),
+                        textcoords="offset points", xytext=(-4, 5),
+                        ha="right", fontsize=8)
+        ax.set_xticks(x)
+        ax.set_xticklabels(block["era"], fontsize=8)
+        ax.set_ylim(0, max(values.max() * 1.25, 10))
+        ax.set_ylabel("Share of the international leg that is simulated (%)")
+        ax.set_title("Even an observed country's international leg\n"
+                     "is mostly simulated by 2000", fontsize=10)
+        ax.grid(axis="x", alpha=0.0)
+
+        ax = axes[2]
+        block = tail.sort_values("ratio")
+        y = np.arange(len(block))
+        ax.barh(y, block["ratio"], color=_colour(2), height=0.62)
+        ax.axvline(1.0, color="black", linewidth=1.3)
+        ax.annotate("equal variance", (1.0, len(block) - 0.4),
+                    textcoords="offset points", xytext=(5, 0), fontsize=8)
+        ax.set_yticks(y)
+        ax.set_yticklabels(block["iso"], fontsize=7.5)
+        ax.set_xlabel("Tail s.d. ÷ reference s.d. (equity returns)")
+        ax.set_title("Every country's last five years are\n"
+                     "smoother than its history", fontsize=10)
+        ax.grid(axis="y", alpha=0.0)
+        fig.tight_layout()
+    return _save(fig, directory, name)
+
+
+def plot_housing(audit: pd.DataFrame, directory: str | Path,
+                 name: str = "fig39_housing_smoothing") -> Path:
+    """Why the observed housing series stays out of the investable set.
+
+    Left: risk and return by country, housing as published and again with its
+    own smoothing undone, against that country's equity. Right: the lag-one
+    autocorrelation that does the work, country by country.
+    """
+    block = audit.sort_values("sd").reset_index(drop=True)
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(1, 2, figsize=(13.5, 5.4),
+                                 gridspec_kw={"width_ratios": [1.25, 1.0]})
+
+        ax = axes[0]
+        series = [
+            ("sd", "mean", 0, "o", "Housing, as published"),
+            ("sd_desmoothed", "mean", 1, "s", "Housing, de-smoothed"),
+            ("equity_sd", "equity_mean", 2, "^", "Domestic equity"),
+        ]
+        for x_col, y_col, colour, marker, label in series:
+            ax.scatter(block[x_col] * 100, block[y_col] * 100,
+                       s=46, color=_colour(colour), marker=marker,
+                       edgecolor="white", linewidth=0.6, label=label, zorder=3)
+        # One arrow per country, published -> de-smoothed, so the correction is
+        # readable as a movement rather than as two unrelated clouds.
+        for row in block.itertuples():
+            ax.annotate("", xy=(row.sd_desmoothed * 100, row.mean * 100),
+                        xytext=(row.sd * 100, row.mean * 100),
+                        arrowprops={"arrowstyle": "->", "linewidth": 0.7,
+                                    "color": "0.55", "shrinkA": 3,
+                                    "shrinkB": 3}, zorder=2)
+        ax.set_xlabel("Standard deviation of real annual returns (%)")
+        ax.set_ylabel("Mean real annual return (%)")
+        ax.set_title("Housing earns equity-like returns at a fraction of the\n"
+                     "risk; de-smoothing closes part of that gap, not all",
+                     fontsize=10)
+        ax.legend(fontsize=8, loc="lower right")
+
+        ax = axes[1]
+        order = block.sort_values("autocorrelation")
+        y = np.arange(len(order))
+        height = 0.38
+        ax.barh(y + height / 2, order["autocorrelation"], height,
+                color=_colour(0), label="Housing")
+        ax.barh(y - height / 2, order["equity_autocorrelation"], height,
+                color=_colour(2), label="Domestic equity")
+        ax.axvline(0.0, color="black", linewidth=1.1)
+        ax.set_yticks(y)
+        ax.set_yticklabels(order["iso"], fontsize=7.5)
+        ax.set_xlabel("First-order autocorrelation of real returns")
+        ax.set_title("Housing returns are persistent where\n"
+                     "equity returns are not", fontsize=10)
+        ax.legend(fontsize=8, loc="lower right")
+        ax.grid(axis="y", alpha=0.0)
         fig.tight_layout()
     return _save(fig, directory, name)

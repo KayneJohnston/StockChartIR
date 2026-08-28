@@ -110,9 +110,7 @@ class BatchEvaluator:
         n_k, horizon = weights.shape[0], spec.horizon
         n_paths = self.n_paths
 
-        # (H, N, 4) @ (H, 4, K) -> (H, N, K)
-        rp = np.matmul(self._returns,
-                       np.ascontiguousarray(weights.transpose(1, 2, 0)))
+        rp = self._portfolio_returns(weights)
 
         wealth = np.zeros((n_paths, n_k))
         consumption = np.zeros((n_paths, n_k, horizon - consumption_from))
@@ -159,6 +157,20 @@ class BatchEvaluator:
                                              (n_paths, n_k))
 
         return consumption, wealth, ruined
+
+    def _portfolio_returns(self, weights: np.ndarray) -> np.ndarray:
+        """Per-year portfolio return for each candidate: ``(H, N, K)``.
+
+        Isolated from :meth:`simulate` so that a subclass can change how a
+        weight vector becomes a return without duplicating the recursion.
+        :class:`src.leverage.LeveredEvaluator` is the reason it exists: a
+        levered portfolio scales the sleeve return and subtracts a borrowing
+        cost, but the wealth, withdrawal and utility arithmetic around it is
+        identical.
+        """
+        # (H, N, 4) @ (H, 4, K) -> (H, N, K)
+        return np.matmul(self._returns,
+                         np.ascontiguousarray(weights.transpose(1, 2, 0)))
 
     # -- objective ----------------------------------------------------------
     def cec(self, weights: np.ndarray, gamma: float) -> np.ndarray:

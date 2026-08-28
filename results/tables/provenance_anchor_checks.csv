@@ -1,0 +1,6 @@
+what,iso,year,series,workbook,independently_known,difference,within_tolerance
+US equities in the worst year of the slump,USA,1931,eq_tr,-0.40296581387519836,-0.43,0.02703418612480163,True
+US equities in the global financial crisis,USA,2008,eq_tr,-0.3875488340854645,-0.37,-0.017548834085464482,True
+US equities in the 1974 bear market,USA,1974,eq_tr,-0.2543785572052002,-0.26,0.005621442794799814,True
+US equities rebounding in 1933,USA,1933,eq_tr,0.5263929963111877,0.54,-0.013607003688812291,True
+US equities in 2013,USA,2013,eq_tr,0.2956359088420868,0.32,-0.024364091157913215,True
