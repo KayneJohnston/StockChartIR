@@ -510,3 +510,66 @@ accumulation:
                          bills_only]
   income_volatility_factors: [0.5, 1.0, 1.5]
   quantiles: [0.01, 0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95, 0.99]
+
+# ---------------------------------------------------------------------------
+# Step 12 -- the whole allocation, solved
+# ---------------------------------------------------------------------------
+# `glide_path` above solves the equity share per age and the domestic split on
+# five-year bands, but holds the fixed-income sleeve at a fixed 70/30 bond/bill
+# mix.  This removes that restriction: the decision variable is the full weight
+# simplex at every year of the lifecycle.
+allocation:
+  enabled: true
+  n_paths: 20000
+
+  # A coarse lattice sweep lands in the right region of the simplex; a fine
+  # pairwise-exchange sweep refines inside it.  A lattice fine enough to be
+  # precise is far too large to sweep at every age, and a local search alone is
+  # too easy to trap.
+  coarse_step: 0.25          # 35 candidate allocations
+  fine_step: 0.05            # 12 single-step exchanges around the incumbent
+  coarse_sweeps: 2
+  fine_sweeps: 4
+
+  # Restarts from three corners of the simplex, to look for a local optimum.
+  restart_risk_aversion: 5.0
+  restart_starts:
+    - [0.25, 0.25, 0.25, 0.25]
+    - [0.50, 0.50, 0.00, 0.00]
+    - [0.00, 0.00, 0.50, 0.50]
+
+# ---------------------------------------------------------------------------
+# Step 13 -- borrowing to invest
+# ---------------------------------------------------------------------------
+# Every allocation elsewhere in this project is long-only and fully invested.
+# This asks what leverage is worth at each price of credit, and where the price
+# gets high enough that it is worth nothing.
+leverage:
+  enabled: true
+  n_paths: 20000
+  risk_aversion: 5.0
+
+  # Leverage ratio: 1.0 is the unlevered baseline every other section uses.
+  leverage_grid: [1.0, 1.1, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0]
+
+  # Annual real cost of borrowing *above* the realised real bill rate.  0 is
+  # the frictionless bound; 1-3% brackets what a retail investor actually pays
+  # through a margin account or a leveraged fund.
+  spread_grid: [0.0, 0.005, 0.01, 0.015, 0.02, 0.03, 0.05]
+
+  # Allocations searched at each (spread, leverage) pair.  The same coarse
+  # lattice the allocation step uses, so the two studies share a candidate set.
+  allocation_step: 0.25
+
+  # Solve a leverage ratio for each age, holding the allocation fixed.  This is
+  # the Ayres-Nalebuff question: should a young investor lever and then delever?
+  schedule:
+    enabled: true
+    spreads: [0.0, 0.01, 0.02]
+    grid: [1.0, 1.25, 1.5, 2.0, 2.5, 3.0]
+    sweeps: 2
+
+  # Distributional detail is reported for these configurations.
+  detail_leverage: [1.0, 1.5, 2.0, 3.0]
+  detail_spread: 0.01
+

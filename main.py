@@ -23,10 +23,12 @@ import numpy as np
 import pandas as pd
 
 from src import accumulation as acc
+from src import allocation as al
 from src import bootstrap as bs
 from src import data_loader as dl
 from src import glidepath as gp
 from src import hedging as hg
+from src import leverage as lev
 from src import lifecycle as lc
 from src import plots
 from src import report as rp
@@ -70,6 +72,20 @@ def _apply_quick(cfg: Dict[str, Any]) -> Dict[str, Any]:
     if "saving" in cfg:
         cfg["saving"]["n_paths"] = 2000
         cfg["saving"]["shape_sweeps"] = 1
+    if "allocation" in cfg:
+        cfg["allocation"]["n_paths"] = 2000
+        cfg["allocation"]["coarse_sweeps"] = 1
+        cfg["allocation"]["fine_sweeps"] = 1
+        cfg["allocation"]["restart_starts"] = [[0.25, 0.25, 0.25, 0.25],
+                                               [0.5, 0.5, 0.0, 0.0]]
+    if "leverage" in cfg:
+        cfg["leverage"]["n_paths"] = 2000
+        cfg["leverage"]["leverage_grid"] = [1.0, 1.5, 2.0]
+        cfg["leverage"]["spread_grid"] = [0.0, 0.01, 0.03]
+        cfg["leverage"]["detail_leverage"] = [1.0, 1.5, 2.0]
+        cfg["leverage"]["schedule"]["spreads"] = [0.0]
+        cfg["leverage"]["schedule"]["grid"] = [1.0, 1.5, 2.0]
+        cfg["leverage"]["schedule"]["sweeps"] = 1
     if "accumulation" in cfg:
         cfg["accumulation"]["n_paths"] = 2000
         cfg["accumulation"]["response_grids"] = {
@@ -1578,16 +1594,217 @@ def step11_accumulation(cfg: Dict[str, Any],
 
 
 # ---------------------------------------------------------------------------
+# Step 12
+# ---------------------------------------------------------------------------
+def _solver_inputs(cfg: Dict[str, Any], state: Dict[str, Any],
+                   n_paths: int) -> Tuple[Any, lc.LifecycleSpec, np.ndarray]:
+    """Bootstrap paths, spec and income for the batched schedule solvers."""
+    spec = state.get("spec") or lc.spec_from_config(cfg)
+    sampler = bs.from_config(state["panel"], cfg, horizon_years=spec.horizon)
+    paths = sampler.sample(n_paths,
+                           chunk_size=int(cfg["bootstrap"]["chunk_size"]))
+    rng = np.random.default_rng(int(cfg["run"]["seed"]))
+    income = lc.simulate_income(spec, n_paths, rng=rng)
+    return paths, spec, income
+
+
+def step12_allocation(cfg: Dict[str, Any],
+                      state: Dict[str, Any]) -> Dict[str, Any]:
+    """Solve the full four-asset weight simplex at every age; write docs/12."""
+    alloc_cfg = cfg.get("allocation", {})
+    if not alloc_cfg.get("enabled", False):
+        LOGGER.info("full-allocation solve disabled; skipping step 12")
+        return state
+    LOGGER.info("=== STEP 12: solving the whole allocation ===")
+    started = time.perf_counter()
+
+    n_paths = int(alloc_cfg["n_paths"])
+    paths, spec, income = _solver_inputs(cfg, state, n_paths)
+    evaluator = gp.BatchEvaluator(paths, spec, income, cfg)
+    gammas = [float(g) for g in cfg["utility"]["risk_aversions"]]
+    baseline_gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    search = dict(coarse_step=float(alloc_cfg["coarse_step"]),
+                  fine_step=float(alloc_cfg["fine_step"]),
+                  coarse_sweeps=int(alloc_cfg["coarse_sweeps"]),
+                  fine_sweeps=int(alloc_cfg["fine_sweeps"]))
+
+    solved: Dict[float, np.ndarray] = {}
+    frames: List[pd.DataFrame] = []
+    traces: List[pd.DataFrame] = []
+    for gamma in gammas:
+        schedule, cec, trace = al.optimise_full_simplex(
+            evaluator, gamma, label=f"gamma={gamma:g} ", **search)
+        solved[gamma] = schedule
+        frames.append(al.schedule_frame(schedule, spec, gamma))
+        trace["risk_aversion"] = gamma
+        traces.append(trace)
+        LOGGER.info("full simplex solved for gamma=%.1f: CEC=%.6f", gamma, cec)
+    schedules = pd.concat(frames, ignore_index=True)
+    convergence = pd.concat(traces, ignore_index=True)
+    phases = al.phase_summary(schedules)
+
+    deviation = pd.concat([
+        al.deviation_profile(evaluator, solved[g], g, spec) for g in gammas],
+        ignore_index=True)
+
+    strategies = lc.build_strategies(cfg, spec)
+    extra: Dict[str, np.ndarray] = {}
+    glide = state.get("glide_schedules")
+    if glide is not None and len(glide):
+        for kind in glide["kind"].unique():
+            block = glide[(glide["kind"] == kind)
+                          & np.isclose(glide["risk_aversion"], baseline_gamma)]
+            if len(block) == spec.horizon:
+                block = block.sort_values("age")
+                extra[f"docs07_{str(kind)}"] = gp.weights_from_shares(
+                    block["equity_share"].to_numpy(dtype=float),
+                    block["domestic_share_of_equity"].to_numpy(dtype=float),
+                    float(cfg["glide_path"]["bond_share"]))
+    comparison = al.compare_to_benchmarks(evaluator, solved, strategies,
+                                          gammas, extra=extra)
+
+    restarts, _, _ = al.restart_check(
+        evaluator, float(alloc_cfg["restart_risk_aversion"]),
+        [list(map(float, row)) for row in alloc_cfg["restart_starts"]],
+        **search)
+
+    tables = cfg["run"]["table_dir"]
+    for frame, name in ((schedules, "allocation_solved_schedules"),
+                        (phases, "allocation_phase_summary"),
+                        (convergence, "allocation_convergence"),
+                        (deviation, "allocation_deviation_profile"),
+                        (comparison, "allocation_comparison"),
+                        (restarts, "allocation_restarts")):
+        _save_table(frame, tables, name)
+
+    figures = [
+        str(plots.plot_full_allocation(schedules, deviation,
+                                       cfg["run"]["figure_dir"],
+                                       retire_age=spec.age_retire)),
+        str(plots.plot_allocation_comparison(comparison, phases,
+                                             cfg["run"]["figure_dir"])),
+    ]
+
+    elapsed = time.perf_counter() - started
+    rp.write_doc_12(
+        Path("docs") / "12_full_allocation.md", cfg,
+        {"schedules": schedules, "phases": phases,
+         "convergence": convergence, "deviation": deviation,
+         "comparison": comparison, "restarts": restarts},
+        figures, {"elapsed_seconds": elapsed, "n_paths": n_paths})
+    LOGGER.info("docs/12 written (%.0fs)", elapsed)
+    state.update({"allocation_schedules": schedules,
+                  "allocation_solved": solved})
+    return state
+
+
+# ---------------------------------------------------------------------------
+# Step 13
+# ---------------------------------------------------------------------------
+def step13_leverage(cfg: Dict[str, Any],
+                    state: Dict[str, Any]) -> Dict[str, Any]:
+    """Optimal leverage and allocation by the price of credit; write docs/13."""
+    lev_cfg = cfg.get("leverage", {})
+    if not lev_cfg.get("enabled", False):
+        LOGGER.info("leverage study disabled; skipping step 13")
+        return state
+    LOGGER.info("=== STEP 13: borrowing to invest ===")
+    started = time.perf_counter()
+
+    n_paths = int(lev_cfg["n_paths"])
+    paths, spec, income = _solver_inputs(cfg, state, n_paths)
+    gamma = float(lev_cfg["risk_aversion"])
+    gammas = [float(g) for g in cfg["utility"]["risk_aversions"]]
+    evaluator = lev.make_evaluator(paths, spec, income, cfg)
+    allocations = al.simplex_lattice(float(lev_cfg["allocation_step"]))
+
+    sweep = lev.sweep_cost_and_leverage(
+        evaluator, gamma,
+        [float(v) for v in lev_cfg["leverage_grid"]],
+        [float(v) for v in lev_cfg["spread_grid"]],
+        allocations)
+    optimal = lev.optimal_by_cost(sweep)
+    break_even = lev.break_even_spread(sweep)
+    LOGGER.info("leverage break-even spread: %.4f", break_even)
+
+    detail_spread = float(lev_cfg["detail_spread"])
+    best_row = optimal[np.isclose(optimal["spread"], detail_spread)]
+    best_weights = np.array(
+        [float(best_row[a].iloc[0]) for a in lc.ASSETS]) if len(best_row) \
+        else np.array([0.5, 0.5, 0.0, 0.0])
+    detail_rows: List[Dict[str, Any]] = []
+    for ratio in lev_cfg["detail_leverage"]:
+        evaluator.spread = detail_spread
+        evaluator.set_leverage(float(ratio))
+        weights = np.repeat(best_weights[None, :], spec.horizon, axis=0)
+        detail_rows.append(lev.outcome_detail(
+            evaluator, weights, spec, cfg, gammas,
+            extra={"leverage": float(ratio), "spread": detail_spread}))
+    detail = pd.DataFrame.from_records(detail_rows)
+    base_cec = float(detail[np.isclose(detail["leverage"], 1.0)]
+                     [f"cec_gamma{gamma:g}"].iloc[0])
+    detail["vs_unlevered_pct"] = (detail[f"cec_gamma{gamma:g}"]
+                                  / base_cec - 1.0) * 100.0
+
+    schedule_frames: List[pd.DataFrame] = []
+    schedule_cfg = lev_cfg.get("schedule", {})
+    if schedule_cfg.get("enabled", False):
+        weights = np.repeat(best_weights[None, :], spec.horizon, axis=0)
+        for spread in schedule_cfg["spreads"]:
+            solved, cec, _ = lev.optimise_leverage_schedule(
+                evaluator, gamma, weights,
+                [float(v) for v in schedule_cfg["grid"]], float(spread),
+                n_sweeps=int(schedule_cfg["sweeps"]))
+            schedule_frames.append(pd.DataFrame({
+                "spread": float(spread), "age": spec.ages[:spec.horizon],
+                "leverage": solved, "solved_cec": cec,
+                "phase": np.where(np.arange(spec.horizon) < spec.n_working,
+                                  "working", "retired")}))
+    schedule = pd.concat(schedule_frames, ignore_index=True) \
+        if schedule_frames else pd.DataFrame()
+    by_decade = lev.schedule_by_decade(schedule) if len(schedule) \
+        else pd.DataFrame()
+
+    tables = cfg["run"]["table_dir"]
+    for frame, name in ((sweep, "leverage_sweep"),
+                        (optimal, "leverage_optimal_by_cost"),
+                        (detail, "leverage_outcome_detail"),
+                        (schedule, "leverage_schedule"),
+                        (by_decade, "leverage_schedule_by_decade")):
+        if len(frame):
+            _save_table(frame, tables, name)
+
+    figures = [
+        str(plots.plot_leverage_surface(sweep, optimal,
+                                        cfg["run"]["figure_dir"]))]
+    if len(schedule):
+        figures.append(str(plots.plot_leverage_detail(
+            detail, schedule, cfg["run"]["figure_dir"])))
+
+    elapsed = time.perf_counter() - started
+    rp.write_doc_13(
+        Path("docs") / "13_leverage.md", cfg,
+        {"sweep": sweep, "optimal": optimal, "detail": detail,
+         "schedule": schedule, "by_decade": by_decade},
+        figures, {"elapsed_seconds": elapsed, "n_paths": n_paths,
+                  "break_even_spread": break_even, "gamma": gamma})
+    LOGGER.info("docs/13 written (%.0fs)", elapsed)
+    state.update({"leverage_sweep": sweep, "leverage_optimal": optimal})
+    return state
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
          4: step4_report, 5: step5_sensitivity, 6: step6_spending,
          7: step7_glide_path, 8: step8_hedging, 9: step9_retirement_timing,
-         10: step10_saving, 11: step11_accumulation}
+         10: step10_saving, 11: step11_accumulation,
+         12: step12_allocation, 13: step13_leverage}
 
 
 def run(config_path: str = "config.yaml",
-        steps: Sequence[int] = (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11),
+        steps: Sequence[int] = tuple(range(1, 14)),
         quick: bool = False) -> Dict[str, Any]:
     """Execute the pipeline and return the accumulated state."""
     cfg = dl.load_config(config_path)
@@ -1617,8 +1834,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--steps", nargs="+", type=int,
-                        default=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
-                        choices=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11])
+                        default=list(range(1, 14)),
+                        choices=list(range(1, 14)))
     parser.add_argument("--quick", action="store_true",
                         help="small N for smoke tests")
     parser.add_argument("--verbose", action="store_true")

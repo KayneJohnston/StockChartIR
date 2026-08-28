@@ -70,8 +70,10 @@ the paper cannot drift away from the pipeline that produced it. See
 | [`docs/09_retirement_timing.md`](docs/09_retirement_timing.md) | Retirement as a path-dependent decision; value of conditioning on markets; the retirement-date lottery |
 | [`docs/10_savings_rate.md`](docs/10_savings_rate.md) | When to save over a career, and whether the rate should respond to the portfolio |
 | [`docs/11_accumulation_signal.md`](docs/11_accumulation_signal.md) | The savings-rate signal taken apart: functional form, asymmetry, target choice, eight competing signals, feasibility bands, and where the value lands |
+| [`docs/12_full_allocation.md`](docs/12_full_allocation.md) | The full four-asset weight simplex -- domestic equity, international equity, bonds and bills -- solved at every year of the lifecycle |
+| [`docs/13_leverage.md`](docs/13_leverage.md) | Borrowing to invest: the optimal leverage ratio and allocation at each price of credit, and the break-even spread |
 
-All eleven are **generated** by `main.py` from live pipeline objects -- edit
+All thirteen are **generated** by `main.py` from live pipeline objects -- edit
 `src/report.py`, not the Markdown.
 
 ## Sensitivity
@@ -437,6 +439,7 @@ python main.py --steps 1 8          # panel + currency-hedging sweep only
 python main.py --steps 1 9          # panel + retirement-timing analysis only
 python main.py --steps 1 10         # panel + savings-rate analysis only
 python main.py --steps 11           # the accumulation-signal deep dive
+python main.py --steps 12 13        # the full allocation solve and leverage
 python main.py --config other.yaml  # a different parameterisation
 ```
 
@@ -460,6 +463,8 @@ python main.py --config other.yaml  # a different parameterisation
 │   ├── retirement.py     # path-dependent retirement + saving engine
 │   ├── saving.py         # savings-rate rules and shape optimiser
 │   ├── accumulation.py   # response forms, signal horse race, feasibility bands
+│   ├── allocation.py     # the four-asset simplex solved at every age
+│   ├── leverage.py       # levered evaluator and the cost-of-credit sweep
 │   ├── plots.py          # publication-quality figures
 │   └── report.py         # Markdown report generation
 ├── tests/                # 312 unit + integration tests

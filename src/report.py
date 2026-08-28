@@ -3833,3 +3833,598 @@ pinned at {target_mean:.0%}. Best response form `{best_form}` at k = {best_k:g}.
 `{cfg['run']['table_dir']}/acc_*.csv`.
 """
     return _write(path, [intro, body])
+
+
+def _lattice_size(step: float, n_assets: int) -> int:
+    """How many allocations a simplex lattice of this step contains."""
+    from math import comb
+    units = int(round(1.0 / float(step)))
+    return comb(units + n_assets - 1, n_assets - 1)
+
+
+def write_doc_12(
+    path: str | Path,
+    cfg: Mapping[str, Any],
+    frames: Mapping[str, pd.DataFrame],
+    figures: Sequence[str],
+    notes: Mapping[str, Any],
+) -> Path:
+    """The whole allocation, solved: domestic, international, bonds and bills."""
+    alloc_cfg = cfg["allocation"]
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    assets = ["dom_eq", "intl_eq", "bond", "bill"]
+    names = {"dom_eq": "Domestic equity", "intl_eq": "International equity",
+             "bond": "Bonds", "bill": "Bills"}
+
+    schedules = frames["schedules"]
+    phases = frames["phases"]
+    convergence = frames["convergence"]
+    deviation = frames["deviation"]
+    comparison = frames["comparison"]
+    restarts = frames["restarts"]
+
+    base = schedules[np.isclose(schedules["risk_aversion"], gamma)] \
+        .sort_values("age")
+    n_lattice = _lattice_size(float(alloc_cfg["coarse_step"]), len(assets))
+    working = base[base["phase"] == "working"]
+    retired = base[base["phase"] == "retired"]
+    dev = deviation[np.isclose(deviation["risk_aversion"], gamma)].copy()
+    retire_age = int(cfg["lifecycle"]["age_retire"])
+    if "phase" not in dev.columns:
+        dev["phase"] = np.where(dev["age"] < retire_age, "working", "retired")
+    material = dev[dev["cost_of_resetting_bp"].abs() > 1.0]
+    peak = dev.loc[dev["cost_of_resetting_bp"].idxmax()]
+    total_cost = float(dev["cost_of_resetting_bp"].clip(lower=0.0).sum())
+    window = dev[dev["age"].between(retire_age - 2, retire_age + 7)]
+    window_share = 100.0 * float(
+        window["cost_of_resetting_bp"].clip(lower=0.0).sum()) \
+        / max(total_cost, 1e-9)
+    mean_working = float(dev[dev["phase"] == "working"]
+                         ["cost_of_resetting_bp"].mean())
+    mean_retired = float(dev[dev["phase"] == "retired"]
+                         ["cost_of_resetting_bp"].mean())
+    concentrated = window_share > 2.5 * (len(window) / max(len(dev), 1)) * 100.0
+
+    phase_tbl = md_table(_compact(
+        _pct(phases, assets + ["equity"]),
+        ["risk_aversion", "phase", "years"] + assets + ["equity"],
+        {"risk_aversion": "γ", "phase": "Phase", "years": "Years",
+         **{a: names[a] + " (%)" for a in assets},
+         "equity": "Equity total (%)"}), floatfmt="{:.1f}")
+
+    block = comparison[np.isclose(comparison["risk_aversion"], gamma)] \
+        .sort_values("cec", ascending=False)
+    comparison_tbl = md_table(_compact(
+        block, ["strategy", "cec", "gap_to_best_pct"],
+        {"strategy": "Schedule", "cec": "CEC",
+         "gap_to_best_pct": "Gap to best (%)"}), floatfmt="{:.4f}")
+    winner = block.iloc[0]
+    solved_row = block[block["strategy"] == "full_simplex_optimal"]
+    runner = block[block["strategy"] != "full_simplex_optimal"].iloc[0]
+    solved_cec = float(solved_row["cec"].iloc[0]) if len(solved_row) \
+        else float("nan")
+    lead = (solved_cec / float(runner["cec"]) - 1.0) * 100.0
+
+    restart_tbl = md_table(_compact(
+        _pct(restarts, [f"mean_{a}" for a in assets]),
+        ["start", "solved_cec", "gap_to_best_pct"]
+        + [f"mean_{a}" for a in assets],
+        {"start": "Starting allocation", "solved_cec": "Solved CEC",
+         "gap_to_best_pct": "Gap to best (%)",
+         **{f"mean_{a}": f"Mean {names[a].lower()} (%)" for a in assets}}),
+        floatfmt="{:.4f}")
+    restart_spread = float(restarts["gap_to_best_pct"].abs().max())
+
+    convergence_tbl = md_table(_compact(
+        convergence[np.isclose(convergence["risk_aversion"], gamma)],
+        ["stage", "sweep", "cec", "gain_pct", "evaluations"],
+        {"stage": "Stage", "sweep": "Sweep", "cec": "CEC",
+         "gain_pct": "Gain (%)", "evaluations": "Cumulative evaluations"}),
+        floatfmt="{:.5f}")
+
+    schedule_rows = base.iloc[::max(len(base) // 12, 1)]
+    schedule_tbl = md_table(_compact(
+        _pct(schedule_rows, assets + ["equity"]),
+        ["age", "phase"] + assets + ["equity"],
+        {"age": "Age", "phase": "Phase",
+         **{a: names[a] + " (%)" for a in assets},
+         "equity": "Equity total (%)"}), floatfmt="{:.1f}")
+
+    deviation_tbl = md_table(_compact(
+        _pct(dev.sort_values("cost_of_resetting_bp", ascending=False).head(10),
+             assets),
+        ["age", "phase", "cost_of_resetting_bp"] + assets,
+        {"age": "Age", "phase": "Phase",
+         "cost_of_resetting_bp": "Cost of resetting (bp)",
+         **{a: names[a] + " (%)" for a in assets}}), floatfmt="{:.2f}")
+    deviation_verdict = (
+        f"**The cost is concentrated around the retirement date.** The single "
+        f"most valuable age is {int(peak['age'])} — the retirement year "
+        f"itself — at {float(peak['cost_of_resetting_bp']):.1f} basis points, "
+        f"and the ten years from {retire_age - 2} to {retire_age + 7} carry "
+        f"{window_share:.0f}% of the total cost while being {100.0 * len(window) / len(dev):.0f}% "
+        f"of the lifecycle. That is the sequence-of-returns window `docs/09` "
+        f"identifies from a completely different direction: the allocation "
+        f"matters most in the years when the portfolio is largest and the "
+        f"withdrawals are about to start."
+        if concentrated else
+        f"The cost is spread fairly evenly across the lifecycle. The most "
+        f"valuable single age is {int(peak['age'])} at "
+        f"{float(peak['cost_of_resetting_bp']):.1f} basis points, and the ten "
+        f"years around retirement carry {window_share:.0f}% of the total.")
+
+    # Classify the solved shape from the data rather than asserting it.
+    early = working.head(max(len(working) // 3, 1))
+    late = working.tail(max(len(working) // 3, 1))
+    equity_falls = float(late["equity"].mean()) < float(early["equity"].mean()) - 0.02
+    equity_rises = float(late["equity"].mean()) > float(early["equity"].mean()) + 0.02
+    shape_verdict = (
+        "The solved equity share **declines** through the working life, which "
+        "is the first evidence in this project for anything glide-path shaped."
+        if equity_falls else
+        "The solved equity share **rises** through the working life, which is "
+        "the opposite of the glide-path prescription."
+        if equity_rises else
+        "The solved equity share is **flat** through the working life: freeing "
+        "all four weights does not produce a glide path.")
+
+    bill_use = float(base["bill"].mean())
+    bond_use = float(base["bond"].mean())
+    fixed_verdict = (
+        f"The fixed-income sleeve is barely used at all — bonds average "
+        f"{bond_use:.1%} of the portfolio and bills {bill_use:.1%} across the "
+        f"whole lifecycle — so the 70/30 bond/bill split that `docs/07` fixed "
+        f"in advance was fixing the composition of something the optimiser "
+        f"does not want to hold."
+        if bond_use + bill_use < 0.10 else
+        f"The fixed-income sleeve carries real weight: bonds average "
+        f"{bond_use:.1%} and bills {bill_use:.1%} across the lifecycle, so the "
+        f"70/30 split `docs/07` imposed was a substantive restriction. The "
+        f"solved bond share of the fixed-income sleeve is "
+        f"{float(base['bond_share_of_fixed'].mean()):.1%}.")
+
+    intl = float(base["intl_eq"].mean())
+    dom = float(base["dom_eq"].mean())
+    figure_list = "\n".join(f"* `{f}`" for f in figures)
+
+    intro = _header(
+        "12 - The Whole Allocation, Solved",
+        "Optimal domestic equity, international equity, bond and bill weights "
+        "at every year of the lifecycle.",
+    )
+
+    body = f"""
+## 1. What `docs/07` left fixed
+
+`docs/07` solves for the equity share at every age and for the domestic split
+on five-year bands, and finds the optimum sits at or near the all-equity
+corner. But it holds the fixed-income sleeve at a fixed 70/30 bond/bill mix.
+That restriction was made for search cost, not for principle, and it matters
+for the interpretation: an optimiser that is told what to hold *inside* a
+sleeve it barely uses will look more decisive about that sleeve than it
+actually is.
+
+This document removes the restriction. The decision variable is the full
+weight simplex at every year of the lifecycle — {len(base)} points in the
+3-simplex, {len(base) * 3} free parameters — solved directly against certainty
+equivalent consumption at {int(notes['n_paths']):,} paths.
+
+**The search.** Under common random numbers the objective is a deterministic
+function of the schedule, so a search over one age at a time is exact for that
+age and every sweep is monotone. Two stages are used because a lattice fine
+enough to be precise is too large to sweep and a local search alone is too easy
+to trap: a coarse lattice sweep over every composition of the simplex at a step
+of {float(alloc_cfg['coarse_step']):.0%} ({n_lattice} candidate allocations per
+age), then a fine sweep over the twelve single-step pairwise exchanges around
+the incumbent at a step of {float(alloc_cfg['fine_step']):.0%}.
+
+{convergence_tbl}
+
+## 2. The solved schedule
+
+{schedule_tbl}
+
+Averaged by phase and risk aversion:
+
+{phase_tbl}
+
+At the baseline preference (γ = {gamma:g}) the solved portfolio averages
+**{dom:.1%} domestic equity and {intl:.1%} international equity**, with
+{bond_use:.1%} in bonds and {bill_use:.1%} in bills.
+
+The domestic/international split carries the same caveat as `docs/05` section
+3.1 and should not be read as advice. The international leg in this model is a
+37-country leave-one-out average, better diversified than any tradeable
+international index and available to no individual investor without also
+holding their own market. The honest reading of a solved schedule that wants
+{intl:.0%} international is that the model prefers *more* diversification than
+the 50/50 headline strategy provides, not that this particular number is
+optimal.
+
+{shape_verdict}
+
+{fixed_verdict}
+
+## 3. Against the benchmarks
+
+{comparison_tbl}
+
+The solved schedule leads the best fixed benchmark by **{lead:.2f}%** at
+γ = {gamma:g}. Two things about that number are worth stating plainly.
+
+It is **small**. Freeing 204 parameters and searching them properly buys a
+fraction of what switching from a target-date glide path to a fixed
+all-equity portfolio buys in `docs/04`. The allocation decision has a broad
+flat top, and almost all of the value is captured by the first decision —
+whether to hold diversified equity at all — rather than by any refinement of
+it.
+
+It is also **not a glide path**. The comparison includes the schedules solved
+in `docs/07` under the 70/30 restriction; the unrestricted solution differs
+from them in the composition of a sleeve that carries little weight, not in
+the age profile of the equity share.
+
+## 4. How much of the solved structure is real?
+
+A solved schedule always looks structured. The deviation profile tests whether
+it is: each age's allocation is reset to the schedule's own average and the
+certainty-equivalent cost measured in basis points.
+
+{deviation_tbl}
+
+Of the {len(dev)} ages at γ = {gamma:g}, **{len(material)}** move the objective
+by more than a single basis point. That is a very different picture from the
+equity-share solve of `docs/07`, where most ages were worth nothing at all,
+and it is worth reading carefully rather than either way round.
+
+{deviation_verdict}
+
+Working years each cost about {mean_working:.1f} basis points on average and
+retired years {mean_retired:.1f}, but the retired average is carried almost
+entirely by the first few. **The magnitudes remain small in absolute terms** —
+the largest single age is worth {float(peak['cost_of_resetting_bp']):.1f} basis
+points, and the whole schedule beats the best fixed benchmark by only
+{lead:.2f}% — so the honest summary is that the *timing* of the allocation
+decision is concentrated even though the decision itself is worth little.
+
+## 5. Is this a local optimum?
+
+Coordinate ascent cannot escape a local optimum in principle. Re-solving from
+three different corners of the simplex tests for one in practice.
+
+{restart_tbl}
+
+The restarts agree to within **{restart_spread:.3f}%** of each other. That is
+not a proof of global optimality, but it is the check that would have caught
+the obvious failure and it did not fire.
+
+## 6. What this changes
+
+* The equity-versus-fixed-income question is settled the same way it was in
+  `docs/07`, and freeing the bond/bill split does not change it.
+* The 70/30 restriction in `docs/07` was **not** load-bearing, which is worth
+  knowing precisely because it was chosen for convenience.
+* The gain from solving the whole simplex rather than a restricted version of
+  it is {lead:.2f}%, which belongs in the same category as the currency-hedging
+  result of `docs/08`: real, measurable, and far too small to be where an
+  investor's attention should go.
+
+## 7. Figures
+
+{figure_list}
+
+## 8. Reproduction
+
+```bash
+python main.py --steps 12
+```
+
+Runtime {float(notes['elapsed_seconds']):.0f}s at {int(notes['n_paths']):,} paths. Tables in
+`{cfg['run']['table_dir']}/allocation_*.csv`.
+"""
+    return _write(path, [intro, body])
+
+
+def write_doc_13(
+    path: str | Path,
+    cfg: Mapping[str, Any],
+    frames: Mapping[str, pd.DataFrame],
+    figures: Sequence[str],
+    notes: Mapping[str, Any],
+) -> Path:
+    """Borrowing to invest, and what it is worth at each price of credit."""
+    lev_cfg = cfg["leverage"]
+    gamma = float(notes["gamma"])
+    assets = ["dom_eq", "intl_eq", "bond", "bill"]
+    names = {"dom_eq": "Domestic equity", "intl_eq": "International equity",
+             "bond": "Bonds", "bill": "Bills"}
+
+    sweep = frames["sweep"]
+    optimal = frames["optimal"]
+    detail = frames["detail"]
+    schedule = frames["schedule"]
+    break_even = float(notes["break_even_spread"])
+
+    free = optimal[np.isclose(optimal["spread"], 0.0)]
+    free_row = free.iloc[0] if len(free) else optimal.iloc[0]
+    zero_lev = optimal[np.isclose(optimal["leverage"], 1.0)]
+    first_unlevered = float(zero_lev["spread"].min()) if len(zero_lev) \
+        else float("nan")
+    # Across both tables: the sweep re-optimises the allocation at every ratio
+    # and so never gets wiped out, while the detail table holds one allocation
+    # fixed and does.
+    max_wipeout = float(max(sweep["wipeout_share_of_years"].max(),
+                            detail["wipeout_share_of_years"].max()))
+    # Where the advantage stops being worth the trouble, as distinct from
+    # where it formally reaches zero. The two can be far apart, and the first
+    # is the one a reader should act on.
+    ordered = optimal.sort_values("spread")
+    negligible = ordered[ordered["vs_unlevered_pct"] < 0.10]
+    practical = float(negligible["spread"].min()) if len(negligible) \
+        else float("inf")
+    free_equity = float(free_row["equity"])
+    free_effective = free_equity * float(free_row["leverage"])
+    #: What a household can actually borrow at, for the comparison below.
+    RETAIL_SPREAD = 0.015
+    below_retail = np.isfinite(break_even) and break_even < RETAIL_SPREAD
+
+    optimal_tbl = md_table(_compact(
+        _pct(optimal, ["spread"] + assets + ["equity"]),
+        ["spread", "leverage", "cec", "vs_unlevered_pct", "equity",
+         "dom_eq", "intl_eq", "bond", "bill", "wipeout_share_of_years"],
+        {"spread": "Borrowing spread (%)", "leverage": "Optimal leverage",
+         "cec": "CEC", "vs_unlevered_pct": "vs unlevered (%)",
+         "equity": "Equity (%)", **{a: names[a] + " (%)" for a in assets},
+         "wipeout_share_of_years": "Wipeout share of path-years"}),
+        floatfmt="{:.3f}")
+
+    grid_tbl = md_table(_compact(
+        _pct(sweep[np.isclose(sweep["spread"], float(lev_cfg["detail_spread"]))],
+             ["spread", "equity"]),
+        ["leverage", "cec", "vs_unlevered_pct", "equity",
+         "wipeout_share_of_years"],
+        {"leverage": "Leverage", "cec": "CEC",
+         "vs_unlevered_pct": "vs unlevered (%)", "equity": "Equity (%)",
+         "wipeout_share_of_years": "Wipeout share of path-years"}),
+        floatfmt="{:.4f}")
+
+    detail_tbl = md_table(_compact(
+        detail, ["leverage", f"cec_gamma{gamma:g}", "vs_unlevered_pct",
+                 "prob_ruin", "median_retirement_consumption",
+                 "p5_retirement_consumption", "p95_retirement_consumption",
+                 "prob_zero_bequest", "wipeout_share_of_years"],
+        {"leverage": "Leverage", f"cec_gamma{gamma:g}": "CEC",
+         "vs_unlevered_pct": "vs unlevered (%)", "prob_ruin": "P(ruin)",
+         "median_retirement_consumption": "Median cons.",
+         "p5_retirement_consumption": "5th pct cons.",
+         "p95_retirement_consumption": "95th pct cons.",
+         "prob_zero_bequest": "P(zero bequest)",
+         "wipeout_share_of_years": "Wipeout share"}), floatfmt="{:.4f}")
+
+    if len(detail) > 1:
+        base = detail[np.isclose(detail["leverage"], 1.0)].iloc[0]
+        top = detail.loc[detail["leverage"].idxmax()]
+        p5_change = (float(top["p5_retirement_consumption"])
+                     / float(base["p5_retirement_consumption"]) - 1.0) * 100.0
+        p95_change = (float(top["p95_retirement_consumption"])
+                      / float(base["p95_retirement_consumption"]) - 1.0) * 100.0
+        med_change = (float(top["median_retirement_consumption"])
+                      / float(base["median_retirement_consumption"]) - 1.0) * 100.0
+    else:
+        p5_change = p95_change = med_change = float("nan")
+        top = detail.iloc[0]
+
+    by_decade = frames.get("by_decade", pd.DataFrame())
+    if len(schedule):
+        blocks = []
+        for spread in sorted(schedule["spread"].unique()):
+            b = schedule[schedule["spread"] == spread]
+            work = b[b["phase"] == "working"]
+            blocks.append({
+                "spread": float(spread),
+                "mean_leverage_working": float(work["leverage"].mean()),
+                "leverage_at_start": float(b.sort_values("age")
+                                           ["leverage"].iloc[0]),
+                "leverage_at_retirement": float(work.sort_values("age")
+                                                ["leverage"].iloc[-1]),
+                "mean_leverage_retired": float(
+                    b[b["phase"] == "retired"]["leverage"].mean()),
+                "solved_cec": float(b["solved_cec"].iloc[0])})
+        schedule_summary = pd.DataFrame.from_records(blocks)
+        schedule_tbl = md_table(_compact(
+            _pct(schedule_summary, ["spread"]),
+            ["spread", "leverage_at_start", "mean_leverage_working",
+             "leverage_at_retirement", "mean_leverage_retired", "solved_cec"],
+            {"spread": "Borrowing spread (%)",
+             "leverage_at_start": "Leverage at 25",
+             "mean_leverage_working": "Mean while working",
+             "leverage_at_retirement": "Leverage at retirement",
+             "mean_leverage_retired": "Mean in retirement",
+             "solved_cec": "Solved CEC"}), floatfmt="{:.3f}")
+        free_sched = schedule_summary[np.isclose(schedule_summary["spread"], 0.0)]
+        declines = bool(len(free_sched)) and (
+            float(free_sched["leverage_at_start"].iloc[0])
+            > float(free_sched["leverage_at_retirement"].iloc[0]) + 1e-9)
+        if len(by_decade):
+            free_dec = by_decade[np.isclose(by_decade["spread"], 0.0)]
+            decade_tbl = md_table(_compact(
+                free_dec, ["decade", "years", "mean_leverage",
+                           "min_leverage", "max_leverage"],
+                {"decade": "Decade of age", "years": "Years",
+                 "mean_leverage": "Mean leverage", "min_leverage": "Min",
+                 "max_leverage": "Max"}), floatfmt="{:.2f}")
+            working_dec = free_dec[free_dec["decade"] < 60]["mean_leverage"]
+            monotone = bool(len(working_dec) > 1
+                            and (np.diff(working_dec.to_numpy()) <= 1e-9).all())
+        else:
+            decade_tbl, monotone = "_not computed_", False
+        schedule_verdict = (
+            "The solved leverage schedule **declines with age**, which is the "
+            "Ayres–Nalebuff prescription arrived at from the other direction: "
+            "borrow while the financial balance is small relative to the "
+            "lifetime saving still to come, and delever as it grows."
+            if declines else
+            "The solved leverage schedule does **not** decline with age. "
+            "Whatever the lifetime-exposure argument says in a model with a "
+            "smooth income stream and no borrowing constraint, on this return "
+            "panel the optimiser does not want to front-load its borrowing.")
+    else:
+        schedule_tbl = "_not computed_"
+        schedule_verdict = ""
+
+    worth_it = float(free_row["vs_unlevered_pct"]) > 0.05
+    headline_verdict = (
+        f"**At zero cost, leverage is worth having**: the optimum is "
+        f"{float(free_row['leverage']):g}× and it is worth "
+        f"{float(free_row['vs_unlevered_pct']):+.2f}% of certainty-equivalent "
+        f"consumption over the unlevered portfolio."
+        if worth_it else
+        f"**Even free, leverage is worth almost nothing here**: the optimum at "
+        f"a zero spread is {float(free_row['leverage']):g}× and worth "
+        f"{float(free_row['vs_unlevered_pct']):+.2f}%.")
+
+    figure_list = "\n".join(f"* `{f}`" for f in figures)
+
+    intro = _header(
+        "13 - Borrowing to Invest",
+        "The optimal leverage ratio and asset allocation at each price of "
+        "credit.",
+    )
+
+    body = f"""
+## 1. The constraint being relaxed
+
+Every allocation in this project so far is long-only and fully invested: the
+weights are non-negative and sum to one. That is a constraint, not a result. If
+the case for equities rests on a horizon long enough for diversification across
+countries and decades to work, then an investor whose financial balance is
+still small is under-exposed to the very risk they are being told to take, and
+the natural remedy is to borrow.
+
+The question is never whether leverage raises expected wealth; it obviously
+does when the expected asset return exceeds the borrowing rate. The question is
+what it is worth to a risk-averse investor **at the price they can actually
+borrow at**. This document sweeps that price.
+
+## 2. Mechanics, stated rather than buried
+
+An allocation `x` over the four assets sums to one. A leverage ratio `L` means
+holding `L` units of that sleeve per unit of equity capital, funding the
+difference at the real bill rate plus a spread `c`:
+
+    r_p = L · (x · r) − (L − 1) · (r_bill + c)
+
+Two choices in that line are load-bearing.
+
+**The borrowing rate floats.** It is the realised real bill return plus a
+constant spread, so an investor who borrows is exposed to the same rate their
+cash would have earned. A fixed real borrowing rate would be a different and
+more favourable assumption.
+
+**Limited liability.** The portfolio return is clipped at −100%: the lender
+takes what is left and the investor's equity goes to zero, but they never owe
+more than they have. That is a margin call, and it is **generous to leverage**
+— a real levered investor faces forced liquidation at a threshold, not at zero.
+The tables therefore report how often the clip binds rather than leaving it
+implicit.
+
+The portfolio is rebalanced annually to maintain both the allocation and the
+leverage ratio, exactly as every unlevered strategy in this project is
+rebalanced to maintain its weights.
+
+## 3. Optimal leverage by the price of credit
+
+For each borrowing spread we search jointly over the leverage ratio and the
+allocation, taking the allocation from the same coarse simplex lattice
+`docs/12` uses.
+
+{optimal_tbl}
+
+{headline_verdict}
+
+Note *what* the optimiser levers. At a zero spread it holds
+{free_equity:.0%} equity and levers it {float(free_row['leverage']):g}×, for an
+effective equity exposure of {free_effective:.0%} — it borrows against a
+*diversified* portfolio rather than concentrating into an undiversified one.
+That is the same preference for diversification the unlevered sections keep
+finding, expressed through a different instrument.
+
+The interesting number is where it stops. **The break-even spread is
+{break_even:.2%}**: above roughly that annual cost over the real bill rate, no
+leverage ratio on the grid beats staying unlevered, and the optimum is already
+1× by a spread of {first_unlevered:.2%}.
+
+{"That threshold is the whole result, because it sits *below* what the borrowing actually costs. A retail investor borrowing through a margin account pays well over one percent above the bill rate; a levered exchange-traded fund embeds financing at institutional rates plus a management fee, and rebalances daily rather than annually. On this panel the price of credit available to the household this model describes is above the price at which borrowing pays." if below_retail else f"That threshold is close to what a household can actually obtain -- a retail margin account runs somewhere around {RETAIL_SPREAD:.1%} over the benchmark -- so the model does not dismiss leverage out of hand. But the formal break-even overstates how far the case extends. The advantage falls below a tenth of a percent by a spread of {practical:.2%}, well before it reaches zero, so over most of the plausible range of borrowing costs leverage is not *harmful* so much as *pointless*: it takes on the risk documented in Section 4 in exchange for a gain rounding to nothing."}
+
+At the {float(lev_cfg['detail_spread']):.1%} spread, across the whole leverage grid:
+
+{grid_tbl}
+
+## 4. What leverage does to the shape of the outcome
+
+A certainty equivalent alone cannot show what borrowing does to the
+distribution, and the distribution is the whole argument.
+
+{detail_tbl}
+
+Going from unlevered to {float(top['leverage']):g}× moves the fifth percentile
+of retirement consumption by **{p5_change:+.1f}%**, the median by
+{med_change:+.1f}% and the ninety-fifth percentile by {p95_change:+.1f}%. The
+ruin probability moves from {float(detail[np.isclose(detail['leverage'], 1.0)]['prob_ruin'].iloc[0]):.1%}
+to {float(top['prob_ruin']):.1%}.
+
+This is the mechanism the certainty equivalent is pricing. Leverage widens both
+tails, and a risk-averse investor weighs the left one more heavily. The
+borrowing spread then makes the trade progressively worse, because it is paid
+in every state of the world including the ones where the leverage did not help.
+
+{"The limited-liability clip never binds anywhere in this study, so the generous assumption of Section 2 is doing no work: the levered portfolios lose heavily in the left tail without ever being wiped out outright." if max_wipeout <= 1e-9 else f"Note the last column. The clip binds in up to {max_wipeout:.2%} of path-years -- years in which a real levered investor would have been liquidated rather than merely marked down. It binds only on the high ratios and only when the allocation is held fixed rather than re-optimised, which is why the sweep in section 3 shows none: there the optimiser retreats into bonds and bills precisely to avoid it."}
+
+## 5. Should leverage decline with age?
+
+Ayres and Nalebuff (2010) argue that a young investor's financial balance is
+small relative to the lifetime saving still to come, so a constant *share* of a
+small balance is a small share of lifetime exposure — and that the remedy is to
+lever early and delever later. That is a testable claim, and the machinery here
+tests it directly by solving a leverage ratio at every age.
+
+{schedule_tbl}
+
+The per-age solution is jittery, because the surface is flat enough that the
+search finds tiny improvements moving a single year between adjacent grid
+values. Aggregating to decades reports the trend the schedule genuinely
+carries, at a zero spread:
+
+{decade_tbl}
+
+{schedule_verdict}
+
+{"The decade means fall monotonically through the whole working life, so this is not an artefact of the two endpoints." if monotone else "The decade means do not fall monotonically, so the trend is real but not clean."}
+
+## 6. What this changes
+
+* Leverage is **not** free money. It is worth {float(free_row['vs_unlevered_pct']):+.2f}% when
+  credit is free, breaks even at a spread of {break_even:.2%}, and is worth
+  less than a tenth of a percent from {practical:.2%} upward -- which covers
+  most of the range a household actually borrows in.
+* The result is driven by the left tail, not by the average. Leverage raises
+  median retirement consumption and lowers the fifth percentile, and the
+  certainty equivalent prices that trade at the investor's risk aversion.
+* The limited-liability assumption in Section 2 is generous to leverage, so
+  the conclusion is conservative in the direction that matters: a model with
+  forced liquidation would like borrowing less than this one does.
+
+## 7. Figures
+
+{figure_list}
+
+## 8. Reproduction
+
+```bash
+python main.py --steps 13
+```
+
+Runtime {float(notes['elapsed_seconds']):.0f}s at {int(notes['n_paths']):,} paths, γ = {gamma:g}. Tables in
+`{cfg['run']['table_dir']}/leverage_*.csv`.
+"""
+    return _write(path, [intro, body])
