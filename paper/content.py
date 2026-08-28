@@ -851,20 +851,35 @@ def section_data(ctx: Any) -> List[Flowable]:
             f"{f2(wg['career_multiple'], 2)}×."))
         out.extend(ctx.table(
             rows_from(wg["frame"],
-                      ["country", "years", "geometric_mean", "sd",
-                       "career_multiple"],
-                      ["Country", "Years", "Real wage growth p.a.", "s.d.",
-                       "Compounded over a career"],
+                      ["country", "years", "geometric_mean",
+                       "geometric_mean_ex_war", "sd", "career_multiple"],
+                      ["Country", "Years", "Real wage growth p.a.",
+                       "Excl. war years", "s.d.", "Compounded over a career"],
                       {"country": str, "years": lambda v: f"{int(v)}",
                        "geometric_mean": lambda v: pc(v, 2),
+                       "geometric_mean_ex_war": lambda v: pc(v, 2),
                        "sd": lambda v: pc(v, 1),
                        "career_multiple": lambda v: f2(v, 2)}),
             "Measured real wage growth, and what our income profile assumes",
             note=(f"Geometric means, because they are what compound across a "
                   f"career. Our deterministic profile implies "
                   f"{pc(wg['model_growth'], 2)} a year over the same span."),
-            col_widths=[ctx.width * 0.26, ctx.width * 0.11, ctx.width * 0.24,
-                        ctx.width * 0.13, ctx.width * 0.26]))
+            col_widths=[ctx.width * 0.23, ctx.width * 0.09, ctx.width * 0.21,
+                        ctx.width * 0.16, ctx.width * 0.11,
+                        ctx.width * 0.20]))
+        out.append(ctx.p(
+            f"<b>The war years carry more of that spread than the economics "
+            f"does</b>, which is why the table reports the series both ways. "
+            f"The two largest observations in the panel are Belgium 1919 "
+            f"(+151%) and Finland 1918 (−66%): a wage index spanning "
+            f"occupation, rationing, suppressed prices and post-war repricing "
+            f"is measuring those at least as much as it is measuring wages. "
+            f"Dropping {wg.get('war_years', 'the war years')} lifts the median "
+            f"to {pc(wg['measured_ex_war'], 2)} "
+            f"({wg['war_shifted_by'] * 100:+.2f} percentage points). We keep "
+            f"them in the headline number, because a worker alive then lived "
+            f"through them, and note that excluding them only widens the gap "
+            f"we are about to describe."))
         out.append(ctx.p(
             f"<b>Our income profile has no term for it.</b> Section 4.3 sets "
             f"real labour income as a deterministic hump peaking at age "

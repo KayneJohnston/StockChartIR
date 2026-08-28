@@ -270,6 +270,46 @@ class TestWageAudit:
         assert got["combined_growth"] == pytest.approx(
             (1 + got["measured"]) * (1 + got["model_implied_growth"]) - 1)
 
+    def test_war_years_are_reported_separately(self, jst_wages,
+                                               observed_panel,
+                                               toy_config) -> None:
+        """The headline keeps them; the audit has to show what they cost."""
+        frame = pv.wage_audit(jst_wages, observed_panel, toy_config,
+                              min_years=5)
+        assert "geometric_mean_ex_war" in frame.columns
+        # The toy calendar is 2000-2019, so no year is a war year and the two
+        # columns must agree exactly.
+        assert frame["geometric_mean_ex_war"].to_numpy() == pytest.approx(
+            frame["geometric_mean"].to_numpy())
+
+    def test_excluding_war_years_changes_a_series_that_spans_them(
+            self, observed_panel, toy_config) -> None:
+        years = np.arange(1900, 1980)
+        rows = []
+        for iso in observed_panel.countries:
+            wage, cpi = 100.0, 100.0
+            for year in years:
+                # A calm 2% trend, wrecked once inside a war window.
+                step = 4.0 if year == 1918 else 1.02
+                wage *= step
+                cpi *= 1.0
+                rows.append({"iso": iso, "year": int(year),
+                             "wage": wage, "cpi": cpi})
+        frame = pv.wage_audit(pd.DataFrame.from_records(rows),
+                              dl.Panel(years=years,
+                                       countries=observed_panel.countries,
+                                       tier=observed_panel.tier,
+                                       dom_eq=np.zeros((years.size, 3)),
+                                       intl_eq=np.zeros((years.size, 3)),
+                                       bond=np.zeros((years.size, 3)),
+                                       bill=np.zeros((years.size, 3)),
+                                       inflation=np.zeros((years.size, 3)),
+                                       real_exchange_rate=np.zeros((years.size, 3)),
+                                       available=np.ones((years.size, 3), bool)),
+                              toy_config)
+        assert (frame["geometric_mean"] > frame["geometric_mean_ex_war"]).all()
+        assert frame["geometric_mean_ex_war"].to_numpy() == pytest.approx(0.02)
+
     def test_the_summary_of_an_empty_audit_still_carries_the_model(
             self, toy_config) -> None:
         got = pv.wage_summary(pd.DataFrame(), toy_config)

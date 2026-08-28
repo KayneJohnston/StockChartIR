@@ -4603,11 +4603,12 @@ def write_doc_14(
         floatfmt="{:.2f}") if len(housing) else "_Not audited._"
 
     wage_tbl = md_table(_compact(
-        _pct(wages, ["geometric_mean", "sd"]),
+        _pct(wages, ["geometric_mean", "geometric_mean_ex_war", "sd"]),
         ["country", "years", "first_year", "last_year",
-                "geometric_mean", "sd", "career_multiple"],
+         "geometric_mean", "geometric_mean_ex_war", "sd", "career_multiple"],
         {"country": "Country", "years": "Years", "first_year": "From",
          "last_year": "To", "geometric_mean": "Real wage growth p.a. (%)",
+         "geometric_mean_ex_war": "Excluding war years (%)",
          "sd": "s.d. (%)", "career_multiple": "Compounded over a career"}),
         floatfmt="{:.2f}") if len(wages) else "_Not audited._"
 
@@ -4632,6 +4633,20 @@ The median country compounded real wages at
 {int(wage.get('model_career_years', 0))}-year career this model simulates, the
 median rate compounds to
 **{float(wage.get('career_multiple', float('nan'))):.2f}x**.
+
+**The war years carry more of that spread than the economics does**, which is
+why the table reports the series both ways. The largest single observations in
+the panel are Belgium 1919 (+151%) and Finland 1918 (-66%): a wage index
+spanning occupation, rationing, suppressed prices and post-war repricing is
+measuring those at least as much as it is measuring wages. Dropping
+{wage.get('war_years', 'the war years')} lifts the median to
+{float(wage.get('measured_ex_war', float('nan'))):.2%}
+({float(wage.get('war_shifted_by', float('nan'))) * 100:+.2f} percentage
+points) and moves the lowest country, {wage.get('lowest_country', '')}, from
+{float(wage.get('lowest', float('nan'))):.2%} to a figure an economic
+historian would recognise. The headline number keeps them, because a worker
+alive then lived through them; the comparison below is only strengthened by
+excluding them, so nothing here rests on the choice.
 
 **The lifecycle income profile has no term for it.** `docs/03` section 3 sets
 real labour income as a deterministic hump,

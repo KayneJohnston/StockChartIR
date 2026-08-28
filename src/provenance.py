@@ -247,6 +247,23 @@ def housing_summary(audit: pd.DataFrame) -> Dict[str, Any]:
 #: years the mean is dominated by which decade the series happens to cover.
 MIN_WAGE_YEARS = 30
 
+#: Years in which a wage index is measuring occupation, rationing, suppressed
+#: prices and post-war repricing at least as much as it measures wages. They
+#: are not excluded from the headline number -- a worker alive then lived
+#: through them -- but the audit reports both so a reader can see how much of
+#: the answer they carry.
+WAR_YEARS: Tuple[Tuple[int, int], ...] = ((1914, 1919), (1939, 1946))
+
+
+def _war_mask(years: np.ndarray,
+              windows: Sequence[Tuple[int, int]] = WAR_YEARS) -> np.ndarray:
+    """True for calendar years inside any of ``windows``, inclusive."""
+    years = np.asarray(years)
+    mask = np.zeros(years.shape, dtype=bool)
+    for low, high in windows:
+        mask |= (years >= low) & (years <= high)
+    return mask
+
 
 def wage_audit(jst: pd.DataFrame, panel: dl.Panel, cfg: Mapping[str, Any],
                min_years: int = MIN_WAGE_YEARS) -> pd.DataFrame:
@@ -268,6 +285,7 @@ def wage_audit(jst: pd.DataFrame, panel: dl.Panel, cfg: Mapping[str, Any],
     years = np.asarray(panel.years)
     isos = sorted({str(i) for i in jst["iso"].dropna().unique()})
     growth = obs.wage_growth(jst, isos, years)
+    war = _war_mask(years)
     career = int(cfg["lifecycle"]["age_retire"]) - int(
         cfg["lifecycle"]["age_start"])
     rows: List[Dict[str, Any]] = []
@@ -278,6 +296,9 @@ def wage_audit(jst: pd.DataFrame, panel: dl.Panel, cfg: Mapping[str, Any],
             continue
         # Geometric, because it is what compounds across a career.
         geometric = float(np.exp(np.mean(np.log1p(column[finite]))) - 1.0)
+        peacetime = finite & ~war
+        ex_war = (float(np.exp(np.mean(np.log1p(column[peacetime]))) - 1.0)
+                  if peacetime.sum() >= int(min_years) else float("nan"))
         rows.append({
             "iso": iso,
             "country": dl.ISO_TO_NAME.get(iso, iso),
@@ -286,6 +307,7 @@ def wage_audit(jst: pd.DataFrame, panel: dl.Panel, cfg: Mapping[str, Any],
             "last_year": int(years[finite].max()),
             "mean": float(np.mean(column[finite])),
             "geometric_mean": geometric,
+            "geometric_mean_ex_war": ex_war,
             "sd": float(np.std(column[finite], ddof=1)),
             "career_multiple": float((1.0 + geometric) ** career),
             "in_return_panel": iso in panel.countries,
@@ -321,8 +343,12 @@ def wage_summary(audit: pd.DataFrame, cfg: Mapping[str, Any]) -> Dict[str, Any]:
     if audit.empty:
         return {"countries": 0, **{f"model_{k}": v for k, v in model.items()}}
     measured = float(audit["geometric_mean"].median())
+    ex_war = float(audit["geometric_mean_ex_war"].median())
     combined = (1.0 + measured) * (1.0 + model["implied_growth"]) - 1.0
     return {
+        "measured_ex_war": ex_war,
+        "war_shifted_by": ex_war - measured,
+        "war_years": " and ".join(f"{low}-{high}" for low, high in WAR_YEARS),
         "countries": int(len(audit)),
         "country_years": int(audit["years"].sum()),
         "first_year": int(audit["first_year"].min()),

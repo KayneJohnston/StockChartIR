@@ -20,6 +20,20 @@ import numpy as np
 import pandas as pd
 import yaml
 
+def _war_years_text() -> str:
+    """Name the windows the audit excluded, taken from the audit's own source.
+
+    Spelling them out here would let the paper and the pipeline disagree about
+    which years were dropped, which is exactly the failure this module exists
+    to prevent.
+    """
+    try:
+        from src.provenance import WAR_YEARS
+    except ImportError:                                 # pragma: no cover
+        return "the war years"
+    return " and ".join(f"{low}\u2013{high}" for low, high in WAR_YEARS)
+
+
 TABLES = Path("results/tables")
 FIGURES = Path("results/figures")
 
@@ -360,6 +374,9 @@ class Facts:
             "first_year": int(audit["first_year"].min()),
             "last_year": int(audit["last_year"].max()),
             "measured": measured,
+            "measured_ex_war": float(audit["geometric_mean_ex_war"].median()),
+            "war_shifted_by": float(audit["geometric_mean_ex_war"].median())
+            - measured,
             "lowest": float(audit["geometric_mean"].min()),
             "highest": float(audit["geometric_mean"].max()),
             "lowest_country": str(
@@ -374,6 +391,7 @@ class Facts:
             "model_peak_multiple": float(profile.max() / profile[0]),
             "model_end_multiple": float(profile[-1] / profile[0]),
             "combined_growth": (1.0 + measured) * (1.0 + model_growth) - 1.0,
+            "war_years": _war_years_text(),
             "frame": audit,
         }
 
