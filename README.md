@@ -17,7 +17,8 @@ reaches the same conclusion.
 ## Headline result
 
 100,000 simulated 68-year lifetimes (ages 25-93, retirement at 63), drawn from
-a 38-country developed-market panel, 1890-2020. Certainty equivalent
+a 16-country developed-market panel of recorded returns, 1890-2020. Certainty
+equivalent
 consumption is in multiples of initial annual real income; ruin is exhausting
 financial wealth before age 93 under a 4% real withdrawal rule.
 
@@ -79,60 +80,67 @@ All fourteen are **generated** by `main.py` from live pipeline objects -- edit
 
 ## How much of this data is real
 
-**34.3% of the panel's return cells are simulated** -- one cell being one
-country, one year, one return series, which is the unit the bootstrap actually
-draws -- and so is 38% of an observed investor's international leg (59% after
-2000). `docs/14` audits this in full: 18 of the 38 countries are factor-model
-draws from a randomly assigned observed donor, not series derived from anything
-those countries experienced.
+All of it.
 
-The audit prompted a sweep of the primary files for series the pipeline was not
-reading. It turned up three things.
+The panel is **16 developed markets, 2,010 country-years, 6,030 return cells,
+every one of them a number somebody recorded**. `docs/14` proves that rather
+than asserting it: provenance is tracked per cell, the tier labels are derived
+from those records, and a separate check reports any cell that is available but
+not observed. It is empty.
 
-**Bonds and bills for four more countries.** Canada and Ireland carry a long
-yield, a short rate and a price index in the Jordà-Schularick-Taylor macro file
-but no return series; New Zealand and Austria carry a long yield in Clio-Infra.
-Their bonds and bills are now rebuilt from those published rates rather than
-generated, converting **531 country-years** from simulated to observed and
-cutting the simulated share from 39.6% to 34.3%. Nothing was recovered for
-equity -- the series the headline mechanism runs through -- so the
-international-leg figure is unchanged.
+That is a change, and it is the most important one in the project. This
+replication used to cover **38 developed markets** to match the paper's
+cross-section. It could only do that by generating 22 of them: their equity,
+bond and bill returns were draws from a single-factor model fitted to a
+randomly assigned observed donor, plus Gaussian noise. The audit measured the
+damage -- 39.6% of country-years, and **38% of the average investor's
+international leg**, rising to 59% after 2000 -- and the first version of this
+README argued the simulated data were tolerable because they *diluted* the
+headline rather than creating it.
 
-**Housing total returns, 1,805 country-years across all 16 observed
-countries.** Fully empirical, and nothing in the project read them. Median real
-return 6.6% against 6.9% for the same countries' equity, at a standard
-deviation of 8.9% versus 21.0%. They stay out of the investable set and
-`docs/14` section 3.2 says why: median lag-one autocorrelation is +0.34 against
-+0.06 for equity, and undoing that appraisal smoothing takes the standard
-deviation to 12.0%. Most of the apparent free lunch is a measurement artefact.
+That was true and not a good enough reason. A reader cannot check a number that
+came out of a random number generator, and a cross-section of thirty-eight
+reads as stronger evidence than one of sixteen while being weaker. The
+generated countries are gone.
 
-**Real wage growth for all 18 macro countries, 2,269 country-years.** The
-median country compounded real wages at 1.41% a year. The lifecycle income
-profile has no term for it -- its hump is an *age* effect implying 1.18% a
-year, and in the Cocco-Gomes-Maenhout estimation it comes from the two are
-separate and additive. `docs/14` section 3.3 records this as a quantified
-limitation rather than applying it, because re-estimating the income process is
-a modelling change, not a data one. The bias runs *against* the paper's
-conclusion: less human capital weakens the case for early equity.
+**What it costs:** the international leg is now an average over 15 other
+markets rather than 37. That is a real limit on how far the mechanism
+generalises and `docs/14` states it plainly.
 
-No new external source could be added: outbound access from the build
+**What the sources still hold that this does not use**, each audited in
+`docs/14` and each with its reason:
+
+* **Interest rates for four removed countries** (s8). Austria, Canada, Ireland
+  and New Zealand have real long yields and short rates; their bonds and bills
+  are rebuilt from those and reported. They cannot re-enter the panel, because
+  a lifecycle investor needs a domestic *equity* return and no reachable source
+  carries one for them.
+* **Housing total returns**, 1,805 country-years across all 16 panel countries
+  (s3.1). Median 6.6% real against 6.9% for equity at 8.9% s.d. versus 21.0% --
+  but median lag-one autocorrelation is +0.34 against +0.06, and undoing that
+  appraisal smoothing takes the s.d. to 12.0%. Most of the apparent free lunch
+  is a measurement artefact.
+* **Real wage growth** for all 18 macro countries, 2,269 country-years (s3.2).
+  The median country compounded real wages at 1.41% a year (1.77% excluding the
+  war years). The lifecycle income profile has no term for it: its hump is an
+  *age* effect implying 1.18% a year, and the two are separate and additive in
+  the estimation it comes from. Recorded as a quantified limitation rather than
+  applied, since re-estimating the income process is a modelling change. The
+  bias runs *against* the conclusion -- less human capital weakens the case for
+  early equity.
+
+The 16 countries pass every authenticity check: five independently known annual
+returns land within tolerance, and the internal accounting identity fails at
+the rate a genuine spliced-source database should. One finding does not pass --
+all 16 show a variance collapse over 2016-2020 (sign-test p = 3e-05) -- so
+those five years are flagged as unverified.
+
+No new external source could be added. Outbound access from the build
 environment is denied to the macrohistory host and every other bulk macro-data
 provider tested, and guessing at redistributed mirrors would have reproduced
 exactly the unverifiable provenance this audit exists to warn about. Sixteen
-countries is the ceiling on observed *equity* here, and that is stated as a
-limit rather than worked around.
-
-The 16 countries with real Jordà-Schularick-Taylor return series pass every
-authenticity check -- five independently known annual returns land within
-tolerance, and the internal accounting identity fails at the rate a genuine
-spliced-source database should. One finding does not pass: all 16 countries
-show a variance collapse over 2016-2020 (sign-test p = 3e-05), so those five
-years are flagged as unverified.
-
-**The headline is stronger on observed data alone** -- 11.2% against 7.3% --
-so the simulated countries dilute the result rather than create it. But the
-honest evidence base for the return series is sixteen countries, not
-thirty-eight, and nothing here should lean on the larger number.
+countries is the ceiling on observed equity here, stated as a limit rather than
+worked around.
 
 ## Sensitivity
 
@@ -547,7 +555,7 @@ pipeline.
 | Source | Used for | Licence |
 | --- | --- | --- |
 | [Jordà-Schularick-Taylor Macrohistory Database](https://www.macrohistory.net/database/) (release carrying the Jordà-Knoll-Kuvshinov-Schularick-Taylor *Rate of Return on Everything* series) | nominal equity/bond/bill total returns, CPI, USD exchange rates, 16 countries × 1870-2020 | CC BY-NC-SA 4.0 |
-| [Clio Infra](https://clio-infra.eu/) | CPI inflation and long bond yields for the extended country set | CC BY 4.0 |
+| [Clio Infra](https://clio-infra.eu/) | audit only: long bond yields and CPI for the non-panel countries reported in `docs/14` s8 | CC BY 4.0 |
 
 Both were obtained from the openly licensed
 [`unbalancedparentheses/forex-centuries`](https://github.com/unbalancedparentheses/forex-centuries)
@@ -557,29 +565,24 @@ mirror and are stored verbatim in `data/raw/`.
 
 The paper uses a **proprietary**, hand-collected, monthly 38-country database
 built from Global Financial Data and Dimson-Marsh-Staunton sources. It is not
-redistributable and could not be used here. This replication therefore labels
-every country by provenance:
+redistributable and could not be used here.
 
-* **Tier A (16 countries)** -- equity, bond, bill and inflation series are all
-  empirical, from JST/JKKST. This is where the empirical content lives.
-* **Tier B (4 countries)** -- Canada, Ireland, New Zealand and Austria.
-  Inflation is empirical, and bonds and bills are **observed**, rebuilt from
-  published long yields and short rates via `r_t = y_{t-1} + D(y_{t-1} - y_t)`
-  and deflated by the country's own price index. Their equity is still
-  generated, which is why they are not Tier A.
-* **Tier C (18 countries)** -- inflation is empirical wherever a source exists;
-  equity, bond and bill returns are **calibrated proxies** generated by a
-  single-factor model fitted to the Tier-A cross-section, with donor-inherited
-  residual covariance and documented market-inception dates.
+This replication covers the **16 countries** for which openly licensed,
+recorded equity, bond and bill total returns exist. It does not reach 38, and
+it does not pretend to: the other 22 markets have no return series in any
+source reachable from here, and filling them with model draws -- which an
+earlier version did -- made the cross-section look twice as broad while adding
+no evidence a reader could check.
 
-The tiers are *derived* from a per-cell record of what was observed
-(`Panel.observed_mask`, `data_loader.derive_tiers`) rather than asserted beside
-it, so a label cannot drift from the data it describes.
+Provenance is tracked per cell (`Panel.observed_mask`) and the tier label is
+*derived* from those records (`data_loader.derive_tiers`), so it cannot drift
+from the data it describes. Every country is Tier A. `provenance.generated_cells`
+reports any cell that is available but not observed, and `main.py` logs an
+error if it ever finds one; `build_panel` refuses the old `dev38` panel name
+with an explanation rather than aliasing it, so a stale config cannot bring the
+generated block back silently.
 
-The entire analysis is reported a second time on the Tier-A-only panel. The
-ranking is unchanged and the all-equity advantage is in fact *larger* there, so
-the conclusion is not an artefact of the calibrated extension. Section 7 of
-`docs/04` lists this and every other limitation.
+Section 7 of `docs/04` lists this and every other limitation.
 
 ## Design notes
 
