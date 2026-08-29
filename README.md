@@ -225,31 +225,31 @@ realised career average:
 | Rule | Signal | Value |
 | --- | --- | --- |
 | Solved shape | age only | +0.6% |
-| **On-track** | wealth vs an age-appropriate target | **+3.2%** |
-| Return-responsive | last year's market return | +0.4% |
+| **On-track** | wealth vs an age-appropriate target | **+3.0%** |
+| Return-responsive | last year's market return | +0.9% |
 
 Saving more when behind an age-appropriate wealth-to-income target is worth
-~5× the shape. Saving more after a bad market year is worth almost nothing —
+~5× the shape. Saving more after a bad market year is worth well under a third as much —
 and pushed harder, turns negative. A bad market year is a poor proxy for being
 behind; wealth relative to an age target is the sufficient statistic. (Sign
-check: saving *less* when behind costs −3.2%, which is the reassurance that
+check: saving *less* when behind costs −4.2%, which is the reassurance that
 the machinery measures what it claims.)
 
 **The savings and retirement gains don't add.** Conditioning the retirement
-date is worth ~2.9%; conditioning the savings rate ~3.2%. Doing **both** is
+date is worth ~3.1%; conditioning the savings rate ~3.0%. Doing **both** is
 worth less than savings conditioning alone — they read the same underlying
 signal (am I ahead or behind), so stacking them over-corrects.
 
 ## Taking the savings signal apart
 
-`docs/11` is the stress test of the section above. That +3.2% rests on five
+`docs/11` is the stress test of the section above. That +3.0% rests on five
 choices that were made once and never varied — how the shortfall is measured,
 which target it is measured against, whether the response is symmetric, how
 far the contribution may move, and which years it runs in. 195 rule
 evaluations at 20,000 paths, all scored against a constant rate matched on
 each rule's own realised average, and all reported *net of* the 0.6% the
 solved age profile already earns. (The funded-ratio rule scores +4.4% here
-against +3.2% in `docs/10` because `docs/11` tunes the functional form and the
+against +3.0% in `docs/10` because `docs/11` tunes the functional form and the
 coefficient rather than fixing both in advance — the same rule, better set up.)
 
 **The best signal is not the portfolio.** Eight candidates, one sensitivity
@@ -259,20 +259,20 @@ grid, same scoring:
 | --- | --- | --- |
 | **Income vs its expected path** | pay cheque | **+6.4%** |
 | Funded ratio (wealth vs age target) | stock | +4.4% |
-| Raw balance (wealth ÷ income) | stock | +1.4% |
-| Investment gain (balance vs contributions) | stock | +0.3% |
-| Trailing 5- and 10-year return | flow | +0.04% |
-| Last year's return | flow | +0.02% |
+| Raw balance (wealth ÷ income) | stock | +1.5% |
+| Investment gain (balance vs contributions) | stock | +0.4% |
+| Trailing 5- and 10-year return | flow | +0.03% |
+| Last year's return | flow | +0.01% |
 
 Saving more in years the pay cheque runs above its expected path beats every
 balance rule tested. An income shock is observed *before* it is spent, so
 acting on it costs almost no utility; acting on a portfolio shortfall means
 cutting consumption that was already planned. Every **flow** signal is worth
-essentially nothing — at 0.02–0.04% the ordering among them is not meaningful
+essentially nothing — at 0.01–0.03% the ordering among them is not meaningful
 and shouldn't be read as one.
 
-Layered together, income and the funded ratio reach **+7.3%**, against +6.4%
-for the better one alone and +10.7% if they were additive. They overlap
+Layered together, income and the funded ratio reach **+6.9%**, against +6.4%
+for the better one alone and +10.9% if they were additive. They overlap
 (both weak income and weak markets show up as a balance behind target) but not
 completely.
 
@@ -322,14 +322,16 @@ thirties to ~14.5bp after 40, faster than the rule's activity does.
 retire once wealth reaches a multiple of income, inside an age window. That is
 what people actually do, and it is testable.
 
-**Conditioning the retirement date on the portfolio is worth ~2.9% of
+**Conditioning the retirement date on the portfolio is worth ~3.1% of
 certainty equivalent consumption** — measured against a fixed date *matched on
 the same mean retirement age*, so it isolates the value of responding to
 markets from the value of simply retiring earlier. It is stable across trigger
-multiples (2.9–3.1%). That is roughly nine times the entire
-currency-hedging decision and three times what solving the full
-68-dimensional glide path buys over a static portfolio — **and unlike either,
-it is free.**
+multiples (3.0–3.1%). For scale: currency hedging is worth **nothing at all**
+on this panel — the optimal hedge ratio is zero at every cost tested — and
+solving the full 68-dimensional glide path buys 6.9% over the balanced
+all-equity portfolio. So conditioning the date is worth about half of the
+hardest optimisation in this project, and unlike that one it costs nothing to
+implement.
 
 The rule isn't "retire later" or "retire earlier". Median retirement age is
 63, but the 10th and 90th percentiles are 55 and 70: *retire when the market
@@ -427,27 +429,32 @@ changes which country-years are usable, and the sweep reuses one set of drawn
 
 | Hedge ratio | CEC gain at zero cost | Break-even annual cost |
 | --- | --- | --- |
-| 25% | +0.34% | 33 bp/yr |
-| 50% | +0.20% | 10 bp/yr |
-| 75% | -0.45% | never worth it |
-| 100% | -1.57% | never worth it |
+| 25% | -0.13% | never worth it |
+| 50% | -1.02% | never worth it |
+| 75% | -2.43% | never worth it |
+| 100% | -4.24% | never worth it |
 
-**Even for free, hedging is barely worth doing.** The best ratio is 25%, worth
-+0.34% of certainty equivalent consumption; three-quarters or more is
-negative at any price. The break-even is about **33 basis points a year**, and
-retail hedged share classes generally cost more than that.
+**Hedging is not worth doing at any ratio, even free.** Every hedge ratio
+tested loses certainty-equivalent consumption before a single basis point of
+cost is charged, and the loss grows monotonically with the ratio. There is no
+break-even cost to quote because there is no cost low enough: the decision is
+settled at zero.
 
 **Why, and it isn't the usual story.** Hedging does cut the standalone
 volatility of the foreign sleeve — but not monotonically: volatility bottoms
-out at a 50% hedge (17.87%) and rises again toward a full hedge (19.36%).
+out at a 50% hedge (18.48%, against 21.69% unhedged) and rises again toward a
+full hedge (21.17%).
 In *real* terms, foreign currency partly hedges domestic inflation, and
 hedging removes that offset. Meanwhile hedging raises the correlation between
-the foreign sleeve and the home market, from 0.54 to 0.61: currency
-movement is part of what makes foreign equity a *diversifier* rather than a
-second helping of the same risk.
+the foreign sleeve and the home market, from 0.43 unhedged to a peak of 0.52
+at a half hedge: currency movement is part of what makes foreign equity a
+*diversifier* rather than a second helping of the same risk. Correlation with
+domestic inflation moves the other way, from -0.04 to -0.28, so hedging trades
+away an inflation offset the unhedged sleeve provides for free.
 
-The two effects roughly cancel. "Hedging reduces risk" is true of the sleeve
-in isolation and close to false of the portfolio holding it. (The conventional
+The second effect wins. "Hedging reduces risk" is true of the sleeve in
+isolation and false of the portfolio holding it — which is why every ratio
+loses even when the hedge is free. (The conventional
 advice to hedge foreign *bonds* survives untouched — this tests equities only.)
 
 ## Spending rules
