@@ -24,18 +24,19 @@ financial wealth before age 93 under a 4% real withdrawal rule.
 
 | Strategy | CEC (γ=2) | CEC (γ=5) | CEC (γ=10) | P(ruin) | Median bequest |
 | --- | --- | --- | --- | --- | --- |
-| 100% International Equity | 1.451 | 1.043 | 0.740 | 11.4% | 56.9 |
-| **50/50 Domestic/International Equity** | **1.362** | **1.002** | **0.728** | **14.4%** | **37.5** |
-| Target-Date Fund (glide path) | 1.212 | 0.934 | 0.700 | 22.3% | 9.5 |
-| 60/40 Domestic Equity / Domestic Bonds | 1.120 | 0.873 | 0.673 | 24.3% | 10.0 |
-| 100% Domestic Equity | 1.166 | 0.864 | 0.658 | 28.0% | 12.8 |
-| 100% Bills (cash) | 0.844 | 0.736 | 0.616 | 57.7% | 0.0 |
+| 100% International Equity | 1.521 | 1.108 | 0.782 | 9.0% | 64.2 |
+| **50/50 Domestic/International Equity** | **1.406** | **1.048** | **0.756** | **11.7%** | **44.7** |
+| Target-Date Fund (glide path) | 1.214 | 0.943 | 0.704 | 22.2% | 9.4 |
+| 60/40 Domestic Equity / Domestic Bonds | 1.105 | 0.871 | 0.671 | 24.2% | 10.2 |
+| 100% Domestic Equity | 1.183 | 0.882 | 0.668 | 25.4% | 16.7 |
+| 100% Bills (cash) | 0.847 | 0.739 | 0.618 | 56.4% | 0.0 |
 
 The 50/50 all-equity portfolio **strictly dominates** the target-date fund and
 60/40 on all 21 reported criteria (20 wins, 1 tie, 0 losses), across every
 risk-aversion level and both Epstein-Zin IES values tested. The ordering
-survives on the fully empirical 16-country panel, under per-block country
-resampling, and under uniform country weighting.
+survives under per-block country resampling and under uniform country
+weighting. Every path behind these numbers was drawn from recorded returns --
+see "How much of this data is real" below.
 
 See [`docs/04_replicated_results_and_tables.md`](docs/04_replicated_results_and_tables.md)
 for the full analysis and the caveats.

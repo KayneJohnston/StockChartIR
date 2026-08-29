@@ -1080,9 +1080,9 @@ def section_methods(ctx: Any) -> List[Flowable]:
         f"(<i>{cfg['bootstrap']['country_draw']}</i>) with probability "
         f"proportional to the length of that country's usable history "
         f"(<i>{cfg['bootstrap']['country_weighting']}</i>). Both choices are "
-        f"varied in the robustness analysis of Section 5.5, where the "
-        f"alternatives — redrawing the country at every block, and weighting "
-        f"countries uniformly — leave the ranking unchanged."))
+        f"varied in Appendix C and summarised at the end of Section 5.5: "
+        f"redrawing the country at every block, and weighting countries "
+        f"uniformly, both leave the ranking unchanged."))
 
     out.extend(ctx.table(
         rows_from(moments, ["series", "bootstrap_mean", "panel_pooled_mean",
