@@ -2286,7 +2286,9 @@ def step17_mortgage(cfg: Dict[str, Any],
          "gamma": gamma, "n_paths": int(paths.n_paths),
          "holding_cost": holding_cost, "rate_base": rate_base,
          "detail_spread": detail_spread, "option": option,
-         "lvr_cap": mgg.LVR_CAP, "profile": profile_notes})
+         "lvr_cap": mgg.LVR_CAP, "profile": profile_notes,
+         "solved_cec": float(solved["cec"]),
+         "solved_mean_lvr": float(solved["lvr"].mean())})
     LOGGER.info("docs/17 written (%.0fs)", elapsed)
     state.update({"mortgage_sweep": sweep, "mortgage_schedule": schedule})
     return state

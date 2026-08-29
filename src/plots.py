@@ -2130,7 +2130,15 @@ def plot_mortgage(sweep: pd.DataFrame, schedule: pd.DataFrame,
                 color=_colour(1), va="bottom")
         ax.set_xlabel("Loan-to-value ratio, held for life (%)")
         ax.set_ylabel("Certainty-equivalent consumption")
-        ax.set_title("The decision is interior,\nnot a corner", fontsize=10)
+        top = float(curve["lvr"].max())
+        at_corner = float(best["lvr"]) >= top - 1e-9
+        at_zero = float(best["lvr"]) <= 1e-9
+        ax.set_title(
+            ("Held flat, the ratio runs to the cap:\n"
+             "the ceiling binds, it is not an optimum") if at_corner else
+            ("Held flat, no borrowing is worth\ntaking at this price")
+            if at_zero else
+            ("The decision is interior,\nnot a corner"), fontsize=10)
 
         # -- 3. what the price of credit does ------------------------------
         ax = axes[2]

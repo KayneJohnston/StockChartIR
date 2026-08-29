@@ -5849,12 +5849,24 @@ def write_doc_17(
             f"{cap:.0%} -- and is not taken, because the extra return does "
             f"not compensate a risk-averse investor for the tail it opens.")
     else:
+        solved_cec = float(notes.get("solved_cec", float("nan")))
+        solved_mean = float(notes.get("solved_mean_lvr", float("nan")))
+        beats = np.isfinite(solved_cec) and solved_cec > float(best_flat["cec"])
         headline = (
-            f"**The optimiser goes to the {cap:.0%} ceiling and would go "
-            f"further if allowed.** The reported number is therefore the "
-            f"constraint, not an optimum, and the honest reading is that this "
-            f"model does not price whatever stops real households borrowing "
-            f"more.")
+            f"**Held flat, the ratio goes to the {cap:.0%} ceiling and would "
+            f"go further if allowed.** A single lifetime-long number is "
+            f"therefore the constraint rather than an optimum, and this model "
+            f"does not price whatever stops real households borrowing more -- "
+            f"mortgage insurance, servicing tests, and the concentration risk "
+            f"of a single property, none of which are here."
+            + (f"\n\nBut a flat ratio is the wrong object. Letting it vary "
+               f"with age reaches a higher certainty equivalent "
+               f"({solved_cec:.4f} against {float(best_flat['cec']):.4f}) at a "
+               f"*lower* average ratio of {solved_mean:.0%}, by borrowing hard "
+               f"early and paying down later. The corner above is an artefact "
+               f"of forcing one number on a decision that should move; the "
+               f"next section is the answer."
+               if beats else ""))
 
     prof = notes.get("profile", {})
     material = int(prof.get("material_ages", 0))
