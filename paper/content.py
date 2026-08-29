@@ -3913,7 +3913,62 @@ def section_housing(ctx: Any) -> List[Flowable]:
             f"{pc(abs(moves[loser]), 0)} of the portfolio between the dearest "
             f"case and the free one — more than any other asset." + tail))
 
-    out.append(ctx.h2("16.3 What this is not"))
+    out.append(ctx.h2("16.3 Two checks on that answer"))
+    out.append(ctx.p(
+        "The result rests on two choices that could each be driving it, so "
+        "both are tested rather than defended."))
+
+    try:
+        raw = f.table("housing_raw_sweep")
+        raw_five = raw[raw["investable_set"] == "five assets"].sort_values(
+            "holding_cost")
+        raw_free = float(raw_five.iloc[0]["mean_housing"])
+        raw_break = break_even_cost(raw_five)
+        overstates = raw_free > float(free["mean_housing"])
+        out.append(ctx.p(
+            f"<b>Is it an artefact of the de-smoothing?</b> Re-running the "
+            f"whole sweep on the raw, still-smoothed series puts "
+            f"{pc(raw_free, 0)} in housing at zero cost against "
+            f"{pc(float(free['mean_housing']), 0)} once the smoothing is "
+            f"undone"
+            + (f", with a break-even cost of {pc(raw_break, 2)} against "
+               f"{pc(break_even, 2)}"
+               if np.isfinite(raw_break) and np.isfinite(break_even) else "")
+            + ". "
+            + ("The naive treatment therefore <b>overstates</b> the case for "
+               "housing, which is the direction the mechanism predicts: "
+               "smoothing hides volatility, and hidden volatility reads as "
+               "risk-adjusted return. The correction is doing real work, and "
+               "it works against housing rather than for it."
+               if overstates else
+               "The naive treatment does <b>not</b> overstate the case here, "
+               "which is worth flagging because it is the opposite of what "
+               "the mechanism predicts.")))
+    except FileNotFoundError:
+        pass
+
+    try:
+        age = f.table("housing_age_varying")
+        best_gain = float(age["cec_gain_pct"].max())
+        worst_move = float(np.abs(age["housing_difference"]).max())
+        out.append(ctx.p(
+            f"<b>Is it an artefact of holding one allocation for life?</b> "
+            f"Re-solving the full age-by-asset schedule over the five-asset "
+            f"simplex — seeded at the constant-mix optimum, so the search can "
+            f"only improve on it — moves the mean housing weight by at most "
+            f"{pc(worst_move, 0)} of the portfolio and buys at most "
+            f"{f2(best_gain, 2)}% more certainty-equivalent consumption. "
+            + ("Age-variation adds essentially nothing here: the single "
+               "lifetime-long allocation is, to the resolution of this "
+               "search, the answer."
+               if best_gain <= 0.5 else
+               "That is large enough that the constant-mix figures above "
+               "should be read as indicative of the level rather than as the "
+               "optimum itself.")))
+    except FileNotFoundError:
+        pass
+
+    out.append(ctx.h2("16.4 What this is not"))
     out.append(ctx.p(
         "The asset priced here is a liquid, continuously rebalanced, "
         "nationally diversified claim on a country's housing stock, because "
