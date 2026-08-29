@@ -2061,3 +2061,124 @@ def plot_housing_sweep(sweep: pd.DataFrame, audit: pd.DataFrame,
 
         fig.tight_layout()
         return _save(fig, directory, name)
+
+
+def plot_mortgage(sweep: pd.DataFrame, schedule: pd.DataFrame,
+                  curve: pd.DataFrame, break_even: float,
+                  directory: str | Path,
+                  name: str = "fig42_mortgage",
+                  profile: pd.DataFrame | None = None) -> Path:
+    """How much of the house to borrow, at what age, and at what price.
+
+    Four readings: the shape of the loan-to-value decision at one price, how
+    that decision varies with the price of credit, what the borrowing is worth
+    against an unlevered control, and how often the borrower's right to walk
+    away is what makes the answer work.
+    """
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(1, 4, figsize=(21.0, 5.0))
+
+        # -- 1. the solved schedule, age by age ---------------------------
+        ax = axes[0]
+        working = schedule[schedule["phase"] == "working"]
+        retired = schedule[schedule["phase"] == "retired"]
+        ax.step(schedule["age"], schedule["lvr"] * 100, where="mid",
+                color=_colour(0), linewidth=1.9, label="solved LVR")
+        if len(retired):
+            ax.axvspan(float(retired["age"].min()), float(schedule["age"].max()),
+                       color="0.85", alpha=0.45, zorder=0)
+            ax.text(float(retired["age"].min()) + 0.6, 4.0, "retired",
+                    fontsize=8, color="0.35")
+        for block, label, colour in ((working, "working mean", 1),
+                                     (retired, "retired mean", 2)):
+            if len(block):
+                ax.axhline(float(block["lvr"].mean()) * 100, color=_colour(colour),
+                           linestyle="--", linewidth=1.2, label=label)
+        ax.set_xlabel("Age")
+        ax.set_ylabel("Loan-to-value ratio (%)")
+        ax.set_ylim(0, 88)
+        if profile is not None and len(profile):
+            # Shade what the schedule is worth. Where the bars are invisible
+            # the search moved the ratio for free, and the line above them
+            # carries no information.
+            band = ax.twinx()
+            band.bar(profile["age"], profile["cost_of_resetting_bp"],
+                     width=0.9, color="0.72", alpha=0.55, zorder=0,
+                     label="value of this age's choice (right)")
+            band.set_ylabel("Cost of resetting one age (bp)")
+            band.grid(False)
+            band.set_zorder(0)
+            ax.set_zorder(1)
+            ax.patch.set_visible(False)
+            ax.set_title("How much of the house to borrow, by age\n"
+                         "(grey = what each age is actually worth)",
+                         fontsize=10)
+        else:
+            ax.set_title("How much of the house to borrow,\nby age",
+                         fontsize=10)
+        ax.legend(fontsize=8, loc="lower left")
+
+        # -- 2. the curve at one price ------------------------------------
+        ax = axes[1]
+        ax.plot(curve["lvr"] * 100, curve["cec"], marker=_marker(0),
+                color=_colour(0))
+        best = curve.loc[curve["cec"].idxmax()]
+        ax.axvline(float(best["lvr"]) * 100, color=_colour(1), linestyle=":",
+                   linewidth=1.4)
+        ax.text(float(best["lvr"]) * 100, float(curve["cec"].min()),
+                f"  best flat LVR {float(best['lvr']):.0%}", fontsize=8,
+                color=_colour(1), va="bottom")
+        ax.set_xlabel("Loan-to-value ratio, held for life (%)")
+        ax.set_ylabel("Certainty-equivalent consumption")
+        top = float(curve["lvr"].max())
+        at_corner = float(best["lvr"]) >= top - 1e-9
+        at_zero = float(best["lvr"]) <= 1e-9
+        ax.set_title(
+            ("Held flat, the ratio runs to the cap:\n"
+             "the ceiling binds, it is not an optimum") if at_corner else
+            ("Held flat, no borrowing is worth\ntaking at this price")
+            if at_zero else
+            ("The decision is interior,\nnot a corner"), fontsize=10)
+
+        # -- 3. what the price of credit does ------------------------------
+        ax = axes[2]
+        x = sweep["spread"].to_numpy(dtype=float) * 100
+        ax.plot(x, sweep["mean_lvr"] * 100, marker=_marker(0),
+                color=_colour(0), label="mean LVR")
+        if "lvr_working" in sweep.columns:
+            ax.plot(x, sweep["lvr_working"] * 100, marker=_marker(1),
+                    linestyle="--", color=_colour(1), label="while working")
+            ax.plot(x, sweep["lvr_retired"] * 100, marker=_marker(2),
+                    linestyle="--", color=_colour(2), label="in retirement")
+        if np.isfinite(break_even):
+            ax.axvline(break_even * 100, color="0.4", linestyle=":",
+                       linewidth=1.4)
+            ax.text(break_even * 100, 4.0, f"  borrowing stops paying\n"
+                    f"  at {break_even:.1%}", fontsize=8, color="0.35")
+        ax.set_xlabel("Mortgage spread over the domestic short rate (%)")
+        ax.set_ylabel("Optimal loan-to-value ratio (%)")
+        ax.set_title("What the price of credit does", fontsize=10)
+        ax.legend(fontsize=8)
+
+        # -- 4. what it is worth, and what props it up ---------------------
+        ax = axes[3]
+        ax.plot(x, sweep["gain_vs_unlevered_pct"], marker=_marker(0),
+                color=_colour(0), label="gain over no mortgage (left)")
+        ax.axhline(0.0, color="0.3", linewidth=1.0)
+        ax.set_xlabel("Mortgage spread over the domestic short rate (%)")
+        ax.set_ylabel("Gain over an unlevered house (%)")
+        twin = ax.twinx()
+        twin.plot(x, sweep["negative_equity_share"] * 100, marker=_marker(1),
+                  linestyle="--", color=_colour(1),
+                  label="path-years in negative equity (right)")
+        twin.set_ylabel("Path-years wiped out (%)")
+        twin.grid(False)
+        ax.set_title("What borrowing buys, and how often\n"
+                     "the right to walk away is what pays", fontsize=10)
+        h1, l1 = ax.get_legend_handles_labels()
+        h2, l2 = twin.get_legend_handles_labels()
+        ax.legend(h1 + h2, l1 + l2, fontsize=8, loc="lower center",
+                  bbox_to_anchor=(0.5, -0.34))
+
+        fig.tight_layout()
+        return _save(fig, directory, name)

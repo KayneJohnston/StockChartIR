@@ -93,6 +93,9 @@ def front_matter(ctx: Any) -> List[Flowable]:
     from src.housing import break_even_cost as _house_break_even
     house_break = _house_break_even(house_five)
     house_free = house_five.iloc[0]
+    mort = f.table("mortgage_lvr_schedule")
+    mort_work = float(mort[mort["phase"] == "working"]["lvr"].mean())
+    mort_ret = float(mort[mort["phase"] == "retired"]["lvr"].mean())
     reversals = int(tornado["settings_lost"].sum())
     swr = f.table("sensitivity_safe_withdrawal_rates")
     swr_eq = float(swr[swr["strategy"] == "balanced_all_equity"]
@@ -145,7 +148,7 @@ def front_matter(ctx: Any) -> List[Flowable]:
         f"the four-percent convention on every strategy "
         f"({pc(swr_eq, 1)} for all-equity, {pc(swr_tdf, 1)} for the target-date "
         f"fund at a five-percent ruin tolerance). "
-        f"We then push past replication with twelve extensions. Solving the "
+        f"We then push past replication with thirteen extensions. Solving the "
         f"glide path directly by coordinate ascent under common random numbers "
         f"reproduces the all-equity corner rather than an interior optimum, "
         f"and freeing all four portfolio weights at every age — {alloc_params} "
@@ -192,6 +195,17 @@ f"Conditioning a lifetime on how expensive its market was at the "
               "survives every holding cost tested")
            if float(house_free["mean_housing"]) > 0.01 else
            "earns no place in the portfolio at any price, including free")
+        + ". "
+        f"Financing that house with a mortgage — the one asset an ordinary "
+        f"household can borrow against at close to the government's rate — "
+        f"produces a loan-to-value schedule that "
+        + (f"declines with age, {pc(mort_work, 0)} while working against "
+           f"{pc(mort_ret, 0)} in retirement, reproducing from optimisation "
+           f"the pattern households follow in practice"
+           if mort_work > mort_ret else
+           f"rises with age, {pc(mort_work, 0)} while working against "
+           f"{pc(mort_ret, 0)} in retirement, contrary to observed household "
+           f"behaviour")
         + ". "
         f"The panel's principal limitation is its breadth: "
         f"{pr['n_countries']} developed markets, so the international leg "
@@ -270,7 +284,7 @@ def section_introduction(ctx: Any) -> List[Flowable]:
         "diagnostic apparatus made visible rather than asserted. Second, it "
         "stress-tests the result across a large parameter space, so that the "
         "reader can see where the conclusion is robust and where it is thin. "
-        "Third — and this is where most of the length lies — it takes twelve "
+        "Third — and this is where most of the length lies — it takes thirteen "
         "extensions that the original design leaves open and works each of "
         "them out, several of which produce results that run against the "
         "intuition that motivated them."))
@@ -370,7 +384,7 @@ def section_introduction(ctx: Any) -> List[Flowable]:
     out.append(ctx.h2("1.2 What is new here"))
     out.append(ctx.p(
         "Relative to the paper being replicated, this study contributes a "
-        "methodological discipline and twelve substantive extensions. The "
+        "methodological discipline and thirteen substantive extensions. The "
         "discipline is a set of comparison rules applied uniformly: every "
         "policy is scored against a <i>matched</i> baseline that differs from "
         "it in exactly one dimension; every optimiser runs under common random "
@@ -422,13 +436,14 @@ def section_introduction(ctx: Any) -> List[Flowable]:
         "the panel and its construction. Section 4 sets out the bootstrap, the "
         "lifecycle model, the preference specification and the comparison "
         "discipline. Section 5 presents the baseline replication and Section 6 "
-        "its sensitivity. Sections 7 through 16 present the twelve extensions "
+        "its sensitivity. Sections 7 through 17 present the thirteen extensions "
         "in order of increasing distance from the original design, ending with "
-        "two that relax assumptions the model itself makes: that a lifetime's "
-        "starting valuation is irrelevant (Section 15) and that the "
-        "opportunity set contains no housing (Section 16). Section 17 "
-        "discusses what the results collectively imply, Section 18 states the "
-        "limitations candidly, and Section 19 concludes. Four appendices give "
+        "three that relax assumptions the model itself makes: that a "
+        "lifetime's starting valuation is irrelevant (Section 15), that the "
+        "opportunity set contains no housing (Section 16), and that the house "
+        "is owned outright (Section 17). Section 18 "
+        "discusses what the results collectively imply, Section 19 states the "
+        "limitations candidly, and Section 20 concludes. Four appendices give "
         "the full parameter set, the country panel, supplementary tables and "
         "the reproduction instructions."))
     return out
@@ -4096,7 +4111,208 @@ def section_housing(ctx: Any) -> List[Flowable]:
 
 
 # ---------------------------------------------------------------------------
-# 15. Discussion
+# 17. The mortgage
+# ---------------------------------------------------------------------------
+def section_mortgage(ctx: Any) -> List[Flowable]:
+    f = ctx.f
+    sweep = f.table("mortgage_spread_sweep").sort_values("spread")
+    schedule = f.table("mortgage_lvr_schedule")
+    curve = f.table("mortgage_constant_lvr_curve").sort_values("lvr")
+    profile = f.table("mortgage_lvr_deviation_profile")
+
+    from src.mortgage import LVR_CAP, break_even_spread
+    break_even = break_even_spread(sweep)
+    working = schedule[schedule["phase"] == "working"]
+    retired = schedule[schedule["phase"] == "retired"]
+    lvr_work = float(working["lvr"].mean())
+    lvr_ret = float(retired["lvr"].mean())
+    best = curve.loc[curve["cec"].idxmax()]
+
+    out: List[Flowable] = [ctx.h1("17. The Mortgage")]
+    out.append(ctx.p(
+        "Section 16 prices housing as an asset owned outright. No household "
+        "owns it that way. A house is the one asset an ordinary person can "
+        f"borrow {pc(LVR_CAP, 0)} against, at a rate close to their own "
+        "government's, secured on the thing itself — and leaving that out "
+        "understates what housing does to a lifetime as surely as leaving the "
+        "holding cost out overstates it. This section puts the mortgage in and "
+        "asks the two questions that matter: how much, and when."))
+
+    out.append(ctx.h2("17.1 How the loan is modelled"))
+    out.append(ctx.p(
+        "The decision variable is the <b>loan-to-value ratio</b>, because that "
+        "is the number a lender quotes and a borrower chooses. A property "
+        "funded with equity E and a loan at ratio λ returns, on that equity, "
+        "(r_H − λ·i) / (1 − λ), where r_H is the real return on the property "
+        "and i the real mortgage rate. That is the leverage multiple 1/(1 − λ) "
+        "applied to housing alone, so the arithmetic is the same function "
+        "Section 10 uses for portfolio borrowing and the two remain "
+        "consistent."))
+    out.append(ctx.p(
+        "The rate is the borrower's <i>own country's</i> real short rate plus "
+        "a spread, drawn on the same block as every other series, so a "
+        "lifetime that lives through high real rates pays them. The spread is "
+        "swept rather than assumed. Equity is <b>wiped out, not driven "
+        "negative</b>: the levered return is floored at total loss, which is "
+        "the non-recourse assumption and the one most favourable to "
+        "borrowing. How often that floor binds is reported rather than "
+        "buried."))
+
+    out.append(ctx.h2("17.2 How much"))
+    out.extend(ctx.table(
+        rows_from(curve,
+                  ["lvr", "leverage_multiple", "cec",
+                   "gain_vs_unlevered_pct", "negative_equity_share"],
+                  ["LVR", "Gross exposure per unit of equity", "CEC",
+                   "Gain over no mortgage (%)", "Path-years wiped out (%)"],
+                  {"lvr": lambda v: pc(v, 0),
+                   "leverage_multiple": lambda v: f2(v, 2),
+                   "cec": lambda v: f2(v, 3),
+                   "gain_vs_unlevered_pct": lambda v: f2(v, 2),
+                   "negative_equity_share": lambda v: f2(float(v) * 100, 2)}),
+        "Certainty-equivalent consumption by loan-to-value ratio, held for life",
+        note="At the spread reported in the accompanying analysis document, "
+             "with the allocation re-solved alongside the mortgage."))
+
+    interior = 0.0 < float(best["lvr"]) < LVR_CAP - 1e-9
+    if float(best["lvr"]) <= 1e-9:
+        out.append(ctx.p(
+            "<b>No mortgage is worth taking at this price.</b> The solved "
+            "ratio is zero: the borrowing rate exceeds what the levered house "
+            "returns once the tail it adds is priced by a risk-averse "
+            "investor."))
+    elif interior:
+        out.append(ctx.p(
+            f"<b>The answer is interior: about {pc(float(best['lvr']), 0)} "
+            f"loan-to-value.</b> Held flat for life that is worth "
+            f"{f2(float(best['gain_vs_unlevered_pct']), 1)}% in "
+            f"certainty-equivalent consumption over the same house owned "
+            f"outright. More borrowing is available — the grid runs to "
+            f"{pc(LVR_CAP, 0)} — and is declined, because the extra return "
+            f"does not compensate for the tail it opens."))
+    else:
+        out.append(ctx.p(
+            f"<b>The search goes to the {pc(LVR_CAP, 0)} ceiling and would go "
+            f"further if allowed.</b> The reported figure is the constraint "
+            f"rather than an optimum, and the honest reading is that this "
+            f"model does not price whatever stops real households borrowing "
+            f"more — mortgage insurance, servicing tests, and the "
+            f"concentration risk of a single property, none of which are "
+            f"here."))
+
+    out.append(ctx.h2("17.3 When"))
+    declines = lvr_work > lvr_ret
+    if declines:
+        out.append(ctx.p(
+            f"The solved schedule <b>declines with age</b>: "
+            f"{pc(lvr_work, 0)} while working against {pc(lvr_ret, 0)} in "
+            f"retirement. That is what households actually do — borrow "
+            f"heavily against the first house and pay the loan down over a "
+            f"career — and here it falls out of the optimisation rather than "
+            f"being imposed on it. The mechanism is human capital: a working "
+            f"investor has decades of future earnings a mortgage cannot "
+            f"reach, and that income is what makes the leverage bearable. It "
+            f"is also the mirror image of the equity glide path this paper "
+            f"argues against, and the two are consistent — what should "
+            f"decline with age is the <i>borrowing</i>, not the equity."))
+    else:
+        out.append(ctx.p(
+            f"The solved schedule <b>rises with age</b>: {pc(lvr_work, 0)} "
+            f"while working against {pc(lvr_ret, 0)} in retirement, which "
+            f"contradicts what households do and deserves the suspicion that "
+            f"attaches to any such result."))
+
+    material = profile[profile["cost_of_resetting_bp"] >= 5.0]
+    out.append(ctx.p(
+        f"That is a statement about the <i>level and the slope</i> and "
+        f"nothing finer. Subjecting the schedule to the same deviation "
+        f"profile Section 9 applies to solved allocations — resetting one "
+        f"age at a time to the schedule's own average and pricing what is "
+        f"lost — leaves {len(material)} of {len(profile)} ages carrying a "
+        f"decision worth more than five basis points, the largest worth "
+        f"{f2(float(profile['cost_of_resetting_bp'].max()), 0)} and the "
+        f"median age worth "
+        f"{f2(float(profile['cost_of_resetting_bp'].median()), 0)}. The rest "
+        f"sits on a flat part of the surface where the search moves the ratio "
+        f"for free. The plotted line is jagged; the evidence underneath it is "
+        f"not."))
+
+    out.append(ctx.h2("17.4 At what price of credit"))
+    out.extend(ctx.table(
+        rows_from(sweep,
+                  ["spread", "mean_lvr", "lvr_working", "lvr_retired",
+                   "housing_weight", "gross_housing_exposure",
+                   "gain_vs_unlevered_pct", "negative_equity_share"],
+                  ["Spread", "Mean LVR", "LVR working", "LVR retired",
+                   "Housing equity", "Gross housing (× wealth)",
+                   "Gain over no mortgage (%)", "Wiped out (%)"],
+                  {"spread": lambda v: pc(v, 0),
+                   "mean_lvr": lambda v: pc(v, 0),
+                   "lvr_working": lambda v: pc(v, 0),
+                   "lvr_retired": lambda v: pc(v, 0),
+                   "housing_weight": lambda v: pc(v, 0),
+                   "gross_housing_exposure": lambda v: f2(v, 2),
+                   "gain_vs_unlevered_pct": lambda v: f2(v, 1),
+                   "negative_equity_share": lambda v: f2(float(v) * 100, 2)}),
+        "The joint optimum at each price of mortgage credit",
+        note="Spread over the borrower's own country's real short rate. Every "
+             "row shares the same paths, income draws and search, so a "
+             "difference between rows is the price of the loan and nothing "
+             "else."))
+
+    first, last = sweep.iloc[0], sweep.iloc[-1]
+    if np.isfinite(break_even):
+        out.append(ctx.p(
+            f"<b>Borrowing stops paying at a spread of about "
+            f"{pc(break_even, 1)}</b> over the domestic short rate. Below it "
+            f"the optimal ratio is positive and falls as credit dearens; "
+            f"above it the mortgage earns no place."))
+    else:
+        out.append(ctx.p(
+            f"The optimal ratio falls from {pc(float(first['mean_lvr']), 0)} "
+            f"at a {pc(float(first['spread']), 0)} spread to "
+            f"{pc(float(last['mean_lvr']), 0)} at "
+            f"{pc(float(last['spread']), 0)} without reaching zero inside the "
+            f"grid, so no break-even price is reported — extrapolating would "
+            f"invent the number the sweep failed to find. What the table does "
+            f"establish is that the answer is highly sensitive to the margin, "
+            f"which is the practical point: a household's mortgage rate, not "
+            f"the return on housing, is what decides this."))
+
+    out.append(ctx.h2("17.5 What this is not"))
+    out.append(ctx.p(
+        "The schedule is rebalanced annually, like everything else in this "
+        "paper. For a mortgage that means costlessly redrawing the loan every "
+        "year to hit a target ratio. Real mortgages amortise on a fixed "
+        "schedule, cost several percent of the property to refinance, and are "
+        "called on missed payments rather than on a drifting loan-to-value. "
+        "<b>This is the value of the leverage, not a financing plan.</b>"))
+    out.append(ctx.p(
+        "Three further gaps deserve naming. There is no mortgage insurance, "
+        f"so the {pc(LVR_CAP, 0)} ceiling is a wall rather than a price. "
+        "There is no tax: in several countries mortgage interest is "
+        "deductible and owner-occupied capital gains are untaxed, both of "
+        "which would favour borrowing more than this shows. And the asset is "
+        "a national housing index, not a house — the concentration risk of a "
+        "single leveraged property is precisely what makes a real mortgage "
+        "dangerous, and none of it is in these numbers."))
+
+    out.extend(ctx.figure(
+        "fig42_mortgage",
+        "Far left: the solved loan-to-value ratio by age, with the grey bars "
+        "showing what each age's choice is actually worth — where they are "
+        "invisible the line above them carries no information. Centre left: "
+        "certainty-equivalent consumption against a ratio held for life. "
+        "Centre right: how the optimal ratio responds to the price of credit, "
+        "split by working life and retirement. Far right: what borrowing buys "
+        "against an unlevered house, and how often the borrower's right to "
+        "walk away is what pays for it.",
+        max_height=8.0 * cm))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# 18. Discussion
 # ---------------------------------------------------------------------------
 def section_discussion(ctx: Any) -> List[Flowable]:
     f = ctx.f
@@ -4105,8 +4321,8 @@ def section_discussion(ctx: Any) -> List[Flowable]:
     swr_eq = float(swr[swr["strategy"] == "balanced_all_equity"]
                    ["safe_withdrawal_rate_at_5%_ruin"].iloc[0])
 
-    out: List[Flowable] = [ctx.h1("17. Discussion")]
-    out.append(ctx.h2("17.1 What the replication does and does not establish"))
+    out: List[Flowable] = [ctx.h1("18. Discussion")]
+    out.append(ctx.h2("18.1 What the replication does and does not establish"))
     out.append(ctx.p(
         "The central claim reproduces cleanly and survives an unusually wide "
         "robustness exercise. That is a real result and it should update "
@@ -4134,7 +4350,7 @@ def section_discussion(ctx: Any) -> List[Flowable]:
         "outside the support of the sampler, and no amount of block "
         "resampling can put it back in."))
 
-    out.append(ctx.h2("17.2 The hierarchy of levers"))
+    out.append(ctx.h2("18.2 The hierarchy of levers"))
     out.append(ctx.p(
         "Reading the extensions together produces a ranking of what actually "
         "moves a retirement outcome, and it is not the ranking the industry's "
@@ -4169,6 +4385,12 @@ def section_discussion(ctx: Any) -> List[Flowable]:
         "It moves what a portfolio delivers without changing which portfolio "
         "to hold, so it belongs in a reader's expectations and their "
         "withdrawal planning rather than in their asset mix.",
+        "<b>What should decline with age is the borrowing, not the "
+        "equity.</b> The only schedule in this paper that an unconstrained "
+        "search makes genuinely age-declining is the mortgage: heavy "
+        "borrowing against the first house, paid down over a career. The "
+        "glide path the industry applies to equities has the right shape "
+        "attached to the wrong instrument.",
         "<b>Widening the opportunity set is a bigger lever than refining "
         "it.</b> Adding a fifth asset class buys more, at a low enough "
         "holding cost, than every refinement within the four existing sleeves "
@@ -4181,7 +4403,7 @@ def section_discussion(ctx: Any) -> List[Flowable]:
         "should read that list from the top, not from the bottom. The "
         "profession's attention is allocated in roughly the reverse order."))
 
-    out.append(ctx.h2("17.3 Why the pay cheque beats the portfolio"))
+    out.append(ctx.h2("18.3 Why the pay cheque beats the portfolio"))
     out.append(ctx.p(
         "The single most surprising result in the paper is that the best "
         "state variable for a savings rule is labour income relative to its "
@@ -4204,7 +4426,7 @@ def section_discussion(ctx: Any) -> List[Flowable]:
         "no balance lookup and no arithmetic, and on this model it outperforms "
         "the wealth-target advice that dominates financial planning."))
 
-    out.append(ctx.h2("17.4 Implications for default design"))
+    out.append(ctx.h2("18.4 Implications for default design"))
     out.append(ctx.p(
         "If the results here were taken at face value by a plan sponsor, the "
         "implied redesign would not be \"raise the equity share of the "
@@ -4235,18 +4457,18 @@ def section_discussion(ctx: Any) -> List[Flowable]:
 
 
 # ---------------------------------------------------------------------------
-# 16. Limitations
+# 19. Limitations
 # ---------------------------------------------------------------------------
 def section_limitations(ctx: Any) -> List[Flowable]:
     f = ctx.f
     p = f.panel
     pr, adv = f.provenance, f.panel_advantage
-    out: List[Flowable] = [ctx.h1("18. Limitations and Threats to Validity")]
+    out: List[Flowable] = [ctx.h1("19. Limitations and Threats to Validity")]
     out.append(ctx.p(
         "This section is deliberately long. A replication that reports only "
         "the ways in which it succeeded is not much use."))
 
-    out.append(ctx.h2("18.1 The cross-section is sixteen countries"))
+    out.append(ctx.h2("19.1 The cross-section is sixteen countries"))
     out.append(ctx.p(
         f"This is the largest weakness in the paper, and it is a weakness we "
         f"chose deliberately. The developed-market universe runs to 38 "
@@ -4270,7 +4492,7 @@ def section_limitations(ctx: Any) -> List[Flowable]:
         "unverified in Section 3.6, on a variance test that every country in "
         "the sample fails in the same direction."))
 
-    out.append(ctx.h2("18.2 What the bootstrap cannot represent"))
+    out.append(ctx.h2("19.2 What the bootstrap cannot represent"))
     out.extend(ctx.bullets([
         "<b>No valuation conditioning.</b> Blocks are drawn without regard to "
         "the starting dividend yield or price-earnings ratio, so a simulated "
@@ -4291,7 +4513,7 @@ def section_limitations(ctx: Any) -> List[Flowable]:
         "the exercise. We quantify this rather than correct it.",
     ]))
 
-    out.append(ctx.h2("18.3 What the lifecycle model omits"))
+    out.append(ctx.h2("19.3 What the lifecycle model omits"))
     hs, wg = pr.get("housing", {}), pr.get("wages", {})
     housing_bullet = (
         "<b>No housing.</b> For most households the primary residence is the "
@@ -4339,7 +4561,7 @@ def section_limitations(ctx: Any) -> List[Flowable]:
         "abandons an all-equity portfolio in the middle of a 60% drawdown.",
     ] if x]))
 
-    out.append(ctx.h2("18.4 Specification sensitivities we know about"))
+    out.append(ctx.h2("19.4 Specification sensitivities we know about"))
     out.append(ctx.p(
         "Three modelling choices are load-bearing and a reader should know "
         "where they bite."))
@@ -4361,7 +4583,7 @@ def section_limitations(ctx: Any) -> List[Flowable]:
         "of two.",
     ]))
 
-    out.append(ctx.h2("18.5 What the new searches assume"))
+    out.append(ctx.h2("19.5 What the new searches assume"))
     out.extend(ctx.bullets([
         "<b>The simplex search is a coordinate search.</b> Section 9 reports "
         "restarts from three corners and they agree, but coordinate ascent "
@@ -4386,6 +4608,13 @@ def section_limitations(ctx: Any) -> List[Flowable]:
         "higher-order smoothing, the true volatility is higher than the "
         "correction restores and housing is worth less than reported. The "
         "direction of that error is known even though its size is not.",
+        "<b>The mortgage is rebalanced annually.</b> Section 17 redraws the "
+        "loan every year at no cost to hit a target loan-to-value. Real "
+        "mortgages amortise on a fixed schedule, cost several percent of the "
+        "property to refinance, and are called on missed payments rather "
+        "than on a drifting ratio. The section reports the value of the "
+        "leverage, not a financing plan, and it prices no mortgage insurance "
+        "and no tax deductibility in either direction.",
         "<b>Housing is priced as an index, not as a house.</b> The asset in "
         "Section 16 is a liquid, continuously rebalanced, nationally "
         "diversified claim on the housing stock. A single leveraged "
@@ -4400,7 +4629,7 @@ def section_limitations(ctx: Any) -> List[Flowable]:
         "lender would extend that against a retirement account.",
     ]))
 
-    out.append(ctx.h2("18.6 Statistical caveats"))
+    out.append(ctx.h2("19.6 Statistical caveats"))
     out.append(ctx.p(
         "Certainty equivalents are reported without standard errors. Under "
         "common random numbers the <i>differences</i> between policies are far "
@@ -4414,13 +4643,13 @@ def section_limitations(ctx: Any) -> List[Flowable]:
 
 
 # ---------------------------------------------------------------------------
-# 17. Conclusion
+# 20. Conclusion
 # ---------------------------------------------------------------------------
 def section_conclusion(ctx: Any) -> List[Flowable]:
     f = ctx.f
     adv_tdf = f.advantage("balanced_all_equity", "target_date_fund")
     lottery = f.table("retirement_lottery_stats").iloc[0]
-    out: List[Flowable] = [ctx.h1("19. Conclusion")]
+    out: List[Flowable] = [ctx.h1("20. Conclusion")]
     out.append(ctx.p(
         f"We set out to reproduce a specific empirical claim and ended up with "
         f"a hierarchy. The claim reproduces: on a "
@@ -4821,6 +5050,8 @@ def appendix_software(ctx: Any) -> List[Flowable]:
          "structural no-leak check and the valuation buckets", "§15"],
         ["Housing", "De-smoothing the appraisal index, and the five-asset "
          "simplex re-solved at each holding cost", "§16"],
+        ["Mortgage", "Leverage applied to the housing sleeve alone, and the "
+         "loan-to-value schedule solved by age", "§17"],
     ]
     out.extend(ctx.table(
         stages, "How the computation is organised",
@@ -4900,6 +5131,7 @@ def story(ctx: Any) -> List[Flowable]:
     parts += section_accumulation(ctx)
     parts += section_valuation(ctx)
     parts += section_housing(ctx)
+    parts += section_mortgage(ctx)
     parts += section_discussion(ctx)
     parts += section_limitations(ctx)
     parts += section_conclusion(ctx)
