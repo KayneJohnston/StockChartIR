@@ -3961,7 +3961,10 @@ def section_housing(ctx: Any) -> List[Flowable]:
             + ("Age-variation adds essentially nothing here: the single "
                "lifetime-long allocation is, to the resolution of this "
                "search, the answer."
-               if best_gain <= 0.5 else
+               if best_gain <= 0.05 else
+               "That is small enough that the constant-mix figures above "
+               "stand as reported."
+               if worst_move < 0.10 and best_gain < 1.0 else
                "That is large enough that the constant-mix figures above "
                "should be read as indicative of the level rather than as the "
                "optimum itself.")))
