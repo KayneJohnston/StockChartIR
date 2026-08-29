@@ -115,7 +115,7 @@ def front_matter(ctx: Any) -> List[Flowable]:
         Spacer(1, 1.1 * cm),
         Paragraph("Beyond the Status Quo, Revisited", s["title"]),
         Paragraph("A Computational Re-Examination of Lifecycle Asset "
-                  "Allocation, with Ten Extensions", s["subtitle"]),
+                  "Allocation, with Thirteen Extensions", s["subtitle"]),
         Spacer(1, 0.2 * cm),
         Paragraph("A replication and extension study", s["author"]),
         Spacer(1, 0.25 * cm),
@@ -1218,6 +1218,32 @@ def section_methods(ctx: Any) -> List[Flowable]:
         f"nothing; a progressive schedule supplies a genuine real consumption "
         f"floor, which is exactly what determines how much the left tail of a "
         f"risky strategy actually costs."))
+    out.extend(ctx.table(
+        [["Strategy", "Domestic eq.", "Intl. eq.", "Bonds", "Bills"],
+         ["50/50 domestic/international equity", "50%", "50%", "—", "—"],
+         ["100% domestic equity", "100%", "—", "—", "—"],
+         ["100% international equity", "—", "100%", "—", "—"],
+         ["60/40 domestic equity/bonds", "60%", "—", "40%", "—"],
+         ["100% bills (cash)", "—", "—", "—", "100%"],
+         ["Target-date fund (glide path)", "see below", "see below",
+          "see below", "see below"]],
+        "The six benchmark strategies, as constant weights",
+        note="Held constant at every age and rebalanced annually, except the "
+             "target-date fund."))
+    out.append(ctx.p(
+        "The target-date fund is the one benchmark whose weights move. Its "
+        "equity share is piecewise-linear in age through the knots below, "
+        "interpolated between them; the equity sleeve is split 60/40 "
+        "domestic/international at every age and the fixed-income sleeve "
+        "70/30 bonds/bills. The shape is the industry standard — flat and "
+        "growth-heavy while young, declining through the decade before "
+        "retirement, and still declining gently after it."))
+    out.extend(ctx.table(
+        [["Age", "25", "40", "55", "63 (retire)", "75", "93"],
+         ["Equity share", "90%", "90%", "65%", "50%", "35%", "30%"]],
+        "The target-date fund's glide path, at its knots",
+        note="Linear between knots. At age 63 the fund therefore holds 30% "
+             "domestic equity, 20% international, 35% bonds and 15% bills."))
     out.extend(ctx.figure(
         "fig05_glide_paths",
         "The six benchmark allocation strategies as equity share by age. The "
@@ -1607,6 +1633,16 @@ def section_sensitivity(ctx: Any) -> List[Flowable]:
         f"so the reader can see how much room there is."))
 
     out.append(ctx.h2("6.1 Tornado analysis"))
+    out.append(ctx.p(
+        "A tornado analysis varies one parameter at a time across its whole "
+        "plausible range, holding everything else at baseline, and records "
+        "how far the result moves. Sorting the dimensions by that range — "
+        "widest at the top — shows at a glance which assumptions the "
+        "conclusion depends on and which are incidental. The name comes from "
+        "the funnel shape the sorted bars make. The column that matters most "
+        "here is the last one: a <i>reversal</i> is a setting at which the "
+        "all-equity portfolio stops winning, and a dimension with none of "
+        "them cannot overturn the result however it is set."))
     short = {"sixty_forty": "60/40", "target_date_fund": "Target-date fund",
              "domestic_equity": "Domestic equity", "bills_only": "Bills"}
     out.extend(ctx.table(
@@ -3253,9 +3289,29 @@ def section_accumulation(ctx: Any) -> List[Flowable]:
     out.append(ctx.p(
         "The target is the weakest link in the construction: it is the model's "
         "own median wealth path, which no investor could know in advance. We "
-        "test two alternatives — a published \"N times salary by age X\" "
-        "ladder of the kind large fund managers publish, and a flat multiple "
-        "with no age content at all."))
+        "test two alternatives that an investor could: an \"N times salary by "
+        "age X\" ladder of the kind large fund managers publish, and a flat "
+        "multiple with no age content at all."))
+    out.append(ctx.p(
+        "The ladder is worth stating in full rather than gesturing at, since "
+        "it is the alternative a real saver is most likely to have been "
+        "handed. Fidelity's widely circulated guideline sets four anchors — "
+        "one times salary by 30, three by 40, six by 50, eight by 60 and ten "
+        "by 67. We interpolate linearly between them, and add intermediate "
+        "anchors at 35, 45 and 55 to keep the interpolation from running "
+        "straight across a decade; those three are ours, not Fidelity's, and "
+        "sit on the line the published anchors imply."))
+    out.extend(ctx.table(
+        [["Age", "30", "35", "40", "45", "50", "55", "60", "67"],
+         ["Wealth, × salary", "1×", "2×", "3×", "4×", "6×", "7×", "8×", "10×"],
+         ["Published?", "yes", "no", "yes", "no", "yes", "no", "yes", "yes"]],
+        "The \"N times salary\" ladder, in full",
+        note="Linear interpolation between anchors; flat at 10× beyond 67 and "
+             "zero before 30. The published anchors are Fidelity's retirement "
+             "savings guideline (1× by 30, 3× by 40, 6× by 50, 8× by 60, 10× "
+             "by 67), which assumes roughly 15% saved a year, retirement at "
+             "67, and a target of maintaining pre-retirement lifestyle. The "
+             "three unpublished anchors are our own interpolation aids."))
     out.extend(ctx.table(
         rows_from(unscaled.assign(net=unscaled[V] - shape_value)
                   .sort_values(V, ascending=False),
@@ -3268,8 +3324,9 @@ def section_accumulation(ctx: Any) -> List[Flowable]:
                    V: lambda v: f2(v, 2), "net": lambda v: f2(v, 2),
                    "mean_savings_rate": lambda v: pc(v, 1)}),
         "Three wealth-to-income targets, unscaled",
-        note="The ladder is a published rule of thumb; the flat multiple has "
-             "no age content and serves as a deliberate straw man."))
+        note="The ladder is the published rule of thumb tabulated above; the "
+             "flat multiple holds the same multiple at every age and serves "
+             "as a deliberate straw man."))
     out.append(ctx.p(
         f"The published ladder captures "
         f"{f2(100 * target_net('published ladder') / max(target_net('model median path'), 1e-9), 0)}% "
@@ -3904,9 +3961,14 @@ def section_housing(ctx: Any) -> List[Flowable]:
         "allocation is re-solved over the five-asset simplex at each annual "
         "holding cost, charged on value rather than on gains. The source "
         "builds its housing total return from capital gains plus a rental "
-        "yield it describes as net of running costs, so the swept figure is "
-        "best read as <i>additional</i> to whatever that construction already "
-        "deducts. If the published series is in fact grosser than that, the "
+        "yield it describes as net of depreciation and maintenance, so the "
+        "swept figure is best read as <i>additional</i> to whatever that "
+        "construction already deducts — the taxes, management, voids and "
+        "amortised transaction costs it does not. For scale, Chambers, "
+        "Spaenjers and Steiner (2021), working from property-level records of "
+        "four institutional portfolios over 1901–1983, find operating costs "
+        "cut net yields to about two-thirds of gross; against this panel's "
+        "4.9% median rental yield that is roughly 160 basis points. If the published series is in fact grosser than that, the "
         "break-even below overstates how much extra cost housing can bear; "
         "the direction of that error is known even though its size is not, "
         "which is why we report the whole curve rather than a single "
@@ -4735,6 +4797,14 @@ REFERENCES = [
     "Epstein, L. G., and Zin, S. E. (1989). \"Substitution, Risk Aversion, and "
     "the Temporal Behavior of Consumption and Asset Returns: A Theoretical "
     "Framework.\" <i>Econometrica</i>, 57(4), 937–969.",
+    "Chambers, D., Spaenjers, C., and Steiner, E. (2021). "
+    "\"The Rate of Return on Real Estate: Long-Run Micro-Level Evidence.\" "
+    "<i>Review of Financial Studies</i>, 34(8), 3572–3607.",
+    "Fidelity Investments. \"Retirement guidelines: how much should I save?\" "
+    "Viewpoints. The 1×/3×/6×/8×/10× salary-multiple ladder used as an "
+    "alternative wealth target in Section 14.4.",
+    "Geltner, D. (1991). \"Smoothing in Appraisal-Based Returns.\" "
+    "<i>Journal of Real Estate Finance and Economics</i>, 4(3), 327–345.",
     "Guyton, J. T., and Klinger, W. J. (2006). \"Decision Rules and Maximum "
     "Initial Withdrawal Rates.\" <i>Journal of Financial Planning</i>, 19(3), "
     "48–58.",
