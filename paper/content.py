@@ -518,7 +518,7 @@ def section_background(ctx: Any) -> List[Flowable]:
         f"It is also the binding constraint on this study: it carries complete "
         f"equity, bond and bill total returns for {f.panel['n_tier_a']} "
         f"countries, and that set is our panel. Section 3.2 describes it and "
-        f"Section 16.1 sets out what its breadth costs."))
+        f"Section 19.1 sets out what its breadth costs."))
 
     out.append(ctx.h2("2.4 Adjacent literatures this paper touches"))
     out.extend(ctx.bullets([
@@ -622,7 +622,7 @@ def section_data(ctx: Any) -> List[Flowable]:
         f"evidence, and Section 3.6.1 reports what the excluded countries do "
         f"carry."))
     out.append(ctx.p(
-        f"That breadth is the paper's principal limitation and Section 16.1 "
+        f"That breadth is the paper's principal limitation and Section 19.1 "
         f"develops it. Its most direct consequence is on the international "
         f"leg, which is a leave-one-out average and therefore spans "
         f"{p['n_tier_a'] - 1} foreign markets, all advanced economies with "
