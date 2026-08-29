@@ -103,9 +103,12 @@ def plot_country_returns(summary: pd.DataFrame, directory: str | Path,
     meta = summary.drop_duplicates("iso").set_index("iso")[["tier", "n_years"]]
     wide = wide.join(meta)
 
-    panels = [("A", "Tier A - observed returns (JST / JKKST)"),
-              ("B", "Tier B - rates observed, equity simulated"),
-              ("C", "Tier C - simulated returns")]
+    # Only Tier A should ever be present. The other two stay in the list as a
+    # tripwire: if a generated block returns to the panel, it gets its own
+    # labelled sub-plot here rather than being averaged in silently.
+    panels = [("A", "Observed returns (JST / JKKST)"),
+              ("B", "Rates observed, equity simulated"),
+              ("C", "Simulated returns")]
     present = [(tier, title) for tier, title in panels
                if (wide["tier"] == tier).any()]
 

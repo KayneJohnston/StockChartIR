@@ -612,7 +612,7 @@ def section_data(ctx: Any) -> List[Flowable]:
         "Real domestic equity returns by country (first twenty by ISO code)",
         note="Every country's equity is observed; there is no other kind in "
              "this panel. The full "
-             "38-country table is Appendix B. Arithmetic and geometric means "
+             "full table is Appendix B. Arithmetic and geometric means "
              "are annual real returns; AR(1) is the first-order "
              "autocorrelation of the annual series.",
         font_size=7.0))
@@ -4124,7 +4124,7 @@ def appendix_panel(ctx: Any) -> List[Flowable]:
 
     out: List[Flowable] = [PageBreak(), ctx.h1("Appendix B. The Country Panel")]
     out.append(ctx.p(
-        "The full 38-country panel, with real domestic equity statistics for "
+        "The full panel, with real domestic equity statistics for "
         "each. All of them carry complete Jordà–Schularick–Taylor equity, bond "
         "and bill total returns; the tier column is derived from the per-cell "
         "observation record and reads A throughout, which is the check rather "
@@ -4143,7 +4143,7 @@ def appendix_panel(ctx: Any) -> List[Flowable]:
                    "std": lambda v: pc(v), "skew": lambda v: f2(v),
                    "kurtosis": lambda v: f2(v, 1),
                    "ar1": lambda v: f2(v)}),
-        "Real domestic equity returns, all 38 countries",
+        "Real domestic equity returns, every country in the panel",
         note="Annual real total returns deflated by each country's own "
              "consumer price index. Kurtosis is excess kurtosis.",
         col_widths=[ctx.width * 0.19] + [ctx.width * 0.081] * 10,

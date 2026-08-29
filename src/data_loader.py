@@ -679,9 +679,6 @@ def build_tier_a(cfg: Mapping[str, Any], hedge_ratio: float = 0.0,
 
 
 # ---------------------------------------------------------------------------
-# Tier B: calibrated developed-market extension
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
 # Panel assembly
 # ---------------------------------------------------------------------------
 def derive_tiers(observed: Mapping[str, np.ndarray], available: np.ndarray,

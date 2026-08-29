@@ -1,9 +1,11 @@
 """Squeezing every observed series out of the primary sources.
 
-`docs/14` found that 22 of the 38 countries have entirely simulated equity,
-bond and bill returns, and that this reaches 38% of an observed investor's
-international leg. The obvious remedy is more real data. This module is what
-came of trying to get it.
+`docs/14` found that 22 of the panel's 38 countries had entirely simulated
+equity, bond and bill returns, and that this reached 38% of an observed
+investor's international leg. The obvious remedy was more real data, and this
+module is what came of trying to get it. It was not enough: the twenty-two were
+removed instead, and what this module recovers is now reported by the audit
+rather than fed into the panel.
 
 **What is reachable.** Outbound access from this environment is governed by an
 egress policy that denies the Jordà–Schularick–Taylor host itself, along with
