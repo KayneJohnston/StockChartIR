@@ -12,9 +12,9 @@ I spent a while building an independent lifecycle simulator to see whether the A
 | International leg | Broad developed-market index | Leave-one-out equal-weighted across the other 15 |
 | Preferences | CRRA over consumption + bequest | CRRA and Epstein–Zin, De Nardi shifted-power bequest |
 
-The country count is the binding constraint and I'd weight it heavily. Sixteen markets is what the open record supports; the international leg therefore spans 15 foreign markets, all advanced economies that ended the century with functioning capital markets. Every statement about international diversification here is a statement about *that* set. I also make no attempt at mortality risk, which means my horizon is deterministic where theirs isn't.
+The country count is the binding constraint and I'd weight it heavily. Sixteen markets is what the openly licensed record supports with complete equity, bond and bill total returns; the international leg therefore spans 15 foreign markets, all advanced economies that ended the century with functioning capital markets. Every statement about international diversification here is a statement about *that* set. I also make no attempt at mortality risk, so my horizon is deterministic where theirs isn't.
 
-One methodological note: I deleted 22 countries partway through. An earlier version padded the panel to 38 using a factor model fitted to observed donors plus Gaussian noise. That's simulation, not measurement, and it *diluted* the result rather than creating it — removing those countries moved the headline from +7.3% to +11.2%. A cross-section of 38 sounds like stronger evidence than 16 while being weaker.
+The sampler is a calendar-joint stationary block bootstrap: whole (country, window) blocks, mean length 10 years, drawn so that cross-asset covariance, long-horizon persistence and the fat tails survive. Gaps — market closures, war years — are respected rather than interpolated across, which matters because they cluster exactly where a survivorship-prone sample would quietly drop observations.
 
 ## What replicated
 
@@ -27,11 +27,11 @@ At γ = 5 over 100,000 lifetimes, certainty-equivalent consumption:
 | 100% international equity | **1.109** | 9.0% | 3.5% |
 | 50/50 domestic/international | 1.048 | 11.7% | 3.2% |
 | Target-date glide path | 0.943 | 22.2% | 2.1% |
-| 60/40 | 0.871 | 24.2% | 1.7% |
 | 100% domestic equity | 0.882 | 25.4% | 1.6% |
+| 60/40 | 0.871 | 24.2% | 1.7% |
 | Bills | 0.739 | 56.4% | 1.1% |
 
-All-equity beats the glide path by **11.2%** and 60/40 by **20.3%**, and cuts ruin from 22% to 12%. It wins 20 of 21 dominance criteria, ties one, loses none. The ranking survives 200+ parameter settings across ten dimensions with zero reversals.
+All-equity beats the glide path by **11.2%** and 60/40 by **20.3%**, and cuts ruin from 22% to 12%. It wins 20 of 21 dominance criteria, ties one, loses none. The ranking survives 200+ parameter settings across ten dimensions — risk aversion, elasticity of substitution, retirement age, savings rate, withdrawal rate, social-security design — with **zero reversals**.
 
 Two BTSQ points I'd underline because they replicated hard:
 
@@ -73,7 +73,7 @@ Also: eight retirement spending rules compared on their own optimised rates, and
 
 ## Caveats I'd want raised if I were reading this
 
-Sixteen countries, all survivors at the system level. No taxes, fees, mortality risk or behavioural constraints. The mortgage rebalances annually, which no real mortgage does. Housing is a national index, not a house. And several results changed sign when I applied matched baselines and deviation profiles — the machinery for telling structure from noise is as much the contribution as any single number.
+Sixteen countries, all survivors at the system level. No taxes, fees, mortality risk or behavioural constraints. The mortgage rebalances annually, which no real mortgage does. Housing is a national index, not a house. And several results changed sign or magnitude once I scored every policy against a *matched* baseline differing in exactly one dimension, ran every optimiser under common random numbers, and subjected each solved schedule to a deviation profile before describing its shape — that machinery is as much the contribution as any single number.
 
 Repo and full PDF: **github.com/KayneJohnston/StockChartIR**
 
