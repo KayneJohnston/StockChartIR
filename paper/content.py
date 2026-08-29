@@ -2325,6 +2325,15 @@ def section_leverage(ctx: Any) -> List[Flowable]:
         "rate. The question is what it is worth to a <i>risk-averse</i> "
         "investor at the price they can actually borrow at. This section "
         "sweeps that price."))
+    out.append(ctx.p(
+        "One scoping note, because the answer below is largely negative and "
+        "the negative does not generalise as far as it first appears. What is "
+        "levered here is the <i>whole portfolio</i>: the ratio scales every "
+        "weight at once. Borrowing aimed at a single asset is a different "
+        "policy with a different answer, and Section 17.5 gives it — at the "
+        "same borrowing cost, a mortgage on one sleeve is worth several times "
+        "what scaling everything is worth. Read what follows as a verdict on "
+        "margin, not on debt."))
 
     out.append(ctx.h2("10.1 Mechanics, stated rather than buried"))
     out.append(ctx.p(
@@ -4341,7 +4350,93 @@ def section_mortgage(ctx: Any) -> List[Flowable]:
             f"which is the practical point: a household's mortgage rate, not "
             f"the return on housing, is what decides this."))
 
-    out.append(ctx.h2("17.5 What this is not"))
+    out.append(ctx.h2("17.5 Why this differs from Section 10"))
+    out.append(ctx.p(
+        "Section 10 concluded that borrowing is barely worth doing. This "
+        "section concludes that borrowing against a house is worth a great "
+        "deal. Both use the same arithmetic and the same real bill rate plus "
+        "a swept spread, so the two results have to be reconciled rather than "
+        "left side by side."))
+    try:
+        lev = f.table("leverage_sweep")
+        best = lev.loc[lev.groupby("spread")["cec"].idxmax()]
+        merged = best[["spread", "vs_unlevered_pct"]].merge(
+            sweep[["spread", "gain_vs_unlevered_pct"]], on="spread",
+            how="inner").sort_values("spread")
+        if len(merged):
+            out.extend(ctx.table(
+                rows_from(merged,
+                          ["spread", "vs_unlevered_pct",
+                           "gain_vs_unlevered_pct"],
+                          ["Spread over the real short rate",
+                           "Lever the portfolio (%)",
+                           "Mortgage the housing sleeve (%)"],
+                          {"spread": lambda v: pc(v, 1),
+                           "vs_unlevered_pct": lambda v: f2(v, 2),
+                           "gain_vs_unlevered_pct": lambda v: f2(v, 2)}),
+                "The same borrowing cost, two places to spend it",
+                note="Each column is that study's own gain over its own "
+                     "unlevered optimum, so both measure the value of the "
+                     "leverage rather than the value of the asset."))
+            out.append(ctx.p(
+                "<b>It is not the price of credit.</b> At identical spreads "
+                "the mortgage is worth several times what portfolio leverage "
+                "is worth, so holding the borrowing rate fixed does not close "
+                "the gap and cannot be the explanation."))
+    except FileNotFoundError:
+        pass
+
+    try:
+        cmp_ = f.table("mortgage_asset_comparison")
+        h = cmp_[cmp_["asset"] == "housing"].iloc[0]
+        ie = cmp_[cmp_["asset"] == "intl_eq"].iloc[0]
+        legs = float(cmp_["equity_leg_correlation"].iloc[0])
+        out.extend(ctx.table(
+            rows_from(cmp_, ["asset", "mean", "sd", "return_per_unit_risk",
+                             "correlation_with_housing"],
+                      ["Asset", "Mean real", "s.d.", "Return per unit of risk",
+                       "Correlation with housing"],
+                      {"asset": str, "mean": lambda v: pc(v, 2),
+                       "sd": lambda v: pc(v, 2),
+                       "return_per_unit_risk": lambda v: f2(v, 2),
+                       "correlation_with_housing": lambda v: f2(v, 2)}),
+            "Housing against the assets it competes with",
+            note=f"Housing is net of the {pc(float(notes['holding_cost']), 0)} "
+                 f"holding cost this section charges; the others are gross. "
+                 f"For reference, the two equity legs correlate at "
+                 f"{f2(legs, 2)} with each other."))
+        better = float(h["return_per_unit_risk"]) > float(
+            ie["return_per_unit_risk"])
+        out.append(ctx.p(
+            f"<b>It is diversification.</b> Housing's standalone return per "
+            f"unit of risk is {f2(float(h['return_per_unit_risk']), 2)} "
+            f"against international equity's "
+            f"{f2(float(ie['return_per_unit_risk']), 2)} — "
+            + ("better, but not by enough to explain a multiple."
+               if better else
+               "<i>worse</i>, so the gap cannot be a story about housing "
+               "being the superior asset.")
+            + f" What housing has is a correlation of "
+            f"{f2(float(ie['correlation_with_housing']), 2)} with the "
+            f"international equity sleeve, where the two equity legs "
+            f"correlate at {f2(legs, 2)} with each other. Levering the "
+            f"portfolio scales risk the investor already holds. Levering one "
+            f"asset changes what the portfolio is made of, and here it buys "
+            f"more of the one holding that moves independently of the rest — "
+            f"while tying up less capital in it."))
+        out.append(ctx.p(
+            "That distinction matters beyond this paper. The case for "
+            "lifecycle leverage (Ayres and Nalebuff, 2010) is usually made "
+            "for levered <i>equity</i>, and on this panel that is the version "
+            "that does not pay once credit is priced realistically. The "
+            "declining-with-age shape their argument predicts survives; the "
+            "instrument it is usually attached to does not. That the cheapest "
+            "leverage available to a household happens to be secured against "
+            "the diversifying asset is a convenience, not the mechanism."))
+    except FileNotFoundError:
+        pass
+
+    out.append(ctx.h2("17.6 What this is not"))
     out.append(ctx.p(
         "The schedule is rebalanced annually, like everything else in this "
         "paper. For a mortgage that means costlessly redrawing the loan every "
@@ -4437,12 +4532,21 @@ def section_discussion(ctx: Any) -> List[Flowable]:
         "the fine structure of the glide path is worth less than a basis point "
         "at most ages, and freeing every portfolio weight at every age adds "
         "less than the difference between two adjacent spending rules.",
-        "<b>Leverage is barely a lever</b> at household borrowing costs. The "
-        "advantage rounds to nothing across most of the plausible range of "
-        "spreads, and what it does buy is bought out of the left tail. The "
-        "one exception is worth noting: the leverage schedule is the only "
-        "policy in this paper that an unconstrained search makes genuinely "
-        "age-varying, and it declines steeply.",
+        "<b>Levering the portfolio is barely a lever</b> at household "
+        "borrowing costs. The advantage rounds to nothing across most of the "
+        "plausible range of spreads, and what it does buy is bought out of "
+        "the left tail. <b>Levering one asset is a different question</b>, "
+        "and Section 17.5 shows it has a different answer: at the same "
+        "borrowing cost, a mortgage on the housing sleeve is worth several "
+        "times what scaling the whole portfolio is worth, because it buys "
+        "more of the holding that moves independently of the rest rather "
+        "than more of what the investor already owns.",
+        "<b>Borrowing is where age structure actually lives.</b> The two "
+        "policies an unconstrained search makes genuinely age-varying in this "
+        "paper are both borrowing schedules — the leverage ratio of Section "
+        "10 and the loan-to-value of Section 17 — and both decline. The "
+        "equity share does not. What should fall as an investor ages is the "
+        "debt, not the risk.",
         "<b>The valuation you start at is not an allocation lever at all.</b> "
         "It moves what a portfolio delivers without changing which portfolio "
         "to hold, so it belongs in a reader's expectations and their "

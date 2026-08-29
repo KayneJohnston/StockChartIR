@@ -2264,8 +2264,15 @@ def step17_mortgage(cfg: Dict[str, Any],
                 " (looks like the limited-liability option)"
                 if option["looks_like_the_option"] else "")
 
+    # Why borrowing against housing behaves differently from borrowing
+    # against the portfolio: the four numbers that settle it.
+    comparison = hsg.investable_set_comparison(panel, desmoothed, holding_cost)
+    comparison["equity_leg_correlation"] = comparison.attrs.get(
+        "equity_leg_correlation", float("nan"))
+
     tables = cfg["run"]["table_dir"]
-    for frame, name in ((sweep, "mortgage_spread_sweep"),
+    for frame, name in ((comparison, "mortgage_asset_comparison"),
+                        (sweep, "mortgage_spread_sweep"),
                         (schedule, "mortgage_lvr_schedule"),
                         (lvr_curve, "mortgage_constant_lvr_curve"),
                         (profile, "mortgage_lvr_deviation_profile"),

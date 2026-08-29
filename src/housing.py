@@ -401,3 +401,47 @@ def age_varying_check(paths: Any, spec: Any, income: np.ndarray,
             row["cec_gain_pct"] = (cec / float(fixed["cec"]) - 1.0) * 100.0
         rows.append(row)
     return pd.DataFrame.from_records(rows)
+
+
+def investable_set_comparison(panel: dl.Panel, housing: np.ndarray,
+                              holding_cost: float = 0.0) -> pd.DataFrame:
+    """Housing against the four assets it competes with, pooled.
+
+    Mean, volatility, return per unit of volatility, and the correlation with
+    housing -- the four numbers needed to say *why* borrowing against housing
+    behaves differently from borrowing against the portfolio. A levered
+    portfolio scales risk already held; leverage aimed at one asset changes
+    what the portfolio is made of, and whether that helps depends on the
+    correlation rather than on the standalone return.
+    """
+    net = net_of_cost(housing, holding_cost)
+    rows: List[Dict[str, Any]] = []
+    series = [("housing", net), ("dom_eq", panel.dom_eq),
+              ("intl_eq", panel.intl_eq), ("bond", panel.bond),
+              ("bill", panel.bill)]
+    for name, values in series:
+        finite = values[np.isfinite(values)]
+        if not finite.size:
+            continue
+        mean = float(finite.mean())
+        sd = float(finite.std(ddof=1))
+        both = np.isfinite(net) & np.isfinite(values)
+        correlation = (float(np.corrcoef(net[both], values[both])[0, 1])
+                       if int(both.sum()) > 2 else float("nan"))
+        rows.append({
+            "asset": name,
+            "mean": mean,
+            "sd": sd,
+            "return_per_unit_risk": mean / sd if sd else float("nan"),
+            "correlation_with_housing": correlation,
+            "holding_cost_applied": float(holding_cost) if name == "housing"
+            else 0.0,
+        })
+    frame = pd.DataFrame.from_records(rows)
+    # The reference correlation the housing figures should be read against:
+    # how tightly the two equity legs already move together.
+    equity = np.isfinite(panel.dom_eq) & np.isfinite(panel.intl_eq)
+    frame.attrs["equity_leg_correlation"] = (
+        float(np.corrcoef(panel.dom_eq[equity], panel.intl_eq[equity])[0, 1])
+        if int(equity.sum()) > 2 else float("nan"))
+    return frame
