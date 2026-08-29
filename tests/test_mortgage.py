@@ -154,18 +154,50 @@ class TestTheCap:
 
 
 class TestRateBase:
-    def test_bill_and_bond_price_the_loan_differently(self, levered_setup,
-                                                       toy_config) -> None:
-        bill = _evaluator(levered_setup, toy_config, spread=0.0, lvr=0.6,
-                          rate_base="bill")
-        bond = _evaluator(levered_setup, toy_config, spread=0.0, lvr=0.6,
-                          rate_base="bond")
-        assert not np.allclose(bill.levered_housing(), bond.levered_housing())
+    def test_refuses_to_price_a_loan_off_a_bond_total_return(
+            self, levered_setup, toy_config) -> None:
+        """The mistake this option used to make.
+
+        A bond total return adds the capital gain a *holder* makes when yields
+        fall. Charging a borrower that would make their loan cheap in exactly
+        the years bonds rallied, which is backwards.
+        """
+        with pytest.raises(ValueError, match="total"):
+            _evaluator(levered_setup, toy_config, rate_base="bond")
+
+    def test_the_long_yield_variant_needs_the_yield_supplied(
+            self, levered_setup, toy_config) -> None:
+        with pytest.raises(ValueError, match="base_rate"):
+            _evaluator(levered_setup, toy_config, rate_base="long_yield")
+
+    def test_an_explicit_base_rate_is_what_the_borrower_pays(
+            self, levered_setup, toy_config) -> None:
+        paths, spec, income, gross = levered_setup
+        rate = np.full((paths.n_paths, paths.horizon), 0.03)
+        ev = mg.MortgageEvaluator(
+            paths, spec, income, toy_config, extra={hs.HOUSING: gross},
+            spread=0.01, lvr=0.5, rate_base="long_yield", base_rate=rate)
+        expected = np.maximum((ev._housing - 0.5 * (0.03 + 0.01)) / 0.5, -1.0)
+        np.testing.assert_allclose(ev.levered_housing()[:, :, 0], expected)
+
+    def test_rejects_a_base_rate_with_holes(self, levered_setup,
+                                            toy_config) -> None:
+        paths, spec, income, gross = levered_setup
+        rate = np.full((paths.n_paths, paths.horizon), 0.03)
+        rate[0, 0] = np.nan
+        with pytest.raises(ValueError, match="non-finite"):
+            mg.MortgageEvaluator(
+                paths, spec, income, toy_config, extra={hs.HOUSING: gross},
+                rate_base="long_yield", base_rate=rate)
 
     def test_rejects_an_unknown_base(self, levered_setup,
                                      toy_config) -> None:
         with pytest.raises(ValueError, match="rate_base"):
             _evaluator(levered_setup, toy_config, rate_base="gold")
+
+    def test_the_default_spread_is_inside_the_evidence_range(self) -> None:
+        """150-200bp is what a competitive borrower pays; the default is 200."""
+        assert 0.015 <= mg.DEFAULT_SPREAD <= 0.020
 
 
 class TestSearch:

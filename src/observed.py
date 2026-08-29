@@ -187,6 +187,33 @@ def housing_returns(jst: pd.DataFrame, isos: Sequence[str],
     return out
 
 
+def real_long_yield(jst: pd.DataFrame, isos: Sequence[str],
+                    years: np.ndarray) -> np.ndarray:
+    """``(T, C)`` realised real long-term interest *rate*, not bond return.
+
+    A borrower pays the yield they contracted at, deflated by the inflation
+    that actually arrived. That is a different series from the total return on
+    a long bond, which adds the capital gain a *holder* makes when yields fall
+    -- over this panel the two have a correlation of about 0.74 and the return
+    is half again as volatile. Using the return as a borrowing cost would make
+    a loan cheap in exactly the years bonds rallied, which is backwards, so the
+    mortgage study of :mod:`src.mortgage` prices its long-rate variant from
+    here instead.
+    """
+    out = np.full((years.size, len(isos)), np.nan)
+    for j, iso in enumerate(isos):
+        block = jst[jst["iso"] == iso].sort_values("year")
+        if block.empty:
+            continue
+        nominal = _aligned(block, "ltrate", years) / 100.0
+        cpi = _aligned(block, "cpi", years)
+        with np.errstate(invalid="ignore", divide="ignore"):
+            inflation = cpi / np.roll(cpi, 1) - 1.0
+        inflation[0] = np.nan
+        out[:, j] = _real(nominal, inflation)
+    return out
+
+
 def first_order_autocorrelation(series: np.ndarray) -> float:
     """Lag-one autocorrelation of a series, ignoring gaps."""
     values = np.asarray(series, dtype=float)

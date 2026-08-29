@@ -2213,8 +2213,20 @@ def step17_mortgage(cfg: Dict[str, Any],
                                 np.random.default_rng(12345))
     gross = hsg.gather(paths, desmoothed)
 
+    # A borrower pays the yield they contracted at, not the total return a
+    # bondholder earns; the long-rate variant is built from the yield.
+    base_rate = None
+    if rate_base == "long_yield":
+        yields = obs.real_long_yield(jst, panel.countries, panel.years)
+        base_rate = hsg.gather(paths, yields)
+        if not np.isfinite(base_rate).all():
+            raise RuntimeError(
+                "the long-yield series has gaps on the drawn paths; either "
+                "restrict the panel further or price the loan off bills")
+
     sweep = mgg.sweep_spread(paths, spec, income, cfg, gross, spreads, gamma,
-                             holding_cost, grid, rate_base, coarse, fine)
+                             holding_cost, grid, rate_base, coarse, fine,
+                             base_rate=base_rate)
     break_even = mgg.break_even_spread(sweep)
 
     # The age-by-age schedule at one named price of credit, reported in full.
@@ -2222,7 +2234,7 @@ def step17_mortgage(cfg: Dict[str, Any],
     net = hsg.net_of_cost(gross, holding_cost)
     evaluator = mgg.MortgageEvaluator(
         paths, spec, income, cfg, extra={hsg.HOUSING: net},
-        spread=detail_spread, rate_base=rate_base)
+        spread=detail_spread, rate_base=rate_base, base_rate=base_rate)
     solved = mgg.alternate(evaluator, gamma, grid,
                            rounds=int(mg_cfg.get("rounds", 3)),
                            coarse_step=coarse, fine_step=fine,

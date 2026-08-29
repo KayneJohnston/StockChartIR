@@ -20,10 +20,35 @@ and the two studies stay consistent.
 
 **The rate.** The mortgage is priced off the borrower's *own* country's real
 short rate plus a spread, drawn on the same block as every other series, so a
-lifetime that lives through high real rates pays them. The spread is swept
-rather than assumed: a mortgage is not free, the right margin differs by
-country and era, and reporting the whole curve is more honest than defending
-one number.
+lifetime that lives through high real rates pays them.
+
+The spread is swept rather than assumed, but the sweep is centred on what
+lenders actually charge. Two literatures bracket it and they agree more
+closely than they have any right to:
+
+* **Floating, over the short rate.** Australian bank indicator rates ran about
+  180bp over the cash rate through 1998-2007, having fallen from 430bp in
+  1993, while the rate borrowers *actually paid* ran 125-150bp over it. UK
+  standard variable rates sit nearer 300bp over Bank Rate, but that is the
+  sticker price a borrower pays only by inertia; competitive trackers are
+  well inside it.
+* **Fixed, over the long yield.** The US thirty-year fixed rate has averaged
+  about 170-180bp over the ten-year Treasury since the Great Recession, with a
+  median near 200bp.
+
+So a representative borrower on a competitive product pays roughly
+**150-200bp** over the relevant benchmark, in either framing, and
+:data:`DEFAULT_SPREAD` is set at the top of that range. The grid runs from
+zero -- which is not a free loan, only a loan at the government's own real
+rate -- out to 4%, which covers the sticker-price end and the eras when
+mortgage credit was genuinely dear.
+
+**Which benchmark.** The short rate, because this model redraws the loan
+every year. A fixed-rate mortgage refinanced annually is a contradiction:
+whoever holds it is exposed to the short rate whatever the contract says. The
+long-rate variant is available for a fixed-rate reading and takes the realised
+real *yield* rather than the total return on a long bond -- the two differ by
+the capital gain a holder makes when yields fall, which no borrower receives.
 
 **Limited liability.** Equity is wiped out, not driven negative: the levered
 return is floored at total loss, which is the non-recourse assumption. In
@@ -65,6 +90,12 @@ LVR_CAP = 0.80
 DEFAULT_LVR_GRID: Tuple[float, ...] = (0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6,
                                        0.7, 0.8)
 
+#: The spread a representative borrower on a competitive product pays over the
+#: relevant benchmark, from the evidence set out in the module docstring. Used
+#: wherever one number is needed rather than a curve; the sweep still reports
+#: the curve, because this figure is a central estimate and not a law.
+DEFAULT_SPREAD = 0.02
+
 
 def leverage_multiple(lvr: Any) -> np.ndarray:
     """``1 / (1 - lambda)``: the gross exposure one unit of equity carries."""
@@ -88,7 +119,8 @@ class MortgageEvaluator(gp.BatchEvaluator):
 
     def __init__(self, *args: Any, spread: float = 0.0,
                  lvr: float | np.ndarray = 0.0,
-                 rate_base: str = "bill", **kwargs: Any) -> None:
+                 rate_base: str = "bill",
+                 base_rate: np.ndarray | None = None, **kwargs: Any) -> None:
         kwargs.setdefault("assets", hs.ASSETS)
         super().__init__(*args, **kwargs)
         if hs.HOUSING not in self.assets:
@@ -96,18 +128,40 @@ class MortgageEvaluator(gp.BatchEvaluator):
                 f"a mortgage needs a housing sleeve to secure; assets are "
                 f"{self.assets}")
         self.housing_index = list(self.assets).index(hs.HOUSING)
-        if rate_base not in ("bill", "bond"):
+        if rate_base not in ("bill", "long_yield"):
             raise ValueError(
-                f"rate_base must be 'bill' or 'bond'; got {rate_base!r}")
+                f"rate_base must be 'bill' or 'long_yield'; got "
+                f"{rate_base!r}. There is deliberately no 'bond' option: the "
+                "panel's bond series is a total *return*, which adds the "
+                "capital gain a holder makes when yields fall and would make "
+                "a loan cheap in exactly the years bonds rallied. Pass the "
+                "long yield explicitly through base_rate instead.")
         self.rate_base = rate_base
         self.spread = float(spread)
-        self._base_index = list(self.assets).index(rate_base)
         # (H, N), cached once: the unlevered housing return and the rate the
         # loan against it is priced off.
         self._housing = np.ascontiguousarray(
             self._returns[:, :, self.housing_index])
-        self._base_rate = np.ascontiguousarray(
-            self._returns[:, :, self._base_index])
+        if rate_base == "long_yield":
+            if base_rate is None:
+                raise ValueError(
+                    "rate_base='long_yield' needs the realised real long rate "
+                    "passed as base_rate; build it with "
+                    "src.observed.real_long_yield and gather it onto the "
+                    "paths the same way housing is")
+            block = np.asarray(base_rate, dtype=float)[:, :self.spec.horizon]
+            if block.shape != self._housing.T.shape:
+                raise ValueError(
+                    f"base_rate is {block.shape}, expected "
+                    f"{self._housing.T.shape}")
+            if not np.isfinite(block).all():
+                raise ValueError(
+                    "base_rate contains non-finite values; a borrower pays a "
+                    "rate in every year of the loan")
+            self._base_rate = np.ascontiguousarray(block.T)
+        else:
+            self._base_rate = np.ascontiguousarray(
+                self._returns[:, :, list(self.assets).index("bill")])
         self.set_lvr(lvr)
 
     # -- the decision variable ---------------------------------------------
@@ -354,7 +408,8 @@ def sweep_spread(paths: Any, spec: Any, income: np.ndarray,
                  grid: Sequence[float] = DEFAULT_LVR_GRID,
                  rate_base: str = "bill",
                  coarse_step: float = 0.10,
-                 fine_step: float = 0.025) -> pd.DataFrame:
+                 fine_step: float = 0.025,
+                 base_rate: np.ndarray | None = None) -> pd.DataFrame:
     """The joint optimum at each price of mortgage credit.
 
     One row per spread over the domestic short rate. Everything else is held
@@ -366,7 +421,7 @@ def sweep_spread(paths: Any, spec: Any, income: np.ndarray,
     for spread in spreads:
         evaluator = MortgageEvaluator(
             paths, spec, income, cfg, extra={hs.HOUSING: net},
-            spread=float(spread), rate_base=rate_base)
+            spread=float(spread), rate_base=rate_base, base_rate=base_rate)
         solved = alternate(evaluator, gamma, grid,
                            coarse_step=coarse_step, fine_step=fine_step,
                            label=f"[spread {spread:.1%}] ")

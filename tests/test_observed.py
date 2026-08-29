@@ -413,3 +413,43 @@ def test_subsetting_carries_the_masks(toy_panel):
 def test_empty_masks_leave_every_label_alone():
     available = np.ones((3, 2), dtype=bool)
     assert dl.derive_tiers({}, available, ["A", "B"]) == ["A", "B"]
+
+
+class TestRealLongYield:
+    """A borrowing cost must be a rate, not a holder's total return."""
+
+    def test_deflates_the_nominal_yield_by_realised_inflation(self) -> None:
+        frame = pd.DataFrame({
+            "iso": ["AAA"] * 3,
+            "year": [2000, 2001, 2002],
+            "ltrate": [5.0, 5.0, 5.0],       # per cent, as the workbook stores
+            "cpi": [100.0, 110.0, 121.0],
+        })
+        out = obs.real_long_yield(frame, ["AAA"], np.array([2000, 2001, 2002]))
+        assert np.isnan(out[0, 0]), "no prior year, so no inflation rate"
+        assert out[1, 0] == pytest.approx(1.05 / 1.10 - 1.0)
+        assert out[2, 0] == pytest.approx(1.05 / 1.10 - 1.0)
+
+    def test_is_not_the_bond_total_return(self, toy_panel) -> None:
+        """The distinguishing property, stated as a test.
+
+        The total return adds a capital gain when yields fall. A borrower
+        receives none of it.
+        """
+        frame = pd.DataFrame({
+            "iso": ["AAA"] * 3,
+            "year": [2000, 2001, 2002],
+            "ltrate": [5.0, 4.0, 3.0],       # a rally
+            "cpi": [100.0, 100.0, 100.0],
+        })
+        yields = obs.real_long_yield(frame, ["AAA"], np.array([2000, 2001, 2002]))
+        returns = obs.bond_return_from_yield(
+            np.array([0.05, 0.04, 0.03]), duration=7.0)
+        # Falling yields: the holder's return exceeds the rate it was earned on.
+        assert returns[1] > yields[1, 0]
+
+    def test_missing_country_is_all_nan(self) -> None:
+        frame = pd.DataFrame({"iso": ["AAA"], "year": [2000],
+                              "ltrate": [5.0], "cpi": [100.0]})
+        assert np.isnan(obs.real_long_yield(frame, ["ZZZ"],
+                                            np.array([2000]))).all()

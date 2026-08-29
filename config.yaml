@@ -665,12 +665,24 @@ mortgage:
   lvr_grid: [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
 
   # Annual real mortgage rate = the borrower's own country's real short rate
-  # plus this spread, drawn on the same block as every other series.
-  spreads: [0.0, 0.01, 0.02, 0.03, 0.04]
+  # plus this spread, drawn on the same block as every other series. A zero
+  # spread is not a free loan -- it is a loan at the government's own real
+  # short rate.
+  #
+  # The grid is centred on what lenders actually charge. Australian bank
+  # indicator rates ran ~180bp over the cash rate through 1998-2007 (and the
+  # rate borrowers actually paid, 125-150bp); UK standard variable rates sit
+  # nearer 300bp over Bank Rate, which is the inertia price rather than the
+  # competitive one; and the US 30-year fixed has averaged ~170-180bp over the
+  # 10-year Treasury. A representative competitive borrower pays 150-200bp.
+  spreads: [0.0, 0.01, 0.015, 0.02, 0.025, 0.03, 0.04]
 
   # "bill" prices the loan off the domestic short rate, which is what a
-  # floating-rate mortgage tracks. "bond" prices it off the long rate, which
-  # is closer to a fixed-rate product.
+  # floating-rate mortgage tracks -- and what this model implies, since it
+  # redraws the loan annually. "long_yield" prices it off the realised real
+  # long *rate* for a fixed-rate reading; note that is deliberately not the
+  # bond total return, which adds the capital gain a holder makes when yields
+  # fall and would make a loan cheap in the years bonds rallied.
   rate_base: bill
 
   # The housing holding cost the mortgage study assumes. Set from the academic
@@ -688,4 +700,5 @@ mortgage:
   fine_step: 0.025
 
   # The spread at which the age-by-age schedule is reported in full.
+  # 200bp: the top of the 150-200bp range a competitive borrower pays.
   detail_spread: 0.02
