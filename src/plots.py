@@ -1871,13 +1871,18 @@ def plot_valuation(predictive: pd.DataFrame, buckets: pd.DataFrame,
         here = float(position.get("blended_yield", np.nan)) * 100
         if np.isfinite(here):
             ax.axvline(here, color=_colour(1), linewidth=2.0)
+            # On a white plate: the marker line sits at the left edge of the
+            # distribution, so the label unavoidably runs over the bars.
             ax.annotate(f"{position.get('iso', '')} "
                         f"{int(position.get('year', 0))}: {here:.1f}%\n"
                         f"{position.get('blended_percentile', float('nan')):.0f}th "
                         f"percentile",
-                        (here, ax.get_ylim()[1] * 0.86),
+                        (here, ax.get_ylim()[1] * 0.90),
                         textcoords="offset points", xytext=(9, 0),
-                        fontsize=8.5, color=_colour(1))
+                        fontsize=8.5, color=_colour(1), va="top",
+                        bbox=dict(boxstyle="round,pad=0.32", facecolor="white",
+                                  edgecolor=_colour(1), linewidth=0.7,
+                                  alpha=0.92))
         ax.set_xlabel("Blended starting dividend yield (%)")
         ax.set_ylabel("Country-years in the panel")
         ax.set_title("Where a reader starting today sits in\n"
