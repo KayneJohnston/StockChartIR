@@ -86,6 +86,7 @@ def front_matter(ctx: Any) -> List[Flowable]:
     ruin_tdf = float(f.strategy_row("target_date_fund")["prob_ruin"])
     tornado = f.table("sensitivity_tornado")
     n_settings = int(tornado["n_settings"].sum())
+    n_dimensions = int(tornado["dimension"].nunique())
     val_adv = f.table("valuation_advantage")
     house = f.table("housing_cost_sweep")
     house_five = house[house["investable_set"] == "five assets"].sort_values(
@@ -143,7 +144,8 @@ def front_matter(ctx: Any) -> List[Flowable]:
         f"portfolio by {adv_6040:.1f}% in certainty-equivalent consumption at "
         f"γ = {f.baseline_gamma:g}, while cutting the probability of exhausting "
         f"the portfolio from {pc(ruin_tdf, 0)} to {pc(ruin_eq, 0)}. The ranking "
-        f"survives {n_settings} parameter settings across ten dimensions with "
+        f"survives {n_settings} parameter settings across {n_dimensions} "
+        f"dimensions with "
         f"{reversals} reversals. Sustainable withdrawal rates are far below "
         f"the four-percent convention on every strategy "
         f"({pc(swr_eq, 1)} for all-equity, {pc(swr_tdf, 1)} for the target-date "
@@ -1614,18 +1616,24 @@ def section_sensitivity(ctx: Any) -> List[Flowable]:
     dom_opt = f.table("sensitivity_domestic_optimum")
     ies = f.table("sensitivity_ies")
     n_settings = int(tornado["n_settings"].sum())
+    n_dimensions = int(tornado["dimension"].nunique())
     reversals = int(tornado["settings_lost"].sum())
 
     out: List[Flowable] = [ctx.h1("6. Sensitivity Analysis")]
     out.append(ctx.p(
         f"The headline is one point in a large parameter space. This section "
-        f"sweeps that space: {n_settings} settings across ten dimensions — "
-        f"equity share, domestic share, risk aversion, elasticity of "
-        f"intertemporal substitution, bequest weight, longevity, retirement "
-        f"age, savings rate, withdrawal rate, social-security design, block "
-        f"length and return panel. Every sweep uses common random numbers, so "
-        f"differences between settings are parameter effects rather than "
-        f"sampling noise."))
+        f"sweeps that space along equity share, domestic share, risk "
+        f"aversion, elasticity of intertemporal substitution, bequest weight, "
+        f"longevity, retirement age, savings rate, withdrawal rate, "
+        f"social-security design, block length and return panel. Every sweep "
+        f"uses common random numbers, so differences between settings are "
+        f"parameter effects rather than sampling noise."))
+    out.append(ctx.p(
+        f"The tornado below summarises {n_settings} settings across the "
+        f"{n_dimensions} of those dimensions along which a like-for-like "
+        f"advantage over a fixed incumbent strategy is defined; the "
+        f"remainder vary the portfolio itself and are reported in their own "
+        f"subsections."))
     out.append(ctx.p(
         f"<b>The ranking reverses in {reversals} of them.</b> That is the "
         f"single most useful sentence in this section, and the tornado below "

@@ -31,7 +31,7 @@ At γ = 5 over 100,000 lifetimes, certainty-equivalent consumption:
 | 60/40 | 0.871 | 24.2% | 1.7% |
 | Bills | 0.739 | 56.4% | 1.1% |
 
-All-equity beats the glide path by **11.2%** and 60/40 by **20.3%**, cutting ruin from 22% to 12%. It wins 20 of 21 dominance criteria, ties one, loses none, and the ranking survives 200+ settings across ten dimensions — risk aversion, EIS, retirement age, savings rate, withdrawal rate, social-security design — with **zero reversals**.
+All-equity beats the glide path by **11.2%** and 60/40 by **20.3%**, cutting ruin from 22% to 12%. It wins 20 of 21 dominance criteria, ties one, loses none, and the ranking survives 132 settings across the 9 dimensions where a like-for-like comparison against a fixed incumbent is defined — risk aversion, EIS, retirement age, savings rate, withdrawal rate, longevity, bequest weight, block length, social-security design — with **zero reversals**.
 
 Two points I'd underline because they replicated hard:
 

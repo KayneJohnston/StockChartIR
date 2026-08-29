@@ -502,7 +502,7 @@ pip install numpy pandas scipy matplotlib pyyaml openpyxl pytest
 
 python main.py --quick      # ~1 min smoke run at reduced N
 python main.py              # ~1 h full run: N = 100,000 plus sweeps and searches
-python -m pytest tests/ -q  # 580 tests
+python -m pytest tests/ -q  # 627 tests
 ```
 
 Selected steps and alternative configurations:
@@ -553,7 +553,7 @@ python main.py --config other.yaml  # a different parameterisation
 │   ├── mortgage.py       # the loan-to-value decision, solved by age
 │   ├── plots.py          # publication-quality figures
 │   └── report.py         # Markdown report generation
-├── tests/                # 580 unit + integration tests
+├── tests/                # 627 unit + integration tests
 ├── results/
 │   ├── figures/          # 42 PNGs
 │   └── tables/           # 110+ CSVs

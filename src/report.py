@@ -4368,6 +4368,14 @@ does when the expected asset return exceeds the borrowing rate. The question is
 what it is worth to a risk-averse investor **at the price they can actually
 borrow at**. This document sweeps that price.
 
+One scoping note, because the answer below is largely negative and the negative
+does not generalise as far as it first appears. What is levered here is the
+**whole portfolio**: the ratio scales every weight at once. Borrowing aimed at
+a single asset is a different policy with a different answer, and
+`17_mortgage.md` gives it -- at the same borrowing cost, a mortgage on one
+sleeve is worth several times what scaling everything is worth. Read what
+follows as a verdict on margin, not on debt.
+
 ## 2. Mechanics, stated rather than buried
 
 An allocation `x` over the four assets sums to one. A leverage ratio `L` means
@@ -5829,6 +5837,61 @@ def write_doc_17(
          "gross_housing_exposure": "Gross housing (x net wealth)"}),
         floatfmt="{:.2f}")
 
+    # -- the reconciliation against the portfolio-leverage study ----------
+    comparison = frames.get("comparison")
+    leverage = frames.get("leverage")
+    reconciliation_tbl = reconciliation_note = asset_tbl = ""
+    if comparison is not None and len(comparison):
+        labels = {"housing": "Housing", "dom_eq": "Domestic equity",
+                  "intl_eq": "International equity", "bond": "Bonds",
+                  "bill": "Bills"}
+        shown = comparison.assign(
+            asset=comparison["asset"].map(lambda v: labels.get(v, v)))
+        asset_tbl = md_table(_compact(
+            _pct(shown, ["mean", "sd", "correlation_with_housing"]),
+            ["asset", "mean", "sd", "return_per_unit_risk",
+             "correlation_with_housing"],
+            {"asset": "Asset", "mean": "Mean real (%)", "sd": "s.d. (%)",
+             "return_per_unit_risk": "Return per unit of risk",
+             "correlation_with_housing": "Correlation with housing (%)"}),
+            floatfmt="{:.2f}")
+        house = comparison[comparison["asset"] == "housing"].iloc[0]
+        intl = comparison[comparison["asset"] == "intl_eq"].iloc[0]
+        legs = float(comparison["equity_leg_correlation"].iloc[0])
+        better = float(house["return_per_unit_risk"]) > float(
+            intl["return_per_unit_risk"])
+        reconciliation_note = (
+            f"**It is diversification.** Housing's standalone return per unit "
+            f"of risk is {float(house['return_per_unit_risk']):.2f} against "
+            f"international equity's "
+            f"{float(intl['return_per_unit_risk']):.2f} -- "
+            + ("better, but not by enough to explain a multiple."
+               if better else
+               "*worse*, so the gap cannot be a story about housing being the "
+               "superior asset.")
+            + f" What housing has is a correlation of "
+            f"{float(intl['correlation_with_housing']):.2f} with the "
+            f"international equity sleeve, where the two equity legs "
+            f"correlate at {legs:.2f} with each other. Levering the portfolio "
+            f"scales risk the investor already holds; levering one asset "
+            f"changes what the portfolio is made of, and here it buys more of "
+            f"the holding that moves independently of the rest while tying up "
+            f"less capital in it.")
+    if leverage is not None and len(leverage):
+        best_by_spread = leverage.loc[
+            leverage.groupby("spread")["cec"].idxmax()]
+        merged = best_by_spread[["spread", "vs_unlevered_pct"]].merge(
+            sweep[["spread", "gain_vs_unlevered_pct"]], on="spread",
+            how="inner").sort_values("spread")
+        if len(merged):
+            reconciliation_tbl = md_table(_compact(
+                _pct(merged, ["spread"]),
+                ["spread", "vs_unlevered_pct", "gain_vs_unlevered_pct"],
+                {"spread": "Spread over the real short rate (%)",
+                 "vs_unlevered_pct": "Lever the portfolio (%)",
+                 "gain_vs_unlevered_pct": "Mortgage the housing sleeve (%)"}),
+                floatfmt="{:.2f}")
+
     # -- verdicts, classified ---------------------------------------------
     best_flat = curve.loc[curve["cec"].idxmax()]
     interior = 0.0 < float(best_flat["lvr"]) < cap - 1e-9
@@ -6038,7 +6101,24 @@ At a {detail:.0%} spread, holding the ratio flat for life:
 
 {price_note}
 
-## 6. What this is not
+## 6. Why this differs from `13_leverage.md`
+
+That document concluded borrowing is barely worth doing. This one concludes
+borrowing against a house is worth a great deal. Both use the same arithmetic
+and the same real bill rate plus a swept spread, so the two have to be
+reconciled rather than left side by side.
+
+{reconciliation_tbl}
+
+**It is not the price of credit.** At identical spreads the mortgage is worth
+several times what portfolio leverage is worth, so holding the borrowing rate
+fixed does not close the gap and cannot be the explanation.
+
+{asset_tbl}
+
+{reconciliation_note}
+
+## 7. What this is not
 
 The schedule is rebalanced annually, like everything else in this project.
 For a mortgage that means costlessly redrawing the loan every year to hit a
@@ -6055,11 +6135,11 @@ And it prices a nationally diversified housing index, not a house -- the
 concentration risk a single leveraged property carries is precisely what a
 mortgage makes dangerous, and none of it is here.
 
-## 7. Figures
+## 8. Figures
 
 {chr(10).join(f"* `{f}`" for f in figures)}
 
-## 8. Reproduction
+## 9. Reproduction
 
 ```bash
 python main.py --steps 17

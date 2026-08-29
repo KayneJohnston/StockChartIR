@@ -2182,6 +2182,17 @@ def step16_housing(cfg: Dict[str, Any],
     return state
 
 
+def _read_table_if_present(cfg: Mapping[str, Any], name: str):
+    """A previously written table, so a step can reference an earlier one.
+
+    Returns None when the table is absent, which is the normal case for a
+    fresh checkout or a partial run -- the prose that would have used it is
+    simply omitted rather than the step failing.
+    """
+    path = Path(cfg["run"]["table_dir"]) / f"{name}.csv"
+    return pd.read_csv(path) if path.exists() else None
+
+
 def step17_mortgage(cfg: Dict[str, Any],
                     state: Dict[str, Any]) -> Dict[str, Any]:
     """How much of the house should be borrowed, and at what age."""
@@ -2287,7 +2298,10 @@ def step17_mortgage(cfg: Dict[str, Any],
     rp.write_doc_17(
         Path("docs") / "17_mortgage.md", cfg,
         {"sweep": sweep, "schedule": schedule, "curve": lvr_curve,
-         "history": solved["history"], "profile": profile},
+         "history": solved["history"], "profile": profile,
+         "comparison": comparison,
+         "leverage": state.get("leverage_sweep") if "leverage_sweep" in state
+         else _read_table_if_present(cfg, "leverage_sweep")},
         figures,
         {"elapsed_seconds": elapsed, "break_even": break_even,
          "gamma": gamma, "n_paths": int(paths.n_paths),
