@@ -592,15 +592,25 @@ Section 6 reports the `per_block` variant.
 
 A uniform draw gives the shortest history in the panel
 ({int(panel.available.sum(axis=0).min())} years) the same weight as the longest
-({int(panel.available.sum(axis=0).max())}). Since a short recorded history is a
-narrow window on one era rather than a representative sample of one, uniform
-weighting lets whichever era those countries happen to cover speak as loudly as
-a century and a half of another country's. History weighting is what pooling
-country-time blocks implies in the first place.
+({int(panel.available.sum(axis=0).max())}). A short history is a narrow window
+on one era rather than a small sample of every era, so uniform weighting lets
+whichever era a country happens to cover speak as loudly as a century and a
+half of another's. Weighting by usable country-years is both the neutral choice
+and the one implied by pooling country-time blocks in the first place.
 
-Weighting the country draw by usable country-years is both the neutral choice
-and the one implied by ACO's pooling of country-time blocks. Section 6 reports
-the uniform-weighting variant so the reader can see the size of the effect.
+**On this panel the choice barely matters.** Every country carries between
+{int(panel.available.sum(axis=0).min())} and
+{int(panel.available.sum(axis=0).max())} usable years, a spread of
+{int(panel.available.sum(axis=0).max() - panel.available.sum(axis=0).min())}
+years across {panel.n_countries} countries, so the two weightings assign nearly
+the same probabilities. That was not true of the panel this project used to
+have: its short histories belonged to the generated markets, which entered at
+documented inception dates and whose windows fell in a strong era for the world
+equity factor -- so uniform weighting silently tilted the answer toward
+equities, the very direction the headline result runs. Removing those countries
+removed the hazard along with them. Section 6 still reports the
+uniform-weighting variant, and it should now be close to the baseline rather
+than merely consistent with it.
 
 ## 4. Validation battery
 

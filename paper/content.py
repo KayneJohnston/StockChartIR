@@ -1085,7 +1085,11 @@ def section_methods(ctx: Any) -> List[Flowable]:
         f"(<i>{cfg['bootstrap']['country_weighting']}</i>). Both choices are "
         f"varied in Appendix C and summarised at the end of Section 5.5: "
         f"redrawing the country at every block, and weighting countries "
-        f"uniformly, both leave the ranking unchanged."))
+        f"uniformly, both leave the ranking unchanged. The weighting choice "
+        f"has little room to bite on this panel, where every country carries "
+        f"between {f.panel['min_years']} and {f.panel['max_years']} usable "
+        f"years — a spread the earlier, part-generated panel did not have, "
+        f"because its short histories all belonged to simulated markets."))
 
     out.extend(ctx.table(
         rows_from(moments, ["series", "bootstrap_mean", "panel_pooled_mean",

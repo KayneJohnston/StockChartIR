@@ -162,6 +162,7 @@ class Facts:
             "country_years": int(equity["n_years"].sum()),
             "median_years": float(equity["n_years"].median()),
             "min_years": int(equity["n_years"].min()),
+            "max_years": int(equity["n_years"].max()),
             "mean_real_equity": float(equity["mean"].mean()),
             "mean_geometric_equity": float(equity["geometric_mean"].mean()),
             "mean_equity_sd": float(equity["std"].mean()),
