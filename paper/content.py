@@ -907,7 +907,7 @@ def section_data(ctx: Any) -> List[Flowable]:
             "we record it as a quantified limitation rather than apply it "
             "silently."))
 
-    out.append(ctx.h3("Is the primary source genuine?"))
+    out.append(ctx.h3("3.6.4 Is the source we kept genuine?"))
     out.append(ctx.p(
         "The workbook was obtained from a redistributed copy rather than "
         "downloaded from the compilers, so it is audited rather than "
@@ -939,7 +939,7 @@ def section_data(ctx: Any) -> List[Flowable]:
         f"everywhere to machine precision would be one whose components had "
         f"been back-solved from its totals."))
 
-    out.append(ctx.h3("One finding that does not pass"))
+    out.append(ctx.h3("3.6.5 One finding that does not pass"))
     out.append(ctx.p(
         f"The last five years of every equity series are smoother than that "
         f"country's own history. <b>All {pr['tail_smoother']} of "
@@ -961,7 +961,7 @@ def section_data(ctx: Any) -> List[Flowable]:
         "lifecycle result materially, but the finding is recorded rather than "
         "left for a reader to discover."))
 
-    out.append(ctx.h3("The finding that bears hardest on the result"))
+    out.append(ctx.h3("3.6.6 The international leg, and what the removal cost"))
     out.append(ctx.p(
         "international leg is a leave-one-out average across every country "
         "with data that year, so the composition of the cross-section decides "
