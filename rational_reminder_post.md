@@ -1,0 +1,80 @@
+# A from-scratch re-implementation of Beyond the Status Quo — what held, what didn't, and six extensions
+
+I spent a while building an independent lifecycle simulator to see whether the ACO result survives contact with a different dataset and a different implementation. Everything below is reproducible from one config file and one command; the code, the 84-page write-up and every table are open. This is a re-implementation, **not** a replication of their code — I never saw it — so where I differ, the honest reading is usually "different sample" rather than "they got it wrong."
+
+## Design differences worth knowing before you read the numbers
+
+| | BTSQ (as I understand it) | This build |
+|---|---|---|
+| Panel | ~38–39 developed markets | **16 countries**, 1890–2020, 2,010 country-years |
+| Source | DMS-lineage, largely proprietary | Jordà–Schularick–Taylor + *Rate of Return on Everything*, openly licensed |
+| Mortality | Survival probabilities | **None** — fixed 25 → 63 → 93 |
+| International leg | Broad developed-market index | Leave-one-out equal-weighted across the other 15 |
+| Preferences | CRRA over consumption + bequest | CRRA and Epstein–Zin, De Nardi shifted-power bequest |
+
+The country count is the binding constraint and I'd weight it heavily. Sixteen markets is what the open record supports; the international leg therefore spans 15 foreign markets, all advanced economies that ended the century with functioning capital markets. Every statement about international diversification here is a statement about *that* set. I also make no attempt at mortality risk, which means my horizon is deterministic where theirs isn't.
+
+One methodological note: I deleted 22 countries partway through. An earlier version padded the panel to 38 using a factor model fitted to observed donors plus Gaussian noise. That's simulation, not measurement, and it *diluted* the result rather than creating it — removing those countries moved the headline from +7.3% to +11.2%. A cross-section of 38 sounds like stronger evidence than 16 while being weaker.
+
+## What replicated
+
+The central claim reproduces cleanly and survives a wide robustness exercise.
+
+At γ = 5 over 100,000 lifetimes, certainty-equivalent consumption:
+
+| Strategy | CEC | P(ruin) | SWR @ 5% ruin |
+|---|---|---|---|
+| 100% international equity | **1.109** | 9.0% | 3.5% |
+| 50/50 domestic/international | 1.048 | 11.7% | 3.2% |
+| Target-date glide path | 0.943 | 22.2% | 2.1% |
+| 60/40 | 0.871 | 24.2% | 1.7% |
+| 100% domestic equity | 0.882 | 25.4% | 1.6% |
+| Bills | 0.739 | 56.4% | 1.1% |
+
+All-equity beats the glide path by **11.2%** and 60/40 by **20.3%**, and cuts ruin from 22% to 12%. It wins 20 of 21 dominance criteria, ties one, loses none. The ranking survives 200+ parameter settings across ten dimensions with zero reversals.
+
+Two BTSQ points I'd underline because they replicated hard:
+
+**The mechanism is international, not equity.** 100% domestic equity *loses* to the glide path on CEC. The all-equity result is a diversification result wearing an equity costume — which lines up with their domestic/international split being nowhere near 50/50.
+
+**Sustainable withdrawal rates are far below 4%.** 3.2% for all-equity, 2.1% for the glide path, at a 5% ruin tolerance.
+
+Solving the glide path directly rather than testing a given one reproduces the all-equity corner. Freeing all four weights at every age — 204 parameters on the simplex — adds 0.46% over the best fixed benchmark and still produces no glide. A deviation profile shows only **2 of 68 ages** move the objective by more than a basis point; the rest is search noise on a flat surface.
+
+![Solved glide path](fig20_optimal_glide_path.png)
+
+## What came out differently
+
+**Currency hedging loses at every ratio, even free.** −0.14% at a 25% hedge, −4.24% fully hedged, before a single basis point of cost. There is no break-even to report. Hedging lowers the foreign sleeve's standalone volatility up to a half hedge but raises its correlation with the home market over the same range, and the certainty equivalent weighs that tail heavily.
+
+![Currency hedging](fig23_currency_hedging.png)
+
+**Leverage is barely a lever.** +5.1% at 1.75× with a *zero* borrowing spread, decaying fast in the spread. At household borrowing costs it rounds to nothing, and what it buys comes out of the left tail.
+
+**Timing beats allocation.** The decade around the retirement date accounts for ~35% of the explanatory power of the entire 68-year return path. No allocation rule diversifies that.
+
+**The accumulation side has more room than the allocation side.** Conditioning the savings rate on being ahead of or behind an age-appropriate target is worth more than every allocation refinement combined. Decomposing that signal produces the most counter-intuitive result in the project: the best available state variable is not the portfolio balance but **the investor's own pay cheque relative to its expected path** (+7.1% vs +5.1% for the funded ratio).
+
+## Six extensions BTSQ doesn't run
+
+**Starting valuation, with no look-ahead.** Conditioning on the trailing dividend yield an investor could actually observe. The subtlety is the *boundaries*: pooled terciles let a 1910 lifetime be labelled against a threshold that knows about 2020. Computing them recursively — only country-years before each start — reclassifies **32% of lifetimes**. The ranking survives all three buckets (11.3 / 11.5 / 11.7%) but the level moves: lifetimes begun expensive reach retirement with 9% less and run out 2.3pp more often. Valuation tells you what to expect, not what to hold.
+
+![Starting valuation](fig40_starting_valuation.png)
+
+**Housing as a fifth asset.** De-smoothed (Geltner) — which lifts pooled volatility from 10.1% to 14.5% with the mean unchanged. At zero holding cost it takes 50% of the portfolio (+13.2%); it drops out entirely by **4.6% annual holding cost**. Chambers, Spaenjers & Steiner (RFS 2021) put real operating costs at roughly a third of gross yield, so the answer sits inside the range where the cost assumption decides it. Bonds and bills never take a cent — housing displaces equity.
+
+![Housing](fig41_housing_cost_sweep.png)
+
+**A mortgage on that housing sleeve.** LVR solved by age, capped at 80%, priced off the borrower's own real short rate plus a swept spread. At a 2% spread (what the evidence supports for a competitive borrower): **75% LVR while working, 49% in retirement**, worth +5.9%. The declining shape falls out of the optimisation — the model reproduces what households actually do. It's the mirror image of the equity glide path: what should decline with age is the *borrowing*, not the equity. And it's overwhelmingly sensitive to the margin (+25.6% at a zero spread, nothing by 4%).
+
+![Mortgage](fig42_mortgage.png)
+
+Also: eight retirement spending rules compared on their own optimised rates, and endogenous retirement timing (retire on wealth, not birthday — worth ~3% against a matched mean retirement age).
+
+## Caveats I'd want raised if I were reading this
+
+Sixteen countries, all survivors at the system level. No taxes, fees, mortality risk or behavioural constraints. The mortgage rebalances annually, which no real mortgage does. Housing is a national index, not a house. And several results changed sign when I applied matched baselines and deviation profiles — the machinery for telling structure from noise is as much the contribution as any single number.
+
+Repo and full PDF: **github.com/KayneJohnston/StockChartIR**
+
+Happy to be told where this is wrong.
