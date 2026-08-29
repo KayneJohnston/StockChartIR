@@ -77,6 +77,7 @@ the paper cannot drift away from the pipeline that produced it. See
 | [`docs/14_data_provenance.md`](docs/14_data_provenance.md) | **Which numbers were observed and which were generated** -- source fingerprints, authenticity checks on the primary file, and whether the headline survives on observed data alone |
 | [`docs/15_starting_valuation.md`](docs/15_starting_valuation.md) | Conditioning the result on how expensive the market was when a lifetime began, using only the dividend yield an investor could actually observe |
 | [`docs/16_housing.md`](docs/16_housing.md) | Housing as a fifth asset: undoing the appraisal smoothing in the index, then sweeping the annual holding cost to find the price at which it stops being worth holding |
+| [`docs/17_mortgage.md`](docs/17_mortgage.md) | How much of the house to borrow and at what age: the loan-to-value ratio solved against the domestic short rate plus a swept mortgage spread, capped at 80% |
 
 All fourteen are **generated** by `main.py` from live pipeline objects -- edit
 `src/report.py`, not the Markdown.
@@ -519,13 +520,14 @@ python main.py --steps 12 13        # the full allocation solve and leverage
 python main.py --steps 14           # the data provenance audit
 python main.py --steps 15           # the starting-valuation study
 python main.py --steps 16           # housing as a fifth asset
+python main.py --steps 17           # the mortgage on the housing sleeve
 python main.py --config other.yaml  # a different parameterisation
 ```
 
 ## Layout
 
 ```
-├── docs/                 # generated analysis documents (16 files)
+├── docs/                 # generated analysis documents (17 files)
 ├── data/
 │   ├── raw/              # primary source files, unmodified
 │   ├── processed/        # standardised real return panels (.csv and .npz)
@@ -548,11 +550,12 @@ python main.py --config other.yaml  # a different parameterisation
 │   ├── provenance.py     # what is observed, what is simulated, and does it matter
 │   ├── valuation.py      # the starting dividend yield, with no look-ahead
 │   ├── housing.py        # housing de-smoothed, and priced by its holding cost
+│   ├── mortgage.py       # the loan-to-value decision, solved by age
 │   ├── plots.py          # publication-quality figures
 │   └── report.py         # Markdown report generation
 ├── tests/                # 580 unit + integration tests
 ├── results/
-│   ├── figures/          # 41 PNGs
+│   ├── figures/          # 42 PNGs
 │   └── tables/           # 110+ CSVs
 ├── config.yaml           # every tunable parameter
 └── main.py               # entry point

@@ -5773,3 +5773,287 @@ def hs_break_even(frame: pd.DataFrame) -> float:
     """:func:`src.housing.break_even_cost`, imported lazily for the report."""
     from .housing import break_even_cost
     return break_even_cost(frame)
+
+
+def write_doc_17(
+    path: str | Path,
+    cfg: Mapping[str, Any],
+    frames: Mapping[str, pd.DataFrame],
+    figures: Sequence[str],
+    notes: Mapping[str, Any],
+) -> Path:
+    """How much of the house to borrow, at what age, and at what price."""
+    sweep = frames["sweep"]
+    schedule = frames["schedule"]
+    curve = frames["curve"]
+    break_even = float(notes["break_even"])
+    option = notes.get("option", {})
+    cap = float(notes.get("lvr_cap", 0.80))
+    detail = float(notes["detail_spread"])
+
+    working = schedule[schedule["phase"] == "working"]
+    retired = schedule[schedule["phase"] == "retired"]
+    lvr_work = float(working["lvr"].mean()) if len(working) else float("nan")
+    lvr_ret = float(retired["lvr"].mean()) if len(retired) else float("nan")
+
+    sweep_tbl = md_table(_compact(
+        _pct(sweep, ["spread", "mean_lvr", "lvr_working", "lvr_retired",
+                     "housing_weight", "negative_equity_share"]),
+        ["spread", "mean_lvr", "lvr_working", "lvr_retired", "housing_weight",
+         "gross_housing_exposure", "gain_vs_unlevered_pct",
+         "negative_equity_share"],
+        {"spread": "Spread over short rate (%)", "mean_lvr": "Mean LVR (%)",
+         "lvr_working": "LVR working (%)", "lvr_retired": "LVR retired (%)",
+         "housing_weight": "Housing equity (%)",
+         "gross_housing_exposure": "Gross exposure (x net wealth)",
+         "gain_vs_unlevered_pct": "Gain over no mortgage (%)",
+         "negative_equity_share": "Path-years wiped out (%)"}),
+        floatfmt="{:.2f}")
+
+    curve_tbl = md_table(_compact(
+        _pct(curve, ["lvr", "negative_equity_share"]),
+        ["lvr", "leverage_multiple", "cec", "gain_vs_unlevered_pct",
+         "negative_equity_share"],
+        {"lvr": "LVR (%)", "leverage_multiple": "Gross exposure per unit",
+         "cec": "CEC", "gain_vs_unlevered_pct": "Gain over no mortgage (%)",
+         "negative_equity_share": "Path-years wiped out (%)"}),
+        floatfmt="{:.3f}")
+
+    decades = schedule[schedule["age"] % 5 == 0]
+    if decades.empty:
+        decades = schedule
+    schedule_tbl = md_table(_compact(
+        _pct(decades, ["lvr", "housing_equity_weight"]),
+        ["age", "phase", "lvr", "gross_housing_exposure"],
+        {"age": "Age", "phase": "Phase", "lvr": "LVR (%)",
+         "gross_housing_exposure": "Gross housing (x net wealth)"}),
+        floatfmt="{:.2f}")
+
+    # -- verdicts, classified ---------------------------------------------
+    best_flat = curve.loc[curve["cec"].idxmax()]
+    interior = 0.0 < float(best_flat["lvr"]) < cap - 1e-9
+    if float(best_flat["lvr"]) <= 1e-9:
+        headline = (
+            "**No mortgage is worth taking at this price.** The solved "
+            "loan-to-value is zero: the borrowing rate exceeds what the "
+            "levered house returns, once the tail risk it adds is priced by a "
+            "risk-averse investor.")
+    elif interior:
+        headline = (
+            f"**The answer is an interior one: about "
+            f"{float(best_flat['lvr']):.0%} loan-to-value.** Held flat for "
+            f"life that is worth "
+            f"{float(best_flat['gain_vs_unlevered_pct']):.1f}% in "
+            f"certainty-equivalent consumption over the same house owned "
+            f"outright. More borrowing is available -- the grid runs to "
+            f"{cap:.0%} -- and is not taken, because the extra return does "
+            f"not compensate a risk-averse investor for the tail it opens.")
+    else:
+        headline = (
+            f"**The optimiser goes to the {cap:.0%} ceiling and would go "
+            f"further if allowed.** The reported number is therefore the "
+            f"constraint, not an optimum, and the honest reading is that this "
+            f"model does not price whatever stops real households borrowing "
+            f"more.")
+
+    prof = notes.get("profile", {})
+    material = int(prof.get("material_ages", 0))
+    ages = int(prof.get("ages", 0))
+    if ages and material == 0:
+        profile_note = (
+            f"**None of the age-by-age detail survives that test.** Resetting "
+            f"any single age to the schedule's own average costs less than "
+            f"{float(prof.get('material_bp', 5)):.0f} basis points. The "
+            "jaggedness in the table above is search noise on a flat surface, "
+            "and the only defensible reading of this schedule is its level "
+            "and its broad slope -- not the value at any particular age.")
+    elif ages:
+        profile_note = (
+            f"**{material} of {ages} ages carry a decision worth more than "
+            f"{float(prof.get('material_bp', 5)):.0f} basis points**, the "
+            f"largest worth {float(prof.get('max_cost_bp', 0)):.0f}; the "
+            f"median age is worth "
+            f"{float(prof.get('median_cost_bp', 0)):.0f}. The rest of the "
+            "schedule sits on a flat part of the surface, where the search "
+            "moves the ratio for free and the plotted line looks more "
+            "structured than the evidence supports. Read the level and the "
+            "slope; do not read any single age.")
+    else:
+        profile_note = ""
+
+    declines = lvr_work > lvr_ret
+    shape = (
+        f"The schedule **declines with age**: {lvr_work:.0%} while working "
+        f"against {lvr_ret:.0%} in retirement. That is what households "
+        "actually do -- borrow heavily against the first house and pay the "
+        "loan down over a career -- and it falls out of the optimisation "
+        "rather than being imposed on it. The reason is human capital: a "
+        "working investor has decades of future earnings that a mortgage "
+        "cannot reach, and that income is what makes the leverage bearable. "
+        "It is also the mirror image of the equity glide path this project "
+        "spends most of its length arguing against, and the two are "
+        "consistent: what should decline with age is the *borrowing*, not "
+        "the equity."
+        if declines else
+        f"The schedule **rises with age**: {lvr_work:.0%} while working "
+        f"against {lvr_ret:.0%} in retirement, which is the opposite of what "
+        "households do and deserves the suspicion that attaches to any result "
+        "that contradicts observed behaviour.")
+
+    if option.get("looks_like_the_option"):
+        option_note = (
+            f"**One part of the schedule should be discounted.** The final "
+            f"{int(option['tail_years'])} years carry an average "
+            f"{float(option['lvr_final_years']):.0%} loan-to-value against "
+            f"{float(option['lvr_before_that']):.0%} before them -- a lift of "
+            f"{float(option['terminal_lift']):.0%} of the property's value. "
+            "That is not a preference for housing. It is the limited-liability "
+            "floor: an investor who will not live to repay can lever into the "
+            "last few years knowing the lender absorbs the downside, and the "
+            "model rewards it. A real estate settles its debts before anything "
+            "reaches the heirs. Read the working-life and early-retirement "
+            "portion of the schedule; discount the tail.")
+    else:
+        option_note = (
+            f"The last {int(option.get('tail_years', 5))} years carry an "
+            f"average {float(option.get('lvr_final_years', float('nan'))):.0%} "
+            f"loan-to-value against "
+            f"{float(option.get('lvr_before_that', float('nan'))):.0%} before "
+            "them, so the solver is not visibly exploiting the "
+            "limited-liability floor at the end of life -- which it would "
+            "have been free to do.")
+
+    if np.isfinite(break_even):
+        price_note = (
+            f"**Borrowing stops paying at a spread of about "
+            f"{break_even:.1%}** over the domestic short rate. Below that the "
+            f"optimal loan-to-value is positive and falls as credit gets "
+            f"dearer; above it the mortgage earns no place at all.")
+    else:
+        ordered = sweep.sort_values("spread")
+        first, last = ordered.iloc[0], ordered.iloc[-1]
+        collapses = float(last["mean_lvr"]) < 0.5 * float(first["mean_lvr"])
+        wanted = bool((sweep["mean_lvr"] > 0.01).all())
+        if wanted and collapses:
+            price_note = (
+                f"**The optimal ratio collapses as credit gets dearer** -- "
+                f"from {float(first['mean_lvr']):.0%} at a "
+                f"{float(first['spread']):.0%} spread to "
+                f"{float(last['mean_lvr']):.0%} at "
+                f"{float(last['spread']):.0%} -- without quite reaching zero "
+                "inside the grid, so no break-even price is reported: "
+                "extrapolating it would invent the number the sweep failed to "
+                "find. What the table does establish is that the answer is "
+                "highly sensitive to the margin, which is the practical "
+                "point.")
+        elif wanted:
+            price_note = (
+                "**Borrowing survives every spread this sweep tried**, so the "
+                "break-even price is above the top of the grid and is not "
+                "reported: extrapolating it would invent the number the sweep "
+                "failed to find.")
+        else:
+            price_note = ("**Borrowing earns no place at any spread tried, "
+                          "including a free loan.**")
+
+    intro = _header(
+        "17 - The Mortgage",
+        "How much of the house to borrow, at what age, and at what price of "
+        "credit.",
+    )
+
+    body = f"""
+## 1. Why leverage belongs here at all
+
+`16_housing.md` prices housing as an asset owned outright. No household owns
+it that way. A house is the one asset an ordinary person can borrow
+{cap:.0%} against, at a rate close to their own government's, secured on the
+thing itself. Leaving that out understates what housing does to a lifetime as
+surely as leaving the holding cost out overstates it.
+
+So this section puts the mortgage in, and asks the only two questions that
+matter: how much, and when.
+
+## 2. How the loan is modelled
+
+The decision variable is the **loan-to-value ratio**, because that is the
+number a lender quotes and a borrower chooses. A property worth `V` funded
+with equity `E = (1 - L/V)*V` returns, on that equity,
+
+```
+r_E = (r_H - LVR * i) / (1 - LVR)
+```
+
+where `r_H` is the real return on the property and `i` the real mortgage rate.
+That is the leverage multiple `1/(1 - LVR)` applied to housing alone, so the
+arithmetic is the same function the borrowing study of `13_leverage.md` uses
+and the two stay consistent.
+
+The rate is the borrower's **own country's** real short rate plus a spread,
+drawn on the same block as every other series, so a lifetime that lives
+through high real rates pays them. The spread is swept rather than assumed.
+
+Housing is charged a {float(notes['holding_cost']):.0%} annual holding cost
+throughout, which is the residue after the source series' own deduction of
+maintenance and depreciation: taxes, management, voids and amortised
+transaction costs.
+
+Equity is **wiped out, not driven negative**. The levered return is floored at
+total loss, which is the non-recourse assumption and the one most favourable
+to borrowing. How often it binds is reported below rather than buried.
+
+## 3. How much, at one price
+
+At a {detail:.0%} spread, holding the ratio flat for life:
+
+{curve_tbl}
+
+{headline}
+
+## 4. When
+
+{schedule_tbl}
+
+{shape}
+
+{profile_note}
+
+{option_note}
+
+## 5. At what price of credit
+
+{sweep_tbl}
+
+{price_note}
+
+## 6. What this is not
+
+The schedule is rebalanced annually, like everything else in this project.
+For a mortgage that means costlessly redrawing the loan every year to hit a
+target ratio. Real mortgages amortise on a fixed schedule, cost several
+percent of the property to refinance, and are called on missed payments rather
+than on a drifting loan-to-value. **This is the value of the leverage, not a
+financing plan.**
+
+Three further gaps are worth naming. The model has no mortgage insurance, so
+the {cap:.0%} ceiling is a hard wall rather than a price. It has no tax: in
+several countries mortgage interest is deductible and owner-occupied capital
+gains are not taxed, both of which would favour borrowing more than this shows.
+And it prices a nationally diversified housing index, not a house -- the
+concentration risk a single leveraged property carries is precisely what a
+mortgage makes dangerous, and none of it is here.
+
+## 7. Figures
+
+{chr(10).join(f"* `{f}`" for f in figures)}
+
+## 8. Reproduction
+
+```bash
+python main.py --steps 17
+```
+
+Runtime {float(notes['elapsed_seconds']):.0f}s at {int(notes['n_paths']):,}
+paths, risk aversion {float(notes['gamma']):g}.
+"""
+    return _write(path, [intro, body])

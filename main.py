@@ -31,6 +31,7 @@ from src import hedging as hg
 from src import housing as hsg
 from src import leverage as lev
 from src import lifecycle as lc
+from src import mortgage as mgg
 from src import observed as obs
 from src import plots
 from src import provenance as pvn
@@ -96,6 +97,13 @@ def _apply_quick(cfg: Dict[str, Any]) -> Dict[str, Any]:
         cfg["housing"]["coarse_step"] = 0.25
         cfg["housing"]["fine_step"] = 0.05
         cfg["housing"]["age_varying_costs"] = [0.0]
+    if "mortgage" in cfg:
+        cfg["mortgage"]["n_paths"] = 2000
+        cfg["mortgage"]["spreads"] = [0.0, 0.02, 0.04]
+        cfg["mortgage"]["lvr_grid"] = [0.0, 0.2, 0.4, 0.6, 0.8]
+        cfg["mortgage"]["coarse_step"] = 0.25
+        cfg["mortgage"]["fine_step"] = 0.05
+        cfg["mortgage"]["rounds"] = 1
     if "accumulation" in cfg:
         cfg["accumulation"]["n_paths"] = 2000
         cfg["accumulation"]["response_grids"] = {
@@ -2174,6 +2182,105 @@ def step16_housing(cfg: Dict[str, Any],
     return state
 
 
+def step17_mortgage(cfg: Dict[str, Any],
+                    state: Dict[str, Any]) -> Dict[str, Any]:
+    """How much of the house should be borrowed, and at what age."""
+    mg_cfg = cfg.get("mortgage", {})
+    if not mg_cfg.get("enabled", False):
+        LOGGER.info("mortgage study disabled; skipping step 17")
+        return state
+    LOGGER.info("=== STEP 17: a mortgage on the housing sleeve ===")
+    started = time.perf_counter()
+
+    panel = state["panel"]
+    jst = dl.load_jst(cfg)
+    spec = lc.spec_from_config(cfg)
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    n_paths = int(mg_cfg.get("n_paths", 20000))
+    grid = [float(v) for v in mg_cfg.get("lvr_grid", mgg.DEFAULT_LVR_GRID)]
+    spreads = [float(v) for v in mg_cfg.get("spreads", (0.0, 0.02, 0.04))]
+    holding_cost = float(mg_cfg.get("holding_cost", 0.02))
+    rate_base = str(mg_cfg.get("rate_base", "bill"))
+    coarse = float(mg_cfg.get("coarse_step", 0.10))
+    fine = float(mg_cfg.get("fine_step", 0.025))
+
+    desmoothed, _ = hsg.desmoothed_panel(jst, panel)
+    restricted = hsg.restrict_to_housing(panel, desmoothed)
+    sampler = bs.from_config(restricted, cfg, horizon_years=spec.horizon)
+    paths = sampler.sample(n_paths,
+                           chunk_size=int(cfg["bootstrap"]["chunk_size"]))
+    income = lc.simulate_income(spec, paths.n_paths,
+                                np.random.default_rng(12345))
+    gross = hsg.gather(paths, desmoothed)
+
+    sweep = mgg.sweep_spread(paths, spec, income, cfg, gross, spreads, gamma,
+                             holding_cost, grid, rate_base, coarse, fine)
+    break_even = mgg.break_even_spread(sweep)
+
+    # The age-by-age schedule at one named price of credit, reported in full.
+    detail_spread = float(mg_cfg.get("detail_spread", spreads[len(spreads) // 2]))
+    net = hsg.net_of_cost(gross, holding_cost)
+    evaluator = mgg.MortgageEvaluator(
+        paths, spec, income, cfg, extra={hsg.HOUSING: net},
+        spread=detail_spread, rate_base=rate_base)
+    solved = mgg.alternate(evaluator, gamma, grid,
+                           rounds=int(mg_cfg.get("rounds", 3)),
+                           coarse_step=coarse, fine_step=fine,
+                           label=f"[detail @ {detail_spread:.1%}] ")
+    schedule = mgg.schedule_frame(solved["lvr"], solved["weights"], spec,
+                                  evaluator.assets)
+    option = mgg.terminal_option_check(solved["lvr"], spec)
+    # Never describe structure in a solved schedule before measuring what the
+    # structure is worth: a coarse coordinate search produces a jagged line
+    # whose jaggedness mostly sits on a flat part of the surface.
+    profile = mgg.lvr_deviation_profile(
+        evaluator, mgg._as_schedule(solved["weights"], spec.horizon),
+        solved["lvr"], gamma, spec)
+    profile_notes = mgg.profile_summary(profile)
+    LOGGER.info("LVR schedule: %d of %d ages carry a material (>%.0fbp) "
+                "loan-to-value decision",
+                profile_notes["material_ages"], profile_notes["ages"],
+                profile_notes["material_bp"])
+    lvr_curve = mgg.best_constant_lvr(
+        evaluator, mgg._as_schedule(solved["weights"], spec.horizon), gamma,
+        grid)[2]
+    LOGGER.info("solved mortgage: %.0f%% LVR while working, %.0f%% retired; "
+                "terminal lift %.0f pp%s",
+                100.0 * schedule[schedule["phase"] == "working"]["lvr"].mean(),
+                100.0 * schedule[schedule["phase"] == "retired"]["lvr"].mean(),
+                100.0 * option["terminal_lift"],
+                " (looks like the limited-liability option)"
+                if option["looks_like_the_option"] else "")
+
+    tables = cfg["run"]["table_dir"]
+    for frame, name in ((sweep, "mortgage_spread_sweep"),
+                        (schedule, "mortgage_lvr_schedule"),
+                        (lvr_curve, "mortgage_constant_lvr_curve"),
+                        (profile, "mortgage_lvr_deviation_profile"),
+                        (solved["history"], "mortgage_alternation")):
+        _save_table(frame, tables, name)
+
+    figures = [str(plots.plot_mortgage(sweep, schedule, lvr_curve,
+                                       break_even, cfg["run"]["figure_dir"],
+                                       profile=profile))]
+
+    elapsed = time.perf_counter() - started
+    rp.write_doc_17(
+        Path("docs") / "17_mortgage.md", cfg,
+        {"sweep": sweep, "schedule": schedule, "curve": lvr_curve,
+         "history": solved["history"], "profile": profile},
+        figures,
+        {"elapsed_seconds": elapsed, "break_even": break_even,
+         "gamma": gamma, "n_paths": int(paths.n_paths),
+         "holding_cost": holding_cost, "rate_base": rate_base,
+         "detail_spread": detail_spread, "option": option,
+         "lvr_cap": mgg.LVR_CAP, "profile": profile_notes})
+    LOGGER.info("docs/17 written (%.0fs)", elapsed)
+    state.update({"mortgage_sweep": sweep, "mortgage_schedule": schedule})
+    return state
+
+
+
 
 # ---------------------------------------------------------------------------
 # Entry point
@@ -2184,11 +2291,11 @@ STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
          10: step10_saving, 11: step11_accumulation,
          12: step12_allocation, 13: step13_leverage,
          14: step14_provenance, 15: step15_valuation,
-         16: step16_housing}
+         16: step16_housing, 17: step17_mortgage}
 
 
 def run(config_path: str = "config.yaml",
-        steps: Sequence[int] = tuple(range(1, 17)),
+        steps: Sequence[int] = tuple(range(1, 18)),
         quick: bool = False) -> Dict[str, Any]:
     """Execute the pipeline and return the accumulated state."""
     cfg = dl.load_config(config_path)
@@ -2218,8 +2325,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--steps", nargs="+", type=int,
-                        default=list(range(1, 17)),
-                        choices=list(range(1, 17)))
+                        default=list(range(1, 18)),
+                        choices=list(range(1, 18)))
     parser.add_argument("--quick", action="store_true",
                         help="small N for smoke tests")
     parser.add_argument("--verbose", action="store_true")

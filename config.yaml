@@ -648,3 +648,44 @@ housing:
   # is the naive treatment; running it shows which way the smoothing biases
   # the answer instead of asserting a direction.
   compare_raw_series: true
+
+# ---------------------------------------------------------------------------
+# Step 17 -- a mortgage on the housing sleeve
+# ---------------------------------------------------------------------------
+# Housing is the one asset an ordinary household can borrow 80% against at a
+# rate close to the government's. This solves for how much of that borrowing
+# is worth doing, at each age and at each price of credit.
+mortgage:
+  enabled: true
+  n_paths: 20000
+
+  # Loan-to-value ratios the search may choose from. The 80% ceiling is where
+  # the product changes rather than merely getting dearer (lender's mortgage
+  # insurance), which this model does not price.
+  lvr_grid: [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]
+
+  # Annual real mortgage rate = the borrower's own country's real short rate
+  # plus this spread, drawn on the same block as every other series.
+  spreads: [0.0, 0.01, 0.02, 0.03, 0.04]
+
+  # "bill" prices the loan off the domestic short rate, which is what a
+  # floating-rate mortgage tracks. "bond" prices it off the long rate, which
+  # is closer to a fixed-rate product.
+  rate_base: bill
+
+  # The housing holding cost the mortgage study assumes. Set from the academic
+  # evidence rather than from the sweep's break-even: Chambers, Spaenjers and
+  # Steiner (RFS 2021) find operating costs cut net yields by about a third,
+  # and the source series already deducts maintenance and depreciation, so
+  # this is the residue -- taxes, management, voids and amortised transaction
+  # costs.
+  holding_cost: 0.02
+
+  # Alternating rounds between the allocation and the mortgage. Each half is
+  # exact given the other under common random numbers, so this converges.
+  rounds: 3
+  coarse_step: 0.10
+  fine_step: 0.025
+
+  # The spread at which the age-by-age schedule is reported in full.
+  detail_spread: 0.02
