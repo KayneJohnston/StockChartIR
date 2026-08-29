@@ -158,7 +158,7 @@ def front_matter(ctx: Any) -> List[Flowable]:
         f"which {pr['n_removed']} had no recorded returns and were represented "
         f"by factor-model draws. Those countries were removed rather than "
         f"reported alongside, so every one of the panel's "
-        f"{pr['return_cells']:,} return cells is an observation and the "
+        f"{pr['cells']:,} return cells is an observation and the "
         f"international leg contains no generated market. "
         f"Every table, figure and quoted number in this paper "
         f"is regenerated from a single command; the pipeline, its "
@@ -659,7 +659,7 @@ def section_data(ctx: Any) -> List[Flowable]:
     out.append(ctx.h2("3.5 Market disruptions and the survivorship question"))
     out.append(ctx.p(
         f"There are {len(gaps)} contiguous runs of missing data across the "
-        f"Tier A countries, concentrated in the two world wars. The treatment "
+        f"countries of the panel, concentrated in the two world wars. The treatment "
         f"of these gaps is a substantive modelling decision rather than a "
         f"data-cleaning one. Interpolating across them would smooth away "
         f"exactly the episodes that motivate the whole exercise; dropping the "
@@ -685,7 +685,7 @@ def section_data(ctx: Any) -> List[Flowable]:
     out.append(ctx.p(
         f"What remains is measured, not asserted. The panel's "
         f"{pr['country_years']:,} usable country-years carry three return "
-        f"series each, so it holds {pr['return_cells']:,} return cells; "
+        f"series each, so it holds {pr['cells']:,} return cells; "
         f"{pr['cells_simulated']:,} of them are generated. Provenance is "
         f"recorded per cell, the tier labels are derived from those records, "
         f"and a separate check reports any cell that is available but not "
@@ -4158,7 +4158,7 @@ def appendix_panel(ctx: Any) -> List[Flowable]:
 
     out.append(ctx.h2("B.1 Structural gaps"))
     out.append(ctx.p(
-        f"The {len(gaps)} contiguous runs of missing data in the Tier A "
+        f"The {len(gaps)} contiguous runs of missing data in the panel's "
         f"countries, preserved as gaps rather than interpolated. The bootstrap "
         f"never draws a block that crosses one."))
     out.extend(ctx.table(
@@ -4187,13 +4187,14 @@ def appendix_supplementary(ctx: Any) -> List[Flowable]:
         "per lifetime rather than per block, and weighting countries by "
         "history length rather than uniformly — are varied here. Neither "
         "reverses any ranking."))
+    # The panel variant that used to sit here compared the full panel against
+    # its observed subset. The generated countries were removed, so the subset
+    # is the panel and the comparison has no second side.
     for name, caption in (
             ("robustness_country_draw_per_block",
              "Redrawing the country at every block"),
             ("robustness_country_weighting_uniform",
-             "Weighting countries uniformly rather than by history length"),
-            ("robustness_panel_jst16_fully_empirical_countries_only",
-             "The sixteen fully empirical countries only")):
+             "Weighting countries uniformly rather than by history length")):
         frame = f.table(name)
         cols = [c for c in ("strategy", "label", "cec_crra_gamma5",
                             "prob_ruin", "median_bequest",
