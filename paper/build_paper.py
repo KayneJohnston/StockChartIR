@@ -227,10 +227,53 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--config", default="config.yaml")
     args = parser.parse_args(argv)
     path = build(args.out, args.config)
+    dangling = check_cross_references(str(path))
+    if dangling:
+        print("Cross-references that point at nothing:")
+        for problem in dangling:
+            print("  -", problem)
+        raise SystemExit(
+            "the document cites sections that do not exist; fix them rather "
+            "than shipping a pointer a reader cannot follow")
     size = path.stat().st_size / 1024.0
     print(f"wrote {path} ({size:,.0f} KB)")
     return 0
 
+
+def check_cross_references(pdf_path: str) -> list[str]:
+    """Every "Section N" and "Section N.M" reference must resolve to a heading.
+
+    Sections have been renumbered several times as extensions were added, and
+    a dangling cross-reference is invisible to the author and misleading to a
+    reader who follows it. This reads the built document back and checks them,
+    so the failure mode is a build error rather than a wrong pointer.
+
+    **What it cannot catch.** A reference that resolves to the wrong heading.
+    "Section 16.1" pointed at the cross-section limitation for several drafts
+    after that subsection had been renumbered to 19.1; because 16.1 still
+    existed -- as an unrelated housing subsection -- no existence check could
+    have flagged it. That class of error needs a reader, and this function is
+    not one. It catches the reference that points at nothing.
+    """
+    import re
+    from pypdf import PdfReader
+
+    text = "\n".join((page.extract_text() or "")
+                     for page in PdfReader(pdf_path).pages)
+    headings = set()
+    for match in re.finditer(r"\n\s*(\d{1,2}(?:\.\d{1,2}){0,2})[ .]", text):
+        headings.add(match.group(1))
+    for match in re.finditer(r"\n(\d{1,2})\. [A-Z]", text):
+        headings.add(match.group(1))
+
+    problems = []
+    for match in re.finditer(r"Section (\d{1,2}(?:\.\d{1,2}){0,2})", text):
+        ref = match.group(1)
+        if ref not in headings:
+            context = text[max(0, match.start() - 90):match.start() + 60]
+            problems.append(f"Section {ref} -> no such heading "
+                            f"(...{context.strip()!r})")
+    return sorted(set(problems))
 
 if __name__ == "__main__":
     raise SystemExit(main())
