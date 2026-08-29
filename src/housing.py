@@ -16,14 +16,19 @@ uses the series, and reports the autocorrelation it removed.
 
 **Holding cost.** A share certificate costs nothing to hold. A house costs
 rates, insurance, maintenance and management, and it is illiquid and
-undiversified. The JST series is a total return that already nets out running
-costs in the source's own construction, so what this module sweeps is the
-*additional* annual cost, as a percentage of value, that a real owner bears
-beyond what the source deducted -- transaction and vacancy drag, the taxes a
-particular jurisdiction adds, or simply a haircut for the risks a national
-index does not show. Sweeping it is the honest way to present an asset whose
-true cost is investor-specific: rather than pick one number, report the weight
-housing earns at each cost and the cost at which it earns none.
+undiversified. The source builds its housing total return from capital gains
+plus a rental yield it describes as net of running costs, so the cost swept
+here is best read as *additional* to whatever that construction already
+deducts -- transaction and vacancy drag, the taxes a particular jurisdiction
+adds, or a haircut for the risks a national index does not show.
+
+That reading is the conservative one for the break-even the sweep reports. If
+the published series is in fact grosser than the source describes, the true
+all-in cost of holding housing is closer to the swept figure than to the
+increment above it, and the break-even reported here is an overestimate of how
+much *extra* cost housing can bear. The direction of that error is known even
+though its size is not, which is why the whole curve is reported rather than a
+single recommended weight.
 
 **What the sweep does not model.** Housing here is a liquid, continuously
 rebalanced, nationally diversified claim on the housing stock, because that is

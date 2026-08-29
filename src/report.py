@@ -5458,6 +5458,14 @@ insurance, maintenance and management fall on the owner every year whether the
 asset rose or fell, and the right number is investor- and
 jurisdiction-specific. Rather than pick one, this section sweeps it.
 
+The source builds its housing total return from capital gains plus a rental
+yield it describes as net of running costs, so the swept cost is best read as
+*additional* to whatever that construction already deducts. If the published
+series is in fact grosser than that, the break-even below overstates how much
+extra cost housing can bear -- the direction of the error is known even though
+its size is not, which is why the whole curve is reported rather than a single
+recommended weight.
+
 ## 2. Undoing the smoothing
 
 Each country is de-smoothed with its own estimated first-order coefficient --

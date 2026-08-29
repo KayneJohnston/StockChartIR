@@ -3743,7 +3743,9 @@ def section_valuation(ctx: Any) -> List[Flowable]:
         "across the panel's country-years, with the most recent United States "
         "observation marked so a reader can place themselves in it. Right: "
         "the all-equity advantage over the glide path within each valuation "
-        "bucket.",
+        "bucket (bars, left axis) against the level of certainty-equivalent "
+        "consumption it wins at (line, right axis) — the advantage is flat "
+        "and the level is not, which is the section's whole result.",
         max_height=8.5 * cm))
     return out
 
@@ -3818,10 +3820,15 @@ def section_housing(ctx: Any) -> List[Flowable]:
         "rose or fell, and the right figure is specific to the investor and "
         "the jurisdiction. Rather than choose one, we sweep it: the whole "
         "allocation is re-solved over the five-asset simplex at each annual "
-        "holding cost, charged on value rather than on gains. The cost is "
-        "<i>additional</i> to whatever the source series already nets out, so "
-        "the sweep asks how much extra cost it takes to make housing not "
-        "worth holding."))
+        "holding cost, charged on value rather than on gains. The source "
+        "builds its housing total return from capital gains plus a rental "
+        "yield it describes as net of running costs, so the swept figure is "
+        "best read as <i>additional</i> to whatever that construction already "
+        "deducts. If the published series is in fact grosser than that, the "
+        "break-even below overstates how much extra cost housing can bear; "
+        "the direction of that error is known even though its size is not, "
+        "which is why we report the whole curve rather than a single "
+        "recommended weight."))
     out.append(ctx.p(
         "Housing is recorded for fewer country-years than equity is, so the "
         "study runs on the intersection; filling the gaps would mean "

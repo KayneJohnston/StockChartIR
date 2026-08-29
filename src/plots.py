@@ -1856,8 +1856,12 @@ def plot_valuation(predictive: pd.DataFrame, buckets: pd.DataFrame,
         ax.set_xticklabels([f"{int(h)}y" for h in block["horizon_years"]])
         ax.set_xlabel("Horizon over which the return is measured")
         ax.set_ylabel("Annualised real equity return (%)")
-        ax.set_title("A cheap start pays for decades\n"
-                     "(label = correlation of yield with return)", fontsize=10)
+        pays = bool((block["gap"] > 0).all())
+        ax.set_title(
+            ("A cheap start pays at every horizon\n"
+             "(label = correlation of yield with return)") if pays else
+            ("A cheap start does not pay at every horizon\n"
+             "(label = correlation of yield with return)"), fontsize=10)
         ax.legend(fontsize=8)
         ax.grid(axis="x", alpha=0.0)
 
@@ -1880,11 +1884,14 @@ def plot_valuation(predictive: pd.DataFrame, buckets: pd.DataFrame,
                      "the panel's own distribution", fontsize=10)
         ax.grid(axis="x", alpha=0.0)
 
+        # The advantage as bars, the level it is an advantage *over* as a
+        # line. Showing only the bars invites the reading that valuation does
+        # not matter; it is the line that moves.
         ax = axes[2]
         block = advantage.copy()
         x = np.arange(len(block))
         ax.bar(x, block["advantage_pct"], width=0.55, color=_colour(0),
-               label="all-equity lead over the glide path")
+               label="all-equity lead over the glide path (left)")
         for i, row in enumerate(block.itertuples()):
             offset = 0.25 if row.advantage_pct >= 0 else -0.55
             ax.text(i, row.advantage_pct + offset,
@@ -1898,14 +1905,30 @@ def plot_valuation(predictive: pd.DataFrame, buckets: pd.DataFrame,
         # ranking is exactly what this panel exists to make visible.
         low = min(float(block["advantage_pct"].min()), 0.0)
         high = max(float(block["advantage_pct"].max()), 1.0)
-        pad = max((high - low) * 0.2, 0.5)
+        pad = max((high - low) * 0.25, 0.5)
         ax.set_ylim(low - pad, high + pad)
+
+        twin = ax.twinx()
+        twin.plot(x, block["challenger_cec"], color=_colour(1),
+                  marker=_marker(1), linewidth=1.8,
+                  label="all-equity CEC level (right)")
+        twin.set_ylabel("Certainty-equivalent consumption")
+        twin.grid(False)
+
         holds = bool((block["advantage_pct"] > 0).all())
+        spread = float(block["advantage_pct"].max()
+                       - block["advantage_pct"].min())
+        cec_move = (float(block["challenger_cec"].max())
+                    / float(block["challenger_cec"].min()) - 1.0) * 100.0
         ax.set_title(
-            ("The ranking holds at every starting valuation,\n"
-             "and the level does not") if holds else
+            (f"The ranking holds everywhere (spread {spread:.1f}pp);\n"
+             f"the level it wins at moves {cec_move:.1f}%") if holds else
             ("The ranking does NOT hold at every\n"
              "starting valuation"), fontsize=10)
+        handles, labels_ = ax.get_legend_handles_labels()
+        h2, l2 = twin.get_legend_handles_labels()
+        ax.legend(handles + h2, labels_ + l2, fontsize=8, loc="lower center",
+                  bbox_to_anchor=(0.5, -0.34), ncol=1)
         ax.grid(axis="x", alpha=0.0)
         fig.tight_layout()
     return _save(fig, directory, name)
@@ -1942,7 +1965,10 @@ def plot_housing_sweep(sweep: pd.DataFrame, audit: pd.DataFrame,
         ax.set_yticklabels(block["iso"], fontsize=8)
         ax.set_xlabel("Standard deviation of real returns (%)")
         ax.set_title("Undoing the appraisal smoothing")
-        ax.legend(fontsize=8, loc="lower right")
+        # Above the plot rather than inside it: the shortest bars sit at the
+        # bottom, which is the only space an inset legend could use.
+        ax.legend(fontsize=8, loc="lower center", ncol=3,
+                  bbox_to_anchor=(0.5, -0.30))
         ax.grid(axis="y", visible=False)
 
         # -- 2. the allocation, cost by cost ------------------------------
