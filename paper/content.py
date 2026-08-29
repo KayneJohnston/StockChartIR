@@ -581,13 +581,12 @@ def section_data(ctx: Any) -> List[Flowable]:
         f"intervention rather than take it on trust."))
 
     out.extend(ctx.table(
-        rows_from(equity.assign(
-            label=equity["country"] + " (" + equity["tier"] + ")"),
-            ["label", "n_years", "first_year", "last_year", "mean",
+        rows_from(equity,
+            ["country", "n_years", "first_year", "last_year", "mean",
              "geometric_mean", "std", "skew", "ar1"],
-            ["Country (tier)", "Years", "From", "To", "Mean", "Geo. mean",
+            ["Country", "Years", "From", "To", "Mean", "Geo. mean",
              "S.d.", "Skew", "AR(1)"],
-            {"label": str, "n_years": lambda v: f"{int(v)}",
+            {"country": str, "n_years": lambda v: f"{int(v)}",
              "first_year": lambda v: f"{int(v)}",
              "last_year": lambda v: f"{int(v)}",
              "mean": lambda v: pc(v), "geometric_mean": lambda v: pc(v),
@@ -1294,7 +1293,6 @@ def section_baseline(ctx: Any) -> List[Flowable]:
     gamma = f.baseline_gamma
     dominance = f.table("dominance_check")
     swr = f.table("sensitivity_safe_withdrawal_rates")
-    tiers = f.table("results_by_country_tier")
     eq = f.strategy_row("balanced_all_equity")
     tdf = f.strategy_row("target_date_fund")
     dom = f.strategy_row("domestic_equity")
@@ -1418,10 +1416,10 @@ def section_baseline(ctx: Any) -> List[Flowable]:
              "criteria_lost_n": lambda v: f"{int(v)}",
              "strict_dominance": lambda v: "yes" if bool(v) else "no"}),
         "Distributional dominance of the 50/50 all-equity portfolio",
-        note="A tie is counted separately rather than as a loss; an earlier "
-             "version of this test counted ties against the challenger and "
-             "understated the result. The single tie in each row is the "
-             "zero-bequest floor, which several strategies reach."))
+        note="A tie is counted separately rather than as a loss, since "
+             "counting it either way would misstate the comparison. The "
+             "single tie in each row is the zero-bequest floor, which several "
+             "strategies reach."))
     out.extend(ctx.figure(
         "fig08_shortfall_probabilities",
         "Shortfall probabilities against a fixed consumption target. Measuring "
@@ -1471,60 +1469,31 @@ def section_baseline(ctx: Any) -> List[Flowable]:
         "used to define the sustainable rate.",
         max_height=8.0 * cm))
 
-    out.append(ctx.h2("5.5 Does the country cross-section drive the result?"))
+    out.append(ctx.h2("5.5 How the countries are drawn"))
     out.append(ctx.p(
-        "Two questions sit behind that heading, and they have different "
-        "answers. The first is whether the result depends on any data that "
-        "was generated rather than recorded. It does not, and the reason is "
-        "structural rather than statistical: the panel contains no generated "
-        "data at all (Section 3.6), so there is no simulated subset to hold "
-        "the result against."))
-    out.extend(ctx.table(
-        rows_from(tiers.assign(label=tiers["strategy"].map(LABELS)),
-                  ["tier", "label", "n_paths", "cec_crra_gamma5", "prob_ruin",
-                   "median_bequest"],
-                  ["Tier", "Strategy", "Paths", "CEC γ=5", "P(ruin)",
-                   "Median bequest"],
-                  {"tier": str, "label": str,
-                   "n_paths": lambda v: f"{int(v):,}",
-                   "prob_ruin": lambda v: pc(v, 1),
-                   "median_bequest": lambda v: f2(v, 1)}),
-        "Results split by the provenance tier of the drawn country",
-        note="Every country is Tier A -- recorded throughout -- so this split "
-             "has one row per strategy. It is computed from the per-cell "
-             "observation record rather than from a label, so a second tier "
-             "appearing here would mean generated data had entered the panel.",
-        font_size=7.2))
-    n_tiers = int(tiers["tier"].nunique()) if len(tiers) else 0
-    if n_tiers > 1:
-        out.append(ctx.p(
-            f"<b>This table should have one tier and has {n_tiers}.</b> The "
-            f"panel contains country-years that are available but not "
-            f"recorded, and the provenance audit of Section 3.6 should be read "
-            f"before anything else in this paper."))
-    else:
-        out.append(ctx.p(
-            f"One tier, {int(tiers['n_paths'].iloc[0]):,} paths: the split has "
-            f"nothing to split. The all-equity portfolio's certainty "
-            f"equivalent is "
-            f"{f2(_tier_cec(tiers, 'A', 'balanced_all_equity'), 3)} against "
-            f"{f2(_tier_cec(tiers, 'A', 'target_date_fund'), 3)} for the "
-            f"target-date fund, an advantage of {_tier_adv(tiers, 'A'):.1f}%, "
-            f"and every path behind it was drawn from recorded returns."))
+        f"Two choices in the sampler decide how the cross-section enters a "
+        f"simulated life, and neither is obviously right. A lifetime's "
+        f"domestic country can be drawn once and held, or redrawn at every "
+        f"block; and countries can be weighted by the length of their recorded "
+        f"history or treated as equally likely. Appendix C reports both "
+        f"variants in full. Neither reverses a ranking."))
     out.append(ctx.p(
-        f"The second question is harder and this section does not settle it: "
-        f"whether {f.panel['n_tier_a']} developed markets are a wide enough "
-        f"base for the conclusion. They are all advanced economies, all with "
-        f"long recorded histories, and all survivors — markets that closed and "
-        f"never reopened are absent from the source database by construction. "
-        f"Section 16.1 states that limitation rather than this section "
-        f"answering it."))
-
+        f"The weighting choice has little room to bite, because every country "
+        f"in the panel carries between {f.panel['min_years']} and "
+        f"{f.panel['max_years']} usable years — history weighting and uniform "
+        f"weighting assign nearly the same probabilities. It would matter on a "
+        f"panel containing short histories, where a country covering a single "
+        f"era could otherwise speak as loudly as one covering a century and a "
+        f"half."))
     out.append(ctx.p(
-        "Two further sampling variations are reported in Appendix C: drawing "
-        "the country afresh at every block rather than once per lifetime, and "
-        "weighting countries uniformly rather than by history length. Neither "
-        "reverses any ranking."))
+        f"Redrawing the country at every block is the more consequential "
+        f"variant, and it is the design the original study uses. It "
+        f"implicitly assumes an investor can be resident in a different "
+        f"country every decade, which is not a description of anybody, but it "
+        f"pools the cross-section more aggressively and so gives the "
+        f"international mechanism its most favourable reading. Holding the "
+        f"country fixed for a lifetime — the specification behind every "
+        f"headline number here — is the more conservative of the two."))
 
     out.extend(ctx.figure(
         "fig10_wealth_fan",
@@ -1534,16 +1503,6 @@ def section_baseline(ctx: Any) -> List[Flowable]:
         "bottom, it is lower throughout.",
         max_height=8.5 * cm))
     return out
-
-
-def _tier_cec(tiers: pd.DataFrame, tier: str, strategy: str) -> float:
-    block = tiers[(tiers["tier"] == tier) & (tiers["strategy"] == strategy)]
-    return float(block["cec_crra_gamma5"].iloc[0])
-
-
-def _tier_adv(tiers: pd.DataFrame, tier: str) -> float:
-    return (_tier_cec(tiers, tier, "balanced_all_equity")
-            / _tier_cec(tiers, tier, "target_date_fund") - 1.0) * 100.0
 
 
 # ---------------------------------------------------------------------------
@@ -3717,14 +3676,7 @@ def section_limitations(ctx: Any) -> List[Flowable]:
         f"advanced-economy and entirely survivor: markets that closed and "
         f"never reopened are not in the source database, so the tail this "
         f"paper measures is the tail of markets that came back."))
-    out.append(ctx.p(
-        f"We considered the obvious alternative and rejected it. Filling the "
-        f"missing {pr['n_removed']} with factor-model draws would make the "
-        f"cross-section look more than twice as broad while adding no evidence "
-        f"a reader could check, and would put simulated markets into 38% of "
-        f"the average investor's international leg — corrupting the very "
-        f"mechanism the paper measures. A narrow panel a reader can verify "
-        f"beats a wide one they cannot."))
+
     out.append(ctx.p(
         "The last five years of the series are separately flagged as "
         "unverified in Section 3.6, on a variance test that every country in "
@@ -4058,24 +4010,21 @@ def appendix_parameters(ctx: Any) -> List[Flowable]:
 def appendix_panel(ctx: Any) -> List[Flowable]:
     f = ctx.f
     summary = f.table("panel_summary_statistics")
-    equity = summary[summary["series"] == "dom_eq"].sort_values(
-        ["tier", "country"])
+    equity = summary[summary["series"] == "dom_eq"].sort_values("country")
     gaps = f.table("panel_structural_gaps")
 
     out: List[Flowable] = [PageBreak(), ctx.h1("Appendix B. The Country Panel")]
     out.append(ctx.p(
-        "The full panel, with real domestic equity statistics for "
-        "each. All of them carry complete Jordà–Schularick–Taylor equity, bond "
-        "and bill total returns; the tier column is derived from the per-cell "
-        "observation record and reads A throughout, which is the check rather "
-        "than a caveat."))
+        "The full panel, with real domestic equity statistics for each. Every "
+        "country listed carries complete Jordà–Schularick–Taylor equity, bond "
+        "and bill total returns over the years shown."))
     out.extend(ctx.table(
-        rows_from(equity, ["country", "tier", "n_years", "first_year",
+        rows_from(equity, ["country", "n_years", "first_year",
                            "last_year", "mean", "geometric_mean", "std",
                            "skew", "kurtosis", "ar1"],
-                  ["Country", "Tier", "Years", "From", "To", "Mean",
+                  ["Country", "Years", "From", "To", "Mean",
                    "Geo. mean", "S.d.", "Skew", "Kurtosis", "AR(1)"],
-                  {"country": str, "tier": str,
+                  {"country": str,
                    "n_years": lambda v: f"{int(v)}",
                    "first_year": lambda v: f"{int(v)}",
                    "last_year": lambda v: f"{int(v)}",
@@ -4086,7 +4035,7 @@ def appendix_panel(ctx: Any) -> List[Flowable]:
         "Real domestic equity returns, every country in the panel",
         note="Annual real total returns deflated by each country's own "
              "consumer price index. Kurtosis is excess kurtosis.",
-        col_widths=[ctx.width * 0.19] + [ctx.width * 0.081] * 10,
+        col_widths=[ctx.width * 0.21] + [ctx.width * 0.0878] * 9,
         font_size=6.6))
 
     out.append(ctx.h2("B.1 Structural gaps"))
@@ -4286,17 +4235,16 @@ def appendix_software(ctx: Any) -> List[Flowable]:
         "A savings rule is never handed a return it has not yet lived "
         "through — the no-lookahead property is asserted, not assumed.",
         "Every available cell of the panel is an observation, checked against "
-        "the per-cell provenance record rather than against the tier labels "
-        "derived from it.",
+        "a per-cell record of where each number came from.",
     ]))
     out.append(ctx.p(
         "A further discipline runs through the prose. Where this paper states "
         "a direction — that one quantity exceeds another, that a ranking "
         "survives, that an effect has a sign — the statement is classified "
         "from the computed table when the document is typeset rather than "
-        "written down in advance. Several claims in earlier drafts were "
-        "reversed this way, and the mechanism exists so that a result which "
-        "moves takes its description with it."))
+        "written down in advance. The mechanism exists so that a result which "
+        "moves takes its description with it, rather than leaving prose that "
+        "quietly contradicts the table beneath it."))
 
     out.append(ctx.h2("D.4 List of figures"))
     for entry in ctx.figure_index:
