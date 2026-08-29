@@ -360,11 +360,12 @@ def age_varying_check(paths: Any, spec: Any, income: np.ndarray,
 
     The search **starts from that constant-mix optimum** rather than from an
     equal weighting. Constant schedules are a subset of age-varying ones, so
-    the age-varying optimum cannot truly be worse; starting anywhere else
-    risks a coordinate search that lands below it and reports a negative gain,
-    which would be a fact about the search rather than about the shape. Seeded
-    this way the reported gain is exactly what age-variation adds, and it
-    cannot be negative.
+    the age-varying optimum cannot truly be worse -- but a coordinate search
+    from an arbitrary start carries no such guarantee, and one that landed
+    below the constant mix would report a negative gain that described the
+    optimiser rather than the shape. Seeding removes that failure mode by
+    construction and reaches the answer in fewer sweeps; the reported gain is
+    then exactly what age-variation adds.
     """
     from . import allocation as al
     from . import glidepath as gp
