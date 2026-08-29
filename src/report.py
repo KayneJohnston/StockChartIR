@@ -107,8 +107,6 @@ def write_doc_01(
     data_cfg = cfg["data"]
     run_cfg = cfg["run"]
     tier_a = [i for i, t in zip(panel.countries, panel.tier) if t == "A"]
-    tier_b = [i for i, t in zip(panel.countries, panel.tier) if t == "B"]
-    tier_c = [i for i, t in zip(panel.countries, panel.tier) if t == "C"]
 
     # -- everything that needs computing is computed first, then interpolated
     def by_series(key: str) -> str:
@@ -166,59 +164,65 @@ provenance:
 | Tier | Countries | Equity | Bonds and bills | Inflation |
 | --- | --- | --- | --- | --- |
 | **A** | {len(tier_a)} | observed (JST / JKKST) | observed | observed |
-| **B** | {len(tier_b)} | simulated (factor model) | **observed**, rebuilt from published yields and short rates | observed |
-| **C** | {len(tier_c)} | simulated (factor model) | simulated (factor model) | observed where a source exists, otherwise factor model |
 
-The tiers are **derived from the per-cell observation masks, not asserted**:
-`src.data_loader.derive_tiers` labels a country A when every available cell of
-every return series is an observation, C when none is, and B in between. A
-label therefore cannot drift away from the data it describes.
+There is one tier because there is one kind of data in this panel: recorded.
+Every country-year of every return series is a number somebody measured.
 
-Tier B exists because four countries have real interest-rate histories in the
-sources but no equity return series. Simulating a series a source can supply
-would be indefensible, so those cells are rebuilt from the published rates and
-recorded as observations. `14_data_provenance.md` section 3.1 lists what was
-recovered and over which years. Their equity is still generated, which is why
-they are not Tier A.
+That is a change. This project previously ran to **38 developed markets**, of
+which 22 had no recorded returns at all -- their equity, bond and bill series
+were draws from a single-factor model fitted to a randomly assigned observed
+donor, plus Gaussian noise. Those countries have been removed.
+`14_data_provenance.md` records what they were, what the removal cost, and what
+of theirs was real but still unusable.
 
-Read the headline results on the understanding that the Tier-A countries carry
-the empirical content. Section 5 of `04_replicated_results_and_tables.md`
-reruns the whole analysis on the Tier-A-only panel so the reader can see
-exactly how much the calibrated extension moves the answer. Short version: it
-does not move the ranking.
+The tier label is **derived from the per-cell observation masks, not
+asserted**: `src.data_loader.derive_tiers` labels a country A only when every
+available cell of every return series is an observation, C when none is, and B
+in between. Every country here is A, and `provenance.generated_cells` reports
+any cell that is available but not observed -- so if a generated block ever
+came back, the label would change and the audit would say so. Nothing needs to
+be taken on trust.
+
+The cost of the change is a narrower cross-section: the international leg is
+now an average over {len(tier_a) - 1} other markets rather than 37. That is the
+honest trade, and `14_data_provenance.md` section 7 states it.
 
 ## 2. Country universe
 
-The target cross-section is **38 developed markets**, matching the paper's
-count. Membership rule: IMF *advanced economies* that host an investable
-domestic equity market -- which excludes Andorra, Macao SAR, Puerto Rico and
-San Marino -- **plus Poland**, reclassified by FTSE Russell as a Developed
-Market in September 2018.
+The paper's cross-section is **38 developed markets**: IMF *advanced economies*
+that host an investable domestic equity market -- excluding Andorra, Macao SAR,
+Puerto Rico and San Marino -- plus Poland, reclassified by FTSE Russell as a
+Developed Market in September 2018.
 
-* **Tier A ({len(tier_a)}):** {", ".join(tier_a)}
-* **Tier B ({len(tier_b)}):** {", ".join(tier_b)}
-* **Tier C ({len(tier_c)}):** {", ".join(tier_c)}
+**This replication covers {len(tier_a)} of them.** The other
+{len(dl.REMOVED_SIMULATED)} have no recorded return series in any source
+available here, and generating them is what section 4.3 describes and no longer
+does. Matching the paper's country count by simulating the difference would
+make this a wider study on paper and a weaker one in fact.
 
-Tier A is exactly the set of countries for which the
+* **The panel ({len(tier_a)}):** {", ".join(tier_a)}
+* **Removed ({len(dl.REMOVED_SIMULATED)}):** {", ".join(dl.REMOVED_SIMULATED)}
+
+The panel is exactly the set of countries for which the
 Jorda-Knoll-Kuvshinov-Schularick-Taylor *Rate of Return on Everything* series
-carry complete equity, bond and bill total returns.
+carry complete equity, bond and bill total returns. It is a smaller
+cross-section than the paper's, and every observation in it is one somebody
+recorded.
 
-Tier B is the four countries whose interest rates survive in a primary source
-even though their return series do not. Canada and Ireland appear in the macro
-half of the JST database with a long-term bond yield, a short rate and a
-consumer price index but no return series; New Zealand and Austria carry a
-long-term yield in the Clio-Infra bond-yield file. A bond total return follows
-from a yield and a duration assumption, a bill return is a lagged short rate,
-and both are then deflated by that country's own price index -- so the result
-is an observation, not a draw. Section 4.3 gives the arithmetic.
+The removed set is the rest of the developed-market universe the original study
+covers. Four of them -- Austria, Canada, Ireland and New Zealand -- do have real
+interest-rate histories, and `14_data_provenance.md` section 8 rebuilds and
+reports them. None has an equity return series in any source available here,
+which is why none of them is in the panel: a lifecycle investor needs a
+domestic equity return, and generating one is what this project stopped doing.
 
 ## 3. Primary sources
 
 | Source | Used for | Coverage | Licence |
 | --- | --- | --- | --- |
 | Jorda-Schularick-Taylor Macrohistory Database, release carrying `eq_tr` / `bond_tr` / `bill_rate` (Jorda, Knoll, Kuvshinov, Schularick & Taylor, *The Rate of Return on Everything, 1870-2015*, QJE 2019) | nominal equity, bond and bill total returns; CPI; USD exchange rates | 18 countries 1870-2020, returns for 16 | CC BY-NC-SA 4.0 |
-| Clio Infra, `clio_infra_inflation.csv` | CPI inflation for Tier-B countries | ~180 countries, 1500-2010 | CC BY 4.0 |
-| Clio Infra, `clio_infra_bond_yield.csv` | cross-check on Tier-B long yields | 42 countries | CC BY 4.0 |
+| Clio Infra, `clio_infra_inflation.csv` | audit only: deflator for the non-panel rate histories in `docs/14` s8 | ~180 countries, 1500-2010 | CC BY 4.0 |
+| Clio Infra, `clio_infra_bond_yield.csv` | audit only: long yields for the non-panel countries in `docs/14` s8 | 42 countries | CC BY 4.0 |
 
 Both Clio files and the JST workbook were obtained from the openly licensed
 [`unbalancedparentheses/forex-centuries`](https://github.com/unbalancedparentheses/forex-centuries)
@@ -269,70 +273,39 @@ the panel -- rather than bolting it on during simulation -- is what lets the
 bootstrap preserve domestic/international correlation for free: a drawn
 country-year carries both legs together.
 
-### 4.3 Calibrating the extension, and recovering what can be recovered
+### 4.3 What used to be here
 
-The {len(tier_b) + len(tier_c)} countries outside Tier A are built in four
-steps, and then a fifth step takes back everything a source can supply.
+This section documented a four-step procedure for generating returns for the
+22 countries that had none: a single-factor model fitted to the observed
+cross-section, a randomly assigned donor supplying that country's loadings and
+residual covariance, and a documented market-inception year to stagger their
+entry.
 
-1. **Inflation** is empirical wherever a source exists: JST CPI for Canada and
-   Ireland, Clio-Infra CPI inflation elsewhere. Clio-Infra ends in 2010, so
-   2011-2020 is filled from the model in step 2.
-2. **Equity, bond and bill real returns** come from a single-factor model
-   estimated on the Tier-A cross-section, `x_it = alpha_i + beta_i * f_t +
-   eps_it`, where `f_t` is the equally weighted cross-country mean of that
-   series. Each country draws a *donor* Tier-A country and inherits its
-   `(alpha, beta)` and its full residual covariance across equity/bond/bill,
-   so the synthetic market has a realistic cross-asset correlation structure
-   rather than an assumed one.
-3. **Coverage** starts at a documented market-inception year, reproducing the
-   staggered entry of the real developed-market universe (Singapore 1965,
-   Slovenia 1990, ...) instead of pretending every market has 131 years of
-   history.
-4. The nominal CPI level and USD rate are cumulated from the inflation series
-   under a PPP-consistent rule, which is what folds these countries into other
-   countries' international leg.
-5. **Simulated cells are overwritten wherever a source carries the real
-   thing.** Four countries have interest-rate histories the return databases
-   lack, and generating a series a source can supply would be indefensible.
-   This is what separates Tier B from Tier C.
+It is gone, along with the countries it produced. The procedure was careful and
+it was still simulation: no draw from it corresponds to anything any of those
+markets did. `14_data_provenance.md` records the removal.
 
-**The recovery arithmetic.** A long-term yield gives a bond total return under
-a constant-maturity assumption,
+What survives is the *recovery* arithmetic, which is the opposite operation --
+turning a published rate into a return rather than a random number into one.
+A long-term yield gives a bond total return under a constant-maturity
+assumption,
 
 ```
 r_t = y_{{t-1}} + D * (y_{{t-1}} - y_t)
 ```
 
--- one year of carry at last year's yield, plus the capital gain a
-duration-`D` bond makes when the yield falls -- with `D` set to
+-- one year of carry at last year's yield, plus the capital gain a duration-`D`
+bond makes when the yield falls -- with `D` set to
 {float(data_cfg.get('bond_duration_years', 7.0)):g} years
-(`data.bond_duration_years`). A bill return is the *lagged* short rate, since
-a bill bought at `t-1` earns the rate quoted then. Both are deflated by the
-country's own price index. The first year of each series is undefined and is
+(`data.bond_duration_years`). A bill return is the *lagged* short rate, since a
+bill bought at `t-1` earns the rate quoted then. Both are deflated by the
+country's own price index, and the first year of each series is undefined and
 left missing rather than filled.
 
-Three constraints bound this, and each costs coverage:
-
-* **A real return needs a real deflator.** A genuine nominal yield divided by a
-  drawn price index is not an observation, so a cell counts as observed only
-  where that country's inflation is itself empirical.
-* **No equity is recovered**, because no available source carries an equity
-  return for these countries. That is why they are Tier B and not Tier A, and
-  why the international-leg contamination in `14_data_provenance.md` is
-  unchanged by the exercise.
-* **The reconstruction is first-order.** It ignores convexity and holds
-  duration constant, so the recovered series are smoother than a true
-  total-return index. They understate bond volatility; they do not invent bond
-  returns.
-
-Countries with short histories inherit short-sample noise: Poland, Slovenia
-and Malta post extreme geometric means over 25-30 year windows drawn from a
-strong era for the world equity factor. That is precisely why the headline
-bootstrap weights the domestic-country draw by usable history (see
-`02_multicountry_block_bootstrap.md`, section 3.2) and why the Tier-A-only
-replication is reported alongside.
-
-### 4.4 Real exchange rate against the world basket
+No panel country needs this: all {len(tier_a)} carry recorded bond and bill
+total returns. It is used only by the provenance audit, to report which
+non-panel countries have recoverable rate histories and how far they reach.
+`src.observed` holds the implementation.### 4.4 Real exchange rate against the world basket
 
 CPI base years differ across countries, so only *changes* in `cpi_i / xrusd_i`
 are comparable. The panel reports an index cumulating
@@ -423,8 +396,9 @@ for the best ({best_iso}) -- a spread of
 {(eq_rows['geometric_mean'].max() - eq_rows['geometric_mean'].min()) * 100:.1f}
 percentage points per year, compounded over a lifetime. A US-only study never
 sees that spread, which is exactly the hindsight bias the paper is built to
-remove. (Short-history Tier-B markets post wider extremes still, but those are
-small-sample artefacts rather than evidence; see section 4.3.)
+remove. Every country in that range has a recorded history behind it; the
+project used to show a wider spread, and the extra width came from simulated
+markets with short samples.
 """
 
     coverage_section = f"""
@@ -616,12 +590,13 @@ Section 6 reports the `per_block` variant.
 
 ### 3.2 Why the domestic country draw is history-weighted
 
-A uniform draw over 38 countries gives Slovenia's 30 observed years the same
-weight as the United Kingdom's {int(panel.available.sum(axis=0).max())}. Worse, in this panel the
-short-history countries are Tier-B synthetics whose windows fall in a strong
-era for the world equity factor, so uniform weighting silently tilts the
-answer *toward* equities -- the very direction the headline result runs, which
-would make the result an artefact of the weighting scheme.
+A uniform draw gives the shortest history in the panel
+({int(panel.available.sum(axis=0).min())} years) the same weight as the longest
+({int(panel.available.sum(axis=0).max())}). Since a short recorded history is a
+narrow window on one era rather than a representative sample of one, uniform
+weighting lets whichever era those countries happen to cover speak as loudly as
+a century and a half of another country's. History weighting is what pooling
+country-time blocks implies in the first place.
 
 Weighting the country draw by usable country-years is both the neutral choice
 and the one implied by ACO's pooling of country-time blocks. Section 6 reports
@@ -1241,21 +1216,21 @@ Each variant re-runs the entire pipeline end to end with one change.
 
 {tier_tbl}
 
-The ranking is stable across the empirical-only panel, the `per_block` country
-draw and uniform country weighting. That the Tier-A-only (fully empirical,
-16-country) panel reproduces the ordering is the check that matters most: the
-conclusion is not an artefact of the calibrated Tier-B extension.
+The ranking is stable across the `per_block` country draw and uniform country
+weighting.
 
-The tier split says something stronger. The all-equity advantage over the
-glide path is **larger** on the observed Tier-A histories than on the
-simulated ones, and 60/40 does relatively *better* among domestic markets whose
-equity was generated. The synthetic countries are drawn from a factor model
-fitted to Tier-A, so their equity returns are less fat-tailed and less
-persistent than the real thing -- they dilute the result rather than create
-it. If the extension were manufacturing the finding, this table would show the
-opposite pattern. (Tier B carries observed bonds and bills but simulated
-equity, so it sits with the simulated group on the mechanism that matters
-here.)
+There is no panel variant left to report here, and that is the point. This
+section used to compare a 38-country panel against its 16-country empirical
+subset, because 22 of those countries had factor-model returns. The simulated
+countries have been removed, so the empirical subset *is* the panel and there
+is nothing to hold it against. `14_data_provenance.md` records what the removal
+cost -- an international leg averaged over {runtime_notes.get('n_countries', 0) - 1}
+markets rather than 37 -- and what it bought.
+
+The tier split below is therefore degenerate by construction: every country is
+Tier A. It is still reported, because it is computed from the observation masks
+rather than from a label, and a non-degenerate result would mean a generated
+block had returned to the panel.
 
 ## 6. Comparison with the published paper
 
@@ -1279,10 +1254,13 @@ its economic mechanism**, which is what the paper's contribution actually is.
 
 ## 7. Limitations
 
-1. **The extension is largely calibrated, not observed.** {runtime_notes.get('n_tier_c')} of the
-   {runtime_notes.get('n_countries')} countries have simulated equity, bond *and* bill returns, and a further
-   {runtime_notes.get('n_partial')} have simulated equity with observed rates. Section 5
-   shows the ranking survives dropping them entirely.
+1. **The cross-section is {runtime_notes.get('n_countries')} countries, not 38.** Every one of them has a
+   recorded equity, bond, bill and inflation history, and nothing here is
+   generated -- but the paper this replicates uses a wider universe, and the
+   international leg is correspondingly an average over
+   {runtime_notes.get('n_countries', 0) - 1} markets rather than 37. That narrowness is the
+   price of the previous limitation being gone; `14_data_provenance.md` states
+   both halves.
 2. **Annual, not monthly.** Blocks are drawn in years. This coarsens the
    persistence structure relative to ACO's 120-month blocks.
 3. **No mortality risk.** Every investor lives to exactly {cfg['lifecycle']['age_death']}. Real longevity
