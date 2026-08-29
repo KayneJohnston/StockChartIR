@@ -16,7 +16,7 @@ I wanted to see whether the ACO result survives contact with a different dataset
 
 The country count is the binding constraint and I'd weight it heavily. Sixteen markets is what the openly licensed record supports with complete equity, bond and bill total returns; the international leg therefore spans 15 foreign markets, all advanced economies that ended the century with functioning capital markets. I also make no attempt at mortality risk, so my horizon is deterministic where theirs isn't.
 
-The sampler is a calendar-joint stationary block bootstrap: whole (country, window) blocks, mean length 10 years, so cross-asset covariance, long-horizon persistence and fat tails survive. Gaps — closures, war years — are respected rather than interpolated across, which matters because they cluster exactly where a survivorship-prone sample would quietly drop observations.
+The sampler is a calendar-joint stationary block bootstrap — whole (country, window) blocks, mean length 10 years — so cross-asset covariance, persistence and fat tails survive. Gaps (closures, war years) are respected rather than interpolated across, which matters because they cluster exactly where a survivorship-prone sample would quietly drop observations.
 
 ## What replicated
 
@@ -49,11 +49,24 @@ Two of my results look contradictory until you notice what differs between them.
 
 Levering the **portfolio** is barely worth doing: +5.1% at 1.75× with a *zero* borrowing spread, decaying fast in the spread. At real household margin rates it rounds to nothing, and what it buys comes out of the left tail. Read alone, that's a flat negative on *Lifecycle Investing*.
 
-But put the leverage on **housing** instead and the optimiser produces the Ayres–Nalebuff shape without being asked to. Solving loan-to-value at every age, capped at 80% and priced off the borrower's own real short rate: **75% LVR while working, 49% in retirement**, declining monotonically at every spread I tested. The mechanism is the one they identify — a working investor has decades of future earnings no lender can reach, and that human capital is what makes early leverage bearable.
+But put the leverage on **housing** instead and the optimiser produces the Ayres–Nalebuff shape without being asked to. Solving loan-to-value at every age, capped at 80% and priced off the borrower's own real short rate: **75% LVR while working, 49% in retirement**, declining monotonically at every spread I tested. That shape is consistent with their human-capital argument — a working investor has decades of future earnings no lender can reach — though I should be clear I haven't isolated that channel, only observed the schedule it would predict.
 
-The difference is the borrowing rate. Margin costs a household several hundred basis points over the short rate. A mortgage costs roughly 150–200bp, secured, close to the government's own rate. **Their shape survives; their instrument doesn't.** The cheapest leverage an ordinary household can obtain is secured against a house, and that is the one place the declining-leverage schedule actually pays.
+It isn't the borrowing rate. Both studies borrow at the same real bill rate plus the same swept spread, and at **identical spreads** the mortgage still wins by five to fifteen times:
 
-Worth noting the magnitudes are more modest than 2:1 — at a 2% spread the optimum holds gross housing exposure of about 0.62× net wealth alongside ~77% international equity, so roughly 1.4:1 all-in. And it's overwhelmingly sensitive to the margin: +25.6% at a zero spread, +5.9% at 2%, nothing by 4%. Your mortgage rate, not the return on housing, decides this.
+| Spread over short rate | Lever the portfolio | Mortgage on housing |
+|---|---|---|
+| 0% | +5.1% | **+25.6%** |
+| 1% | +2.0% | **+14.3%** |
+| 2% | +0.4% | **+5.9%** |
+| 3% | 0.0% | +1.0% |
+
+It's diversification. Housing's *standalone* risk-adjusted return is slightly **worse** than international equity's — 4.8% real on 14.5% vol after a 2% holding cost, against 8.2% on 22.6%. What it has is a correlation of **+0.09** with the equity sleeve, where the two equity legs correlate at +0.40. Levering the portfolio just scales risk you already own. Levering housing spends the borrowing on a near-uncorrelated asset, and lets the investor hold more gross property while tying up less capital in it.
+
+So the Ayres–Nalebuff shape survives, but the reason it pays here is not the one their argument turns on. In my panel, levering *equity* — their instrument — is worth almost nothing once credit is priced realistically. The gain appears when leverage buys a diversifier instead.
+
+The real-world borrowing rate reinforces this rather than driving it: margin costs a household several hundred basis points over the short rate, a mortgage roughly 150–200bp and secured. The cheapest leverage an ordinary household can get happens to be attached to the asset that most deserves it.
+
+Magnitudes are more modest than 2:1 — at a 2% spread the optimum holds gross housing of about 0.62× net wealth alongside ~77% international equity, so roughly 1.4:1 all-in. And it's overwhelmingly sensitive to the margin: +25.6% at a zero spread, nothing by 4%. Your mortgage rate, not the return on housing, decides this.
 
 It is also the mirror image of the glide path this whole literature argues about: **what should decline with age is the borrowing, not the equity.**
 
@@ -67,7 +80,7 @@ It is also the mirror image of the glide path this whole literature argues about
 
 **Timing beats allocation.** The decade around the retirement date accounts for ~35% of the explanatory power of the entire 68-year return path.
 
-**The accumulation side has more room than the allocation side.** Conditioning the savings rate on being ahead of or behind an age-appropriate target beats every allocation refinement combined. Decomposing that signal gives the most counter-intuitive result here: the best state variable is not the portfolio balance but **the investor's own pay cheque relative to its expected path** (+7.1% vs +5.1% for the funded ratio).
+**The accumulation side has more room than the allocation side.** Conditioning the savings rate on being ahead of or behind an age-appropriate target beats every allocation refinement combined — and the best state variable turns out not to be the portfolio balance but **the investor's own pay cheque relative to its expected path** (+7.1% vs +5.1% for the funded ratio).
 
 ## The other extensions
 
@@ -79,7 +92,7 @@ It is also the mirror image of the glide path this whole literature argues about
 
 ![Housing](fig41_housing_cost_sweep.png)
 
-Also: eight retirement spending rules compared on their own optimised rates, and endogenous retirement timing (retire on wealth, not birthday — ~3% against a matched mean retirement age).
+Also: eight spending rules compared on their own optimised rates, and endogenous retirement timing (retire on wealth, not birthday — ~3% against a matched mean age).
 
 ## Caveats
 
