@@ -67,8 +67,8 @@ class PaperDoc(BaseDocTemplate):
         canvas.setFillColor(colors.HexColor("#666666"))
         canvas.drawCentredString(doc.leftMargin + doc.width / 2.0,
                                  y - 0.42 * cm,
-                                 "Generated from a fully reproducible pipeline; "
-                                 "see Appendix D for the build command.")
+                                 "Every figure in this document is computed "
+                                 "from the sources described in Section 3.")
         canvas.restoreState()
 
     def _body_page(self, canvas: Any, doc: Any) -> None:

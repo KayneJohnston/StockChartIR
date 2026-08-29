@@ -328,8 +328,8 @@ def load_jst(cfg: Mapping[str, Any]) -> pd.DataFrame:
         _WORKBOOK_CACHE[key] = pd.read_excel(key[0], sheet_name=key[1])
     frame = _WORKBOOK_CACHE[key].copy()
     keep = ["year", "country", "iso", "cpi", "xrusd", "eq_tr", "bond_tr",
-            "bill_rate", "eq_dp", "bond_rate", "stir", "ltrate", "housing_tr",
-            "wage"]
+            "bill_rate", "eq_dp", "eq_capgain", "bond_rate", "stir", "ltrate",
+            "housing_tr", "wage"]
     missing = [c for c in keep if c not in frame.columns]
     if missing:
         raise ValueError(f"JST workbook is missing expected columns: {missing}")
@@ -679,9 +679,6 @@ def build_tier_a(cfg: Mapping[str, Any], hedge_ratio: float = 0.0,
 
 
 # ---------------------------------------------------------------------------
-# Tier B: calibrated developed-market extension
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
 # Panel assembly
 # ---------------------------------------------------------------------------
 def derive_tiers(observed: Mapping[str, np.ndarray], available: np.ndarray,
@@ -800,13 +797,21 @@ def summary_statistics(panel: Panel) -> pd.DataFrame:
 
 
 def coverage_matrix(panel: Panel, decade: bool = True) -> pd.DataFrame:
-    """Country x year (or decade) count of usable observations."""
-    frame = pd.DataFrame(panel.available.astype(int),
+    """Country x year (or decade) coverage of usable observations.
+
+    By decade the value is the *share* of that decade's years with complete
+    data, not the count. The panel's last bucket is usually a partial decade --
+    2020 on its own, say -- and a raw count there tops out at one against a
+    scale of ten, which reads as an absence of data rather than as a bucket
+    with one year in it.
+    """
+    frame = pd.DataFrame(panel.available.astype(float),
                          index=panel.years, columns=list(panel.countries))
     if not decade:
         return frame.T
-    frame["decade"] = (frame.index // 10) * 10
-    grouped = frame.groupby("decade").sum()
+    buckets = (frame.index // 10) * 10
+    grouped = frame.groupby(buckets).mean()
+    grouped.index.name = "decade"
     return grouped.T
 
 

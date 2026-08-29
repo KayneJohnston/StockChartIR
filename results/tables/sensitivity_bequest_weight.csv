@@ -1,37 +1,37 @@
 bequest_weight,strategy,label,cec
-0.0,balanced_all_equity,50/50 Domestic/International Equity,0.9956360049197036
-0.5,balanced_all_equity,50/50 Domestic/International Equity,0.9973781986530518
-1.0,balanced_all_equity,50/50 Domestic/International Equity,0.9991068409656941
-2.0,balanced_all_equity,50/50 Domestic/International Equity,1.0025242507178538
-5.0,balanced_all_equity,50/50 Domestic/International Equity,1.0124707625436502
-10.0,balanced_all_equity,50/50 Domestic/International Equity,1.028109333466371
-0.0,domestic_equity,100% Domestic Equity,0.8577245889104593
-0.5,domestic_equity,100% Domestic Equity,0.8592110329786605
-1.0,domestic_equity,100% Domestic Equity,0.8606857912771357
-2.0,domestic_equity,100% Domestic Equity,0.8636009244767896
-5.0,domestic_equity,100% Domestic Equity,0.8720827409089928
-10.0,domestic_equity,100% Domestic Equity,0.8854097567522552
-0.0,international_equity,100% International Equity,1.0373586167839628
-0.5,international_equity,100% International Equity,1.0391962654603613
-1.0,international_equity,100% International Equity,1.0410198169297888
-2.0,international_equity,100% International Equity,1.0446254363936025
-5.0,international_equity,100% International Equity,1.055124198658898
-10.0,international_equity,100% International Equity,1.0716448821639522
-0.0,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.8688527734990276
-0.5,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.8703816782307612
-1.0,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.871898765087507
-2.0,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.8748981638344984
-5.0,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.8836297253898089
-10.0,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.8973633023007408
-0.0,target_date_fund,Target-Date Fund (glide path),0.9302479305385409
-0.5,target_date_fund,Target-Date Fund (glide path),0.9318140988511417
-1.0,target_date_fund,Target-Date Fund (glide path),0.933367572050546
-2.0,target_date_fund,Target-Date Fund (glide path),0.936437171701132
-5.0,target_date_fund,Target-Date Fund (glide path),0.9453597821629944
-10.0,target_date_fund,Target-Date Fund (glide path),0.9593527381714388
-0.0,bills_only,100% Bills (cash),0.731137689595265
-0.5,bills_only,100% Bills (cash),0.7323643346639085
-1.0,bills_only,100% Bills (cash),0.7335810010737747
-2.0,bills_only,100% Bills (cash),0.7359849791218606
-5.0,bills_only,100% Bills (cash),0.7429719786461426
-10.0,bills_only,100% Bills (cash),0.7539269206364982
+0.0,balanced_all_equity,50/50 Domestic/International Equity,1.0407073210944937
+0.5,balanced_all_equity,50/50 Domestic/International Equity,1.0425387982259409
+1.0,balanced_all_equity,50/50 Domestic/International Equity,1.0443561201273523
+2.0,balanced_all_equity,50/50 Domestic/International Equity,1.0479491111052983
+5.0,balanced_all_equity,50/50 Domestic/International Equity,1.0584087135099396
+10.0,balanced_all_equity,50/50 Domestic/International Equity,1.0748603669507346
+0.0,domestic_equity,100% Domestic Equity,0.8759923722638542
+0.5,domestic_equity,100% Domestic Equity,0.877516894166268
+1.0,domestic_equity,100% Domestic Equity,0.8790294862008222
+2.0,domestic_equity,100% Domestic Equity,0.8820195678309143
+5.0,domestic_equity,100% Domestic Equity,0.8907207031124974
+10.0,domestic_equity,100% Domestic Equity,0.9043961921244945
+0.0,international_equity,100% International Equity,1.1026330786064684
+0.5,international_equity,100% International Equity,1.1045808418673355
+1.0,international_equity,100% International Equity,1.1065136149854717
+2.0,international_equity,100% International Equity,1.1103350507546075
+5.0,international_equity,100% International Equity,1.1214611289769771
+10.0,international_equity,100% International Equity,1.1389655548828403
+0.0,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.8655578054667435
+0.5,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.8670843589675677
+1.0,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.8685991428380981
+2.0,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.8715940771732166
+5.0,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.8803133239078895
+10.0,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.8940296448931508
+0.0,target_date_fund,Target-Date Fund (glide path),0.9379870616901204
+0.5,target_date_fund,Target-Date Fund (glide path),0.9395544770963783
+1.0,target_date_fund,Target-Date Fund (glide path),0.9411090899533316
+2.0,target_date_fund,Target-Date Fund (glide path),0.9441806546698434
+5.0,target_date_fund,Target-Date Fund (glide path),0.9531067833920378
+10.0,target_date_fund,Target-Date Fund (glide path),0.9670985032421956
+0.0,bills_only,100% Bills (cash),0.7339802518500753
+0.5,bills_only,100% Bills (cash),0.7352134909202395
+1.0,bills_only,100% Bills (cash),0.7364367128477003
+2.0,bills_only,100% Bills (cash),0.7388536884417559
+5.0,bills_only,100% Bills (cash),0.745878806172713
+10.0,bills_only,100% Bills (cash),0.7568945661679191

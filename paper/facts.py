@@ -34,6 +34,15 @@ def _war_years_text() -> str:
     return " and ".join(f"{low}\u2013{high}" for low, high in WAR_YEARS)
 
 
+def _removed_countries() -> tuple:
+    """The countries dropped for having generated returns, from the source."""
+    try:
+        from src.data_loader import REMOVED_SIMULATED
+    except ImportError:                                 # pragma: no cover
+        return ()
+    return tuple(REMOVED_SIMULATED)
+
+
 def _panel_wage_extremes(audit: pd.DataFrame) -> Dict[str, Any]:
     """Delegate to the pipeline's own definition so the two cannot diverge."""
     try:
@@ -153,6 +162,7 @@ class Facts:
             "country_years": int(equity["n_years"].sum()),
             "median_years": float(equity["n_years"].median()),
             "min_years": int(equity["n_years"].min()),
+            "max_years": int(equity["n_years"].max()),
             "mean_real_equity": float(equity["mean"].mean()),
             "mean_geometric_equity": float(equity["geometric_mean"].mean()),
             "mean_equity_sd": float(equity["std"].mean()),
@@ -304,7 +314,10 @@ class Facts:
         anchors = self.table("provenance_anchor_checks")
         identity = self.table("provenance_identity_check").iloc[0]
         tail = self.table("provenance_tail_variance")
-        comparison = self.table("provenance_panel_comparison")
+        try:
+            unusable = self.table("provenance_unusable_series")
+        except FileNotFoundError:                       # pragma: no cover
+            unusable = pd.DataFrame()
 
         # Cells, not countries: one country, one year, one return series. It
         # is the unit the bootstrap draws, and the only one that can describe a
@@ -354,7 +367,9 @@ class Facts:
             "tail_countries": n_tail,
             "tail_median_ratio": float(tail["ratio"].median()),
             "tail_p_value": p_value,
-            "comparison": comparison,
+            "unusable": unusable,
+            "n_removed": len(_removed_countries()),
+            "removed": _removed_countries(),
             "housing": self._housing(),
             "wages": self._wages(),
         }
@@ -437,23 +452,16 @@ class Facts:
 
     @functools.cached_property
     def panel_advantage(self) -> Dict[str, float]:
-        """The headline advantage on the full panel and on observed data only."""
-        comparison = self.table("provenance_panel_comparison")
-        # The table carries display labels when step 4 ran alongside the
-        # audit and raw keys otherwise, so match on either.
-        def find(*needles: str) -> pd.Series:
-            for _, row in comparison.iterrows():
-                name = str(row["strategy"]).lower()
-                if any(n.lower() in name for n in needles):
-                    return row
-            raise KeyError(f"no strategy matching {needles} in the comparison")
+        """The headline advantage, from the only panel there is.
 
-        equity = find("50/50", "balanced_all_equity")
-        glide = find("target-date", "target_date_fund")
-        return {
-            "dev38": (float(equity["cec_dev38"]) / float(glide["cec_dev38"])
-                      - 1.0) * 100.0,
-            "jst16": (float(equity["cec_jst16"]) / float(glide["cec_jst16"])
-                      - 1.0) * 100.0,
-        }
+        This used to compare a 38-country panel against its observed subset,
+        because 22 of those countries had factor-model returns. They were
+        removed, so there is nothing to compare against and the number below is
+        simply the result.
+        """
+        headline = self.table("headline_lifecycle_metrics").set_index("strategy")
+        column = f"cec_crra_gamma{self.baseline_gamma:g}"
+        equity = float(headline.loc["balanced_all_equity", column])
+        glide = float(headline.loc["target_date_fund", column])
+        return {"observed": (equity / glide - 1.0) * 100.0}
 

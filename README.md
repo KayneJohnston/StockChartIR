@@ -17,24 +17,26 @@ reaches the same conclusion.
 ## Headline result
 
 100,000 simulated 68-year lifetimes (ages 25-93, retirement at 63), drawn from
-a 38-country developed-market panel, 1890-2020. Certainty equivalent
+a 16-country developed-market panel of recorded returns, 1890-2020. Certainty
+equivalent
 consumption is in multiples of initial annual real income; ruin is exhausting
 financial wealth before age 93 under a 4% real withdrawal rule.
 
 | Strategy | CEC (γ=2) | CEC (γ=5) | CEC (γ=10) | P(ruin) | Median bequest |
 | --- | --- | --- | --- | --- | --- |
-| 100% International Equity | 1.451 | 1.043 | 0.740 | 11.4% | 56.9 |
-| **50/50 Domestic/International Equity** | **1.362** | **1.002** | **0.728** | **14.4%** | **37.5** |
-| Target-Date Fund (glide path) | 1.212 | 0.934 | 0.700 | 22.3% | 9.5 |
-| 60/40 Domestic Equity / Domestic Bonds | 1.120 | 0.873 | 0.673 | 24.3% | 10.0 |
-| 100% Domestic Equity | 1.166 | 0.864 | 0.658 | 28.0% | 12.8 |
-| 100% Bills (cash) | 0.844 | 0.736 | 0.616 | 57.7% | 0.0 |
+| 100% International Equity | 1.521 | 1.108 | 0.782 | 9.0% | 64.2 |
+| **50/50 Domestic/International Equity** | **1.406** | **1.048** | **0.756** | **11.7%** | **44.7** |
+| Target-Date Fund (glide path) | 1.214 | 0.943 | 0.704 | 22.2% | 9.4 |
+| 60/40 Domestic Equity / Domestic Bonds | 1.105 | 0.871 | 0.671 | 24.2% | 10.2 |
+| 100% Domestic Equity | 1.183 | 0.882 | 0.668 | 25.4% | 16.7 |
+| 100% Bills (cash) | 0.847 | 0.739 | 0.618 | 56.4% | 0.0 |
 
 The 50/50 all-equity portfolio **strictly dominates** the target-date fund and
 60/40 on all 21 reported criteria (20 wins, 1 tie, 0 losses), across every
 risk-aversion level and both Epstein-Zin IES values tested. The ordering
-survives on the fully empirical 16-country panel, under per-block country
-resampling, and under uniform country weighting.
+survives under per-block country resampling and under uniform country
+weighting. Every path behind these numbers was drawn from recorded returns --
+see "How much of this data is real" below.
 
 See [`docs/04_replicated_results_and_tables.md`](docs/04_replicated_results_and_tables.md)
 for the full analysis and the caveats.
@@ -73,66 +75,75 @@ the paper cannot drift away from the pipeline that produced it. See
 | [`docs/12_full_allocation.md`](docs/12_full_allocation.md) | The full four-asset weight simplex -- domestic equity, international equity, bonds and bills -- solved at every year of the lifecycle |
 | [`docs/13_leverage.md`](docs/13_leverage.md) | Borrowing to invest: the optimal leverage ratio and allocation at each price of credit, and the break-even spread |
 | [`docs/14_data_provenance.md`](docs/14_data_provenance.md) | **Which numbers were observed and which were generated** -- source fingerprints, authenticity checks on the primary file, and whether the headline survives on observed data alone |
+| [`docs/15_starting_valuation.md`](docs/15_starting_valuation.md) | Conditioning the result on how expensive the market was when a lifetime began, using only the dividend yield an investor could actually observe |
+| [`docs/16_housing.md`](docs/16_housing.md) | Housing as a fifth asset: undoing the appraisal smoothing in the index, then sweeping the annual holding cost to find the price at which it stops being worth holding |
 
 All fourteen are **generated** by `main.py` from live pipeline objects -- edit
 `src/report.py`, not the Markdown.
 
 ## How much of this data is real
 
-**34.3% of the panel's return cells are simulated** -- one cell being one
-country, one year, one return series, which is the unit the bootstrap actually
-draws -- and so is 38% of an observed investor's international leg (59% after
-2000). `docs/14` audits this in full: 18 of the 38 countries are factor-model
-draws from a randomly assigned observed donor, not series derived from anything
-those countries experienced.
+All of it.
 
-The audit prompted a sweep of the primary files for series the pipeline was not
-reading. It turned up three things.
+The panel is **16 developed markets, 2,010 country-years, 6,030 return cells,
+every one of them a number somebody recorded**. `docs/14` proves that rather
+than asserting it: provenance is tracked per cell, the tier labels are derived
+from those records, and a separate check reports any cell that is available but
+not observed. It is empty.
 
-**Bonds and bills for four more countries.** Canada and Ireland carry a long
-yield, a short rate and a price index in the Jordà-Schularick-Taylor macro file
-but no return series; New Zealand and Austria carry a long yield in Clio-Infra.
-Their bonds and bills are now rebuilt from those published rates rather than
-generated, converting **531 country-years** from simulated to observed and
-cutting the simulated share from 39.6% to 34.3%. Nothing was recovered for
-equity -- the series the headline mechanism runs through -- so the
-international-leg figure is unchanged.
+That is a change, and it is the most important one in the project. This
+replication used to cover **38 developed markets** to match the paper's
+cross-section. It could only do that by generating 22 of them: their equity,
+bond and bill returns were draws from a single-factor model fitted to a
+randomly assigned observed donor, plus Gaussian noise. The audit measured the
+damage -- 39.6% of country-years, and **38% of the average investor's
+international leg**, rising to 59% after 2000 -- and the first version of this
+README argued the simulated data were tolerable because they *diluted* the
+headline rather than creating it.
 
-**Housing total returns, 1,805 country-years across all 16 observed
-countries.** Fully empirical, and nothing in the project read them. Median real
-return 6.6% against 6.9% for the same countries' equity, at a standard
-deviation of 8.9% versus 21.0%. They stay out of the investable set and
-`docs/14` section 3.2 says why: median lag-one autocorrelation is +0.34 against
-+0.06 for equity, and undoing that appraisal smoothing takes the standard
-deviation to 12.0%. Most of the apparent free lunch is a measurement artefact.
+That was true and not a good enough reason. A reader cannot check a number that
+came out of a random number generator, and a cross-section of thirty-eight
+reads as stronger evidence than one of sixteen while being weaker. The
+generated countries are gone.
 
-**Real wage growth for all 18 macro countries, 2,269 country-years.** The
-median country compounded real wages at 1.41% a year. The lifecycle income
-profile has no term for it -- its hump is an *age* effect implying 1.18% a
-year, and in the Cocco-Gomes-Maenhout estimation it comes from the two are
-separate and additive. `docs/14` section 3.3 records this as a quantified
-limitation rather than applying it, because re-estimating the income process is
-a modelling change, not a data one. The bias runs *against* the paper's
-conclusion: less human capital weakens the case for early equity.
+**What it costs:** the international leg is now an average over 15 other
+markets rather than 37. That is a real limit on how far the mechanism
+generalises and `docs/14` states it plainly.
 
-No new external source could be added: outbound access from the build
+**What the sources still hold that this does not use**, each audited in
+`docs/14` and each with its reason:
+
+* **Interest rates for four removed countries** (s8). Austria, Canada, Ireland
+  and New Zealand have real long yields and short rates; their bonds and bills
+  are rebuilt from those and reported. They cannot re-enter the panel, because
+  a lifecycle investor needs a domestic *equity* return and no reachable source
+  carries one for them.
+* **Housing total returns**, 1,805 country-years across all 16 panel countries
+  (s3.1). Median 6.6% real against 6.9% for equity at 8.9% s.d. versus 21.0% --
+  but median lag-one autocorrelation is +0.34 against +0.06, and undoing that
+  appraisal smoothing takes the s.d. to 12.0%. Most of the apparent free lunch
+  is a measurement artefact.
+* **Real wage growth** for all 18 macro countries, 2,269 country-years (s3.2).
+  The median country compounded real wages at 1.41% a year (1.77% excluding the
+  war years). The lifecycle income profile has no term for it: its hump is an
+  *age* effect implying 1.18% a year, and the two are separate and additive in
+  the estimation it comes from. Recorded as a quantified limitation rather than
+  applied, since re-estimating the income process is a modelling change. The
+  bias runs *against* the conclusion -- less human capital weakens the case for
+  early equity.
+
+The 16 countries pass every authenticity check: five independently known annual
+returns land within tolerance, and the internal accounting identity fails at
+the rate a genuine spliced-source database should. One finding does not pass --
+all 16 show a variance collapse over 2016-2020 (sign-test p = 3e-05) -- so
+those five years are flagged as unverified.
+
+No new external source could be added. Outbound access from the build
 environment is denied to the macrohistory host and every other bulk macro-data
 provider tested, and guessing at redistributed mirrors would have reproduced
 exactly the unverifiable provenance this audit exists to warn about. Sixteen
-countries is the ceiling on observed *equity* here, and that is stated as a
-limit rather than worked around.
-
-The 16 countries with real Jordà-Schularick-Taylor return series pass every
-authenticity check -- five independently known annual returns land within
-tolerance, and the internal accounting identity fails at the rate a genuine
-spliced-source database should. One finding does not pass: all 16 countries
-show a variance collapse over 2016-2020 (sign-test p = 3e-05), so those five
-years are flagged as unverified.
-
-**The headline is stronger on observed data alone** -- 11.2% against 7.3% --
-so the simulated countries dilute the result rather than create it. But the
-honest evidence base for the return series is sixteen countries, not
-thirty-eight, and nothing here should lean on the larger number.
+countries is the ceiling on observed equity here, stated as a limit rather than
+worked around.
 
 ## Sensitivity
 
@@ -216,31 +227,31 @@ realised career average:
 | Rule | Signal | Value |
 | --- | --- | --- |
 | Solved shape | age only | +0.6% |
-| **On-track** | wealth vs an age-appropriate target | **+3.2%** |
-| Return-responsive | last year's market return | +0.4% |
+| **On-track** | wealth vs an age-appropriate target | **+3.0%** |
+| Return-responsive | last year's market return | +0.9% |
 
 Saving more when behind an age-appropriate wealth-to-income target is worth
-~5× the shape. Saving more after a bad market year is worth almost nothing —
+~5× the shape. Saving more after a bad market year is worth well under a third as much —
 and pushed harder, turns negative. A bad market year is a poor proxy for being
 behind; wealth relative to an age target is the sufficient statistic. (Sign
-check: saving *less* when behind costs −3.2%, which is the reassurance that
+check: saving *less* when behind costs −4.2%, which is the reassurance that
 the machinery measures what it claims.)
 
 **The savings and retirement gains don't add.** Conditioning the retirement
-date is worth ~2.9%; conditioning the savings rate ~3.2%. Doing **both** is
+date is worth ~3.1%; conditioning the savings rate ~3.0%. Doing **both** is
 worth less than savings conditioning alone — they read the same underlying
 signal (am I ahead or behind), so stacking them over-corrects.
 
 ## Taking the savings signal apart
 
-`docs/11` is the stress test of the section above. That +3.2% rests on five
+`docs/11` is the stress test of the section above. That +3.0% rests on five
 choices that were made once and never varied — how the shortfall is measured,
 which target it is measured against, whether the response is symmetric, how
 far the contribution may move, and which years it runs in. 195 rule
 evaluations at 20,000 paths, all scored against a constant rate matched on
 each rule's own realised average, and all reported *net of* the 0.6% the
 solved age profile already earns. (The funded-ratio rule scores +4.4% here
-against +3.2% in `docs/10` because `docs/11` tunes the functional form and the
+against +3.0% in `docs/10` because `docs/11` tunes the functional form and the
 coefficient rather than fixing both in advance — the same rule, better set up.)
 
 **The best signal is not the portfolio.** Eight candidates, one sensitivity
@@ -250,20 +261,20 @@ grid, same scoring:
 | --- | --- | --- |
 | **Income vs its expected path** | pay cheque | **+6.4%** |
 | Funded ratio (wealth vs age target) | stock | +4.4% |
-| Raw balance (wealth ÷ income) | stock | +1.4% |
-| Investment gain (balance vs contributions) | stock | +0.3% |
-| Trailing 5- and 10-year return | flow | +0.04% |
-| Last year's return | flow | +0.02% |
+| Raw balance (wealth ÷ income) | stock | +1.5% |
+| Investment gain (balance vs contributions) | stock | +0.4% |
+| Trailing 5- and 10-year return | flow | +0.03% |
+| Last year's return | flow | +0.01% |
 
 Saving more in years the pay cheque runs above its expected path beats every
 balance rule tested. An income shock is observed *before* it is spent, so
 acting on it costs almost no utility; acting on a portfolio shortfall means
 cutting consumption that was already planned. Every **flow** signal is worth
-essentially nothing — at 0.02–0.04% the ordering among them is not meaningful
+essentially nothing — at 0.01–0.03% the ordering among them is not meaningful
 and shouldn't be read as one.
 
-Layered together, income and the funded ratio reach **+7.3%**, against +6.4%
-for the better one alone and +10.7% if they were additive. They overlap
+Layered together, income and the funded ratio reach **+6.9%**, against +6.4%
+for the better one alone and +10.9% if they were additive. They overlap
 (both weak income and weak markets show up as a balance behind target) but not
 completely.
 
@@ -313,14 +324,16 @@ thirties to ~14.5bp after 40, faster than the rule's activity does.
 retire once wealth reaches a multiple of income, inside an age window. That is
 what people actually do, and it is testable.
 
-**Conditioning the retirement date on the portfolio is worth ~2.9% of
+**Conditioning the retirement date on the portfolio is worth ~3.1% of
 certainty equivalent consumption** — measured against a fixed date *matched on
 the same mean retirement age*, so it isolates the value of responding to
 markets from the value of simply retiring earlier. It is stable across trigger
-multiples (2.9–3.1%). That is roughly nine times the entire
-currency-hedging decision and three times what solving the full
-68-dimensional glide path buys over a static portfolio — **and unlike either,
-it is free.**
+multiples (3.0–3.1%). For scale: currency hedging is worth **nothing at all**
+on this panel — the optimal hedge ratio is zero at every cost tested — and
+solving the full 68-dimensional glide path buys 6.9% over the balanced
+all-equity portfolio. So conditioning the date is worth about half of the
+hardest optimisation in this project, and unlike that one it costs nothing to
+implement.
 
 The rule isn't "retire later" or "retire earlier". Median retirement age is
 63, but the 10th and 90th percentiles are 55 and 70: *retire when the market
@@ -418,27 +431,32 @@ changes which country-years are usable, and the sweep reuses one set of drawn
 
 | Hedge ratio | CEC gain at zero cost | Break-even annual cost |
 | --- | --- | --- |
-| 25% | +0.34% | 33 bp/yr |
-| 50% | +0.20% | 10 bp/yr |
-| 75% | -0.45% | never worth it |
-| 100% | -1.57% | never worth it |
+| 25% | -0.13% | never worth it |
+| 50% | -1.02% | never worth it |
+| 75% | -2.43% | never worth it |
+| 100% | -4.24% | never worth it |
 
-**Even for free, hedging is barely worth doing.** The best ratio is 25%, worth
-+0.34% of certainty equivalent consumption; three-quarters or more is
-negative at any price. The break-even is about **33 basis points a year**, and
-retail hedged share classes generally cost more than that.
+**Hedging is not worth doing at any ratio, even free.** Every hedge ratio
+tested loses certainty-equivalent consumption before a single basis point of
+cost is charged, and the loss grows monotonically with the ratio. There is no
+break-even cost to quote because there is no cost low enough: the decision is
+settled at zero.
 
 **Why, and it isn't the usual story.** Hedging does cut the standalone
 volatility of the foreign sleeve — but not monotonically: volatility bottoms
-out at a 50% hedge (17.87%) and rises again toward a full hedge (19.36%).
+out at a 50% hedge (18.48%, against 21.69% unhedged) and rises again toward a
+full hedge (21.17%).
 In *real* terms, foreign currency partly hedges domestic inflation, and
 hedging removes that offset. Meanwhile hedging raises the correlation between
-the foreign sleeve and the home market, from 0.54 to 0.61: currency
-movement is part of what makes foreign equity a *diversifier* rather than a
-second helping of the same risk.
+the foreign sleeve and the home market, from 0.43 unhedged to a peak of 0.52
+at a half hedge: currency movement is part of what makes foreign equity a
+*diversifier* rather than a second helping of the same risk. Correlation with
+domestic inflation moves the other way, from -0.04 to -0.28, so hedging trades
+away an inflation offset the unhedged sleeve provides for free.
 
-The two effects roughly cancel. "Hedging reduces risk" is true of the sleeve
-in isolation and close to false of the portfolio holding it. (The conventional
+The second effect wins. "Hedging reduces risk" is true of the sleeve in
+isolation and false of the portfolio holding it — which is why every ratio
+loses even when the hedge is free. (The conventional
 advice to hedge foreign *bonds* survives untouched — this tests equities only.)
 
 ## Spending rules
@@ -481,9 +499,9 @@ while also spending more.
 ```bash
 pip install numpy pandas scipy matplotlib pyyaml openpyxl pytest
 
-python main.py --quick      # ~20 s smoke run at reduced N
-python main.py              # ~30 min full run: N = 100,000 plus sweeps and searches
-python -m pytest tests/ -q  # 312 tests
+python main.py --quick      # ~1 min smoke run at reduced N
+python main.py              # ~1 h full run: N = 100,000 plus sweeps and searches
+python -m pytest tests/ -q  # 580 tests
 ```
 
 Selected steps and alternative configurations:
@@ -499,13 +517,15 @@ python main.py --steps 1 10         # panel + savings-rate analysis only
 python main.py --steps 11           # the accumulation-signal deep dive
 python main.py --steps 12 13        # the full allocation solve and leverage
 python main.py --steps 14           # the data provenance audit
+python main.py --steps 15           # the starting-valuation study
+python main.py --steps 16           # housing as a fifth asset
 python main.py --config other.yaml  # a different parameterisation
 ```
 
 ## Layout
 
 ```
-├── docs/                 # generated analysis documents (10 files)
+├── docs/                 # generated analysis documents (16 files)
 ├── data/
 │   ├── raw/              # primary source files, unmodified
 │   ├── processed/        # standardised real return panels (.csv and .npz)
@@ -526,11 +546,13 @@ python main.py --config other.yaml  # a different parameterisation
 │   ├── leverage.py       # levered evaluator and the cost-of-credit sweep
 │   ├── observed.py       # series recovered from published rates, not generated
 │   ├── provenance.py     # what is observed, what is simulated, and does it matter
+│   ├── valuation.py      # the starting dividend yield, with no look-ahead
+│   ├── housing.py        # housing de-smoothed, and priced by its holding cost
 │   ├── plots.py          # publication-quality figures
 │   └── report.py         # Markdown report generation
-├── tests/                # 510 unit + integration tests
+├── tests/                # 580 unit + integration tests
 ├── results/
-│   ├── figures/          # 39 PNGs
+│   ├── figures/          # 41 PNGs
 │   └── tables/           # 110+ CSVs
 ├── config.yaml           # every tunable parameter
 └── main.py               # entry point
@@ -547,7 +569,7 @@ pipeline.
 | Source | Used for | Licence |
 | --- | --- | --- |
 | [Jordà-Schularick-Taylor Macrohistory Database](https://www.macrohistory.net/database/) (release carrying the Jordà-Knoll-Kuvshinov-Schularick-Taylor *Rate of Return on Everything* series) | nominal equity/bond/bill total returns, CPI, USD exchange rates, 16 countries × 1870-2020 | CC BY-NC-SA 4.0 |
-| [Clio Infra](https://clio-infra.eu/) | CPI inflation and long bond yields for the extended country set | CC BY 4.0 |
+| [Clio Infra](https://clio-infra.eu/) | audit only: long bond yields and CPI for the non-panel countries reported in `docs/14` s8 | CC BY 4.0 |
 
 Both were obtained from the openly licensed
 [`unbalancedparentheses/forex-centuries`](https://github.com/unbalancedparentheses/forex-centuries)
@@ -557,29 +579,24 @@ mirror and are stored verbatim in `data/raw/`.
 
 The paper uses a **proprietary**, hand-collected, monthly 38-country database
 built from Global Financial Data and Dimson-Marsh-Staunton sources. It is not
-redistributable and could not be used here. This replication therefore labels
-every country by provenance:
+redistributable and could not be used here.
 
-* **Tier A (16 countries)** -- equity, bond, bill and inflation series are all
-  empirical, from JST/JKKST. This is where the empirical content lives.
-* **Tier B (4 countries)** -- Canada, Ireland, New Zealand and Austria.
-  Inflation is empirical, and bonds and bills are **observed**, rebuilt from
-  published long yields and short rates via `r_t = y_{t-1} + D(y_{t-1} - y_t)`
-  and deflated by the country's own price index. Their equity is still
-  generated, which is why they are not Tier A.
-* **Tier C (18 countries)** -- inflation is empirical wherever a source exists;
-  equity, bond and bill returns are **calibrated proxies** generated by a
-  single-factor model fitted to the Tier-A cross-section, with donor-inherited
-  residual covariance and documented market-inception dates.
+This replication covers the **16 countries** for which openly licensed,
+recorded equity, bond and bill total returns exist. It does not reach 38, and
+it does not pretend to: the other 22 markets have no return series in any
+source reachable from here, and filling them with model draws -- which an
+earlier version did -- made the cross-section look twice as broad while adding
+no evidence a reader could check.
 
-The tiers are *derived* from a per-cell record of what was observed
-(`Panel.observed_mask`, `data_loader.derive_tiers`) rather than asserted beside
-it, so a label cannot drift from the data it describes.
+Provenance is tracked per cell (`Panel.observed_mask`) and the tier label is
+*derived* from those records (`data_loader.derive_tiers`), so it cannot drift
+from the data it describes. Every country is Tier A. `provenance.generated_cells`
+reports any cell that is available but not observed, and `main.py` logs an
+error if it ever finds one; `build_panel` refuses the old `dev38` panel name
+with an explanation rather than aliasing it, so a stale config cannot bring the
+generated block back silently.
 
-The entire analysis is reported a second time on the Tier-A-only panel. The
-ranking is unchanged and the all-equity advantage is in fact *larger* there, so
-the conclusion is not an artefact of the calibrated extension. Section 7 of
-`docs/04` lists this and every other limitation.
+Section 7 of `docs/04` lists this and every other limitation.
 
 ## Design notes
 
@@ -633,6 +650,7 @@ re-simulating, since γ, ψ and the bequest weight enter only the aggregator.
 
 ### Repository note
 
-This project lives alongside `StockChartIR` (image recognition on stock
-charts); the `Up/`, `Down/`, `Validation/` and `StockCharts.tgz` paths belong
-to that unrelated work.
+An earlier, unrelated project on this repository -- image recognition on stock
+charts -- remains on the `master` branch under `Up/`, `Down/`, `Validation/`
+and `StockCharts.tgz`. None of it is used here, and none of it is present on
+this branch.

@@ -1,4 +1,4 @@
 risk_aversion,best_rule,best_cec,constant_real_cec,constant_real_rank,n_families,gap_pct
-2.0,Actuarial (Gompertz life expectancy),1.7464280232549576,1.4544036100909072,8,8,20.078636434751253
-5.0,Amortisation (annuity payment) (4% assumed return),1.1680041144203819,1.002745662953094,8,8,16.48059498762633
-10.0,Amortisation (annuity payment) (4% assumed return),0.8332077406604824,0.7438060131353684,8,8,12.01949512995446
+2.0,Actuarial (Gompertz life expectancy),1.8556233113312899,1.5183654389832932,8,8,22.211903912527585
+5.0,Amortisation (annuity payment) (4% assumed return),1.257439858128595,1.0487899837502261,8,8,19.89434277702444
+10.0,Amortisation (annuity payment) (4% assumed return),0.8902170312500264,0.7677819616741709,8,8,15.94659365386526

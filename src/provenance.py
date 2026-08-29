@@ -1,19 +1,18 @@
 """Where every number in the panel actually comes from.
 
-`docs/01` labels each country Tier A or Tier B and says Tier B is
-"constructed". That is true but far too soft, and this module exists because
-the softness was hiding something a reader needs to know: for a Tier-B country
-the equity, bond and bill series are not derived from anything that country
-experienced. They are draws from a single-factor model fitted to a randomly
-assigned Tier-A donor, plus Gaussian noise with that donor's residual
-covariance. Only inflation is empirical, and only where a source carries it.
+This module measured how much of the panel was generated rather than recorded,
+and the answer got twenty-two countries deleted. Their equity, bond and bill
+series were not derived from anything those countries experienced: they were
+draws from a single-factor model fitted to a randomly assigned observed donor,
+plus Gaussian noise with that donor's residual covariance. The honest word was
+never "constructed". It was **simulated**.
 
-So the honest description is not "constructed from documented mappings". It is
-**simulated**. This module measures exactly how much of the panel that covers,
-how much of it reaches a simulated lifetime through the bootstrap, and — the
-part that matters most for the headline result — how much of the
-*international* leg is simulated even for the sixteen countries whose own data
-are real.
+What is left is a panel of recorded returns, and this module's first job is now
+to prove that rather than to quantify the opposite -- :func:`generated_cells`
+reports every cell that is available but not observed, and it should be empty.
+Its second is to report the real series that exist and still cannot be used:
+interest rates for four of the removed countries, housing total returns, and
+economy-wide real wage growth.
 
 It also audits the empirical tier rather than taking it on trust:
 

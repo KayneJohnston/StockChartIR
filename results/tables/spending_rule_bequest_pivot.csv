@@ -1,49 +1,49 @@
 variant,bequest_weight,cec,median_bequest
-Amortisation (annuity payment) (4% assumed return),0.0,1.1765286451882735,0.0
-Amortisation (annuity payment) (4% assumed return),0.5,1.1743150521061958,0.0
-Amortisation (annuity payment) (4% assumed return),1.0,1.1721578682254565,0.0
-Amortisation (annuity payment) (4% assumed return),2.0,1.1680041144203819,0.0
-Amortisation (annuity payment) (4% assumed return),5.0,1.1566913801574763,0.0
-Amortisation (annuity payment) (4% assumed return),10.0,1.1409409716562076,0.0
-Actuarial (Gompertz life expectancy),0.0,1.155432572310159,3.8678826685569545
-Actuarial (Gompertz life expectancy),0.5,1.1576381369698463,3.8678826685569545
-Actuarial (Gompertz life expectancy),1.0,1.1598282819307637,3.8678826685569545
-Actuarial (Gompertz life expectancy),2.0,1.1641631847704264,3.8678826685569545
-Actuarial (Gompertz life expectancy),5.0,1.1768196549490288,3.8678826685569545
-Actuarial (Gompertz life expectancy),10.0,1.1968425809588403,3.8678826685569545
-Endowment smoothing (light smoothing),0.0,1.1136091191860575,12.002337923426989
-Endowment smoothing (light smoothing),0.5,1.115873663830025,12.002337923426989
-Endowment smoothing (light smoothing),1.0,1.118123775088854,12.002337923426989
-Endowment smoothing (light smoothing),2.0,1.122581514426017,12.002337923426989
-Endowment smoothing (light smoothing),5.0,1.1356287841796697,12.002337923426989
-Endowment smoothing (light smoothing),10.0,1.1563716305468765,12.002337923426989
-Constant % of portfolio,0.0,1.1135443880951272,12.423849799186293
-Constant % of portfolio,0.5,1.1158144134078483,12.423849799186293
-Constant % of portfolio,1.0,1.1180700271208646,12.423849799186293
-Constant % of portfolio,2.0,1.122538835783224,12.423849799186293
-Constant % of portfolio,5.0,1.1356198127053254,12.423849799186293
-Constant % of portfolio,10.0,1.1564204028080507,12.423849799186293
-Life expectancy / RMD,0.0,1.1257344141031513,0.0
-Life expectancy / RMD,0.5,1.1243310698192894,0.0
-Life expectancy / RMD,1.0,1.1229591944542685,0.0
-Life expectancy / RMD,2.0,1.1203056519032069,0.0
-Life expectancy / RMD,5.0,1.1129990798208496,0.0
-Life expectancy / RMD,10.0,1.102632401532301,0.0
-Guyton-Klinger guardrails (tight band),0.0,1.0993653829286123,12.079545406052443
-Guyton-Klinger guardrails (tight band),0.5,1.101347157643124,12.079545406052443
-Guyton-Klinger guardrails (tight band),1.0,1.1033140352715878,12.079545406052443
-Guyton-Klinger guardrails (tight band),2.0,1.107203949689357,12.079545406052443
-Guyton-Klinger guardrails (tight band),5.0,1.1185374582104122,12.079545406052443
-Guyton-Klinger guardrails (tight band),10.0,1.1363932679270856,12.079545406052443
-Vanguard dynamic (ceiling/floor) (asymmetric),0.0,1.0624548284664956,21.227414361143396
-Vanguard dynamic (ceiling/floor) (asymmetric),0.5,1.0643068844309131,21.227414361143396
-Vanguard dynamic (ceiling/floor) (asymmetric),1.0,1.0661444735624925,21.227414361143396
-Vanguard dynamic (ceiling/floor) (asymmetric),2.0,1.0697770842400274,21.227414361143396
-Vanguard dynamic (ceiling/floor) (asymmetric),5.0,1.0803485691965415,21.227414361143396
-Vanguard dynamic (ceiling/floor) (asymmetric),10.0,1.0969654970294294,21.227414361143396
-Constant real (4%-rule style),0.0,0.9963462449727801,28.39330225587373
-Constant real (4%-rule style),0.5,0.9979662891682008,28.39330225587373
-Constant real (4%-rule style),1.0,0.9995727402064908,28.39330225587373
-Constant real (4%-rule style),2.0,1.002745662953094,28.39330225587373
-Constant real (4%-rule style),5.0,1.0119582291898568,28.39330225587373
-Constant real (4%-rule style),10.0,1.026374027904684,28.39330225587373
+Amortisation (annuity payment) (4% assumed return),0.0,1.273647835991492,0.0
+Amortisation (annuity payment) (4% assumed return),0.5,1.2693956907343205,0.0
+Amortisation (annuity payment) (4% assumed return),1.0,1.26528151255496,0.0
+Amortisation (annuity payment) (4% assumed return),2.0,1.257439858128595,0.0
+Amortisation (annuity payment) (4% assumed return),5.0,1.2365943160009691,0.0
+Amortisation (annuity payment) (4% assumed return),10.0,1.2087174227437694,0.0
+Actuarial (Gompertz life expectancy),0.0,1.2460209754283793,4.428381679880641
+Actuarial (Gompertz life expectancy),0.5,1.2484420085409678,4.428381679880641
+Actuarial (Gompertz life expectancy),1.0,1.2508465250229597,4.428381679880641
+Actuarial (Gompertz life expectancy),2.0,1.255606941046103,4.428381679880641
+Actuarial (Gompertz life expectancy),5.0,1.2695151492703196,4.428381679880641
+Actuarial (Gompertz life expectancy),10.0,1.2915478791274753,4.428381679880641
+Constant % of portfolio,0.0,1.1956732030975705,14.224203151651324
+Constant % of portfolio,0.5,1.1981319147595018,14.224203151651324
+Constant % of portfolio,1.0,1.200575233682682,14.224203151651324
+Constant % of portfolio,2.0,1.2054165662061307,14.224203151651324
+Constant % of portfolio,5.0,1.21959299029662,14.224203151651324
+Constant % of portfolio,10.0,1.2421514071283446,14.224203151651324
+Endowment smoothing (light smoothing),0.0,1.195402368103433,13.83117204812226
+Endowment smoothing (light smoothing),0.5,1.1978566127252903,13.83117204812226
+Endowment smoothing (light smoothing),1.0,1.2002954527719343,13.83117204812226
+Endowment smoothing (light smoothing),2.0,1.2051277924411257,13.83117204812226
+Endowment smoothing (light smoothing),5.0,1.2192769642043895,13.83117204812226
+Endowment smoothing (light smoothing),10.0,1.2417890914397964,13.83117204812226
+Guyton-Klinger guardrails (tight band),0.0,1.1921016113813978,11.257059399754066
+Guyton-Klinger guardrails (tight band),0.5,1.1942186765764844,11.257059399754066
+Guyton-Klinger guardrails (tight band),1.0,1.1963195475795871,11.257059399754066
+Guyton-Klinger guardrails (tight band),2.0,1.2004736347802671,11.257059399754066
+Guyton-Klinger guardrails (tight band),5.0,1.2125704681462341,11.257059399754066
+Guyton-Klinger guardrails (tight band),10.0,1.2316091257755033,11.257059399754066
+Life expectancy / RMD,0.0,1.2025678512203453,0.0
+Life expectancy / RMD,0.5,1.1998746093088963,0.0
+Life expectancy / RMD,1.0,1.1972546285724799,0.0
+Life expectancy / RMD,2.0,1.1922224632726839,0.0
+Life expectancy / RMD,5.0,1.1786003460486763,0.0
+Life expectancy / RMD,10.0,1.1598286148869439,0.0
+Vanguard dynamic (ceiling/floor) (asymmetric),0.0,1.1256499556723338,25.67242932940134
+Vanguard dynamic (ceiling/floor) (asymmetric),0.5,1.1276349889488455,25.67242932940134
+Vanguard dynamic (ceiling/floor) (asymmetric),1.0,1.1296047156909392,25.67242932940134
+Vanguard dynamic (ceiling/floor) (asymmetric),2.0,1.1334991280748394,25.67242932940134
+Vanguard dynamic (ceiling/floor) (asymmetric),5.0,1.1448370070420673,25.67242932940134
+Vanguard dynamic (ceiling/floor) (asymmetric),10.0,1.162672576178104,25.67242932940134
+Constant real (4%-rule style),0.0,1.0421403868370462,35.48771885615405
+Constant real (4%-rule style),0.5,1.0438238965707296,35.48771885615405
+Constant real (4%-rule style),1.0,1.0454931928720619,35.48771885615405
+Constant real (4%-rule style),2.0,1.0487899837502261,35.48771885615405
+Constant real (4%-rule style),5.0,1.058360229589664,35.48771885615405
+Constant real (4%-rule style),10.0,1.0733296853423828,35.48771885615405

@@ -24,10 +24,18 @@ from reportlab.platypus.tableofcontents import TableOfContents
 # Formatting helpers
 # ---------------------------------------------------------------------------
 def f2(x: Any, d: int = 2) -> str:
+    """A fixed-point number, or an em-dash where the value is undefined.
+
+    Some table cells have no defined value rather than a missing one -- the
+    improvement over the previous sweep, on the sweep that has no previous.
+    Printing "nan" there reads as a defect; a dash reads as "not applicable",
+    which is what it is.
+    """
     try:
-        return f"{float(x):.{d}f}"
+        value = float(x)
     except (TypeError, ValueError):
         return str(x)
+    return "\u2014" if not np.isfinite(value) else f"{value:.{d}f}"
 
 
 def sgn(x: Any, d: int = 2) -> str:
@@ -35,8 +43,12 @@ def sgn(x: Any, d: int = 2) -> str:
 
 
 def pc(x: Any, d: int = 1) -> str:
-    """A fraction rendered as a percentage."""
-    return f"{float(x) * 100.0:.{d}f}%"
+    """A fraction rendered as a percentage, or an em-dash where undefined."""
+    try:
+        value = float(x)
+    except (TypeError, ValueError):
+        return str(x)
+    return "\u2014" if not np.isfinite(value) else f"{value * 100.0:.{d}f}%"
 
 
 def rows_from(frame: pd.DataFrame, columns: Sequence[str],
@@ -74,6 +86,13 @@ def front_matter(ctx: Any) -> List[Flowable]:
     ruin_tdf = float(f.strategy_row("target_date_fund")["prob_ruin"])
     tornado = f.table("sensitivity_tornado")
     n_settings = int(tornado["n_settings"].sum())
+    val_adv = f.table("valuation_advantage")
+    house = f.table("housing_cost_sweep")
+    house_five = house[house["investable_set"] == "five assets"].sort_values(
+        "holding_cost")
+    from src.housing import break_even_cost as _house_break_even
+    house_break = _house_break_even(house_five)
+    house_free = house_five.iloc[0]
     reversals = int(tornado["settings_lost"].sum())
     swr = f.table("sensitivity_safe_withdrawal_rates")
     swr_eq = float(swr[swr["strategy"] == "balanced_all_equity"]
@@ -95,8 +114,7 @@ def front_matter(ctx: Any) -> List[Flowable]:
         Paragraph("A Computational Re-Examination of Lifecycle Asset "
                   "Allocation, with Ten Extensions", s["subtitle"]),
         Spacer(1, 0.2 * cm),
-        Paragraph("A reproducible replication and extension study", s["author"]),
-        Paragraph("StockChartIR research pipeline", s["author"]),
+        Paragraph("A replication and extension study", s["author"]),
         Spacer(1, 0.25 * cm),
         Paragraph(dt.date.today().strftime("This version: %d %B %Y"), s["date"]),
         Spacer(1, 0.85 * cm),
@@ -127,20 +145,19 @@ def front_matter(ctx: Any) -> List[Flowable]:
         f"the four-percent convention on every strategy "
         f"({pc(swr_eq, 1)} for all-equity, {pc(swr_tdf, 1)} for the target-date "
         f"fund at a five-percent ruin tolerance). "
-        f"We then push past replication with ten extensions. Solving the "
+        f"We then push past replication with twelve extensions. Solving the "
         f"glide path directly by coordinate ascent under common random numbers "
         f"reproduces the all-equity corner rather than an interior optimum, "
         f"and freeing all four portfolio weights at every age — {alloc_params} "
         f"parameters on the simplex — adds {alloc_lead:.2f}% over the best "
         f"fixed benchmark while still producing no glide path. Relaxing the "
         f"long-only constraint, borrowing to invest is worth "
-        f"{lev_free:+.2f}% at a zero spread over the real bill rate, breaks "
-        f"even at a spread of {break_even:.2%}, and is worth under a tenth of "
-        f"a percent from {lev['negligible_spread']:.2%} upward — and what the "
-        f"optimiser levers is a diversified portfolio rather than a "
-        f"concentrated one. Currency hedging the international leg is worth "
-        f"less than "
-        f"its own cost beyond a modest hedge ratio. Making the retirement date a "
+        f"{lev_free:+.2f}% at a zero borrowing spread over the real bill rate "
+        f"but decays quickly in that spread, breaking even by "
+        f"{break_even:.2%} — and what the optimiser levers is a diversified "
+        f"portfolio rather than a concentrated one. Currency hedging the "
+        f"international leg loses certainty-equivalent consumption at every "
+        f"ratio tested, even when the hedge is free. Making the retirement date a "
         f"wealth-triggered decision rather than a birthday is worth about 3% "
         f"of certainty-equivalent consumption against a date matched on the "
         f"same mean retirement age. Conditioning the savings rate on the "
@@ -153,19 +170,33 @@ def front_matter(ctx: Any) -> List[Flowable]:
         f"explains {pc(float(lottery['r2_retirement_window']), 0)} of the "
         f"variation in retirement outcomes, a lottery no allocation rule can "
         f"diversify away. "
-        f"A provenance audit of the panel itself finds that "
-        f"{pr['share_cells_simulated']:.0%} of its return cells — and "
-        f"{pr['intl_simulated']:.0%} of an observed investor's international "
-        f"leg — are model-simulated rather than observed; re-running on the "
-        f"{pr['n_observed']} fully observed countries alone "
-        f"<i>{'strengthens' if adv['jst16'] > adv['dev38'] else 'weakens'}</i> "
-        f"the headline from {adv['dev38']:.1f}% to {adv['jst16']:.1f}%, so the "
-        f"simulated data "
-        f"{'dilute the finding rather than create it' if adv['jst16'] > adv['dev38'] else 'flatter the finding and are reported as such'}. "
-        f"Every table, figure and quoted number in this paper "
-        f"is regenerated from a single command; the pipeline, its "
-        f"{f.n_tests} unit tests and its full diagnostic record are "
-        f"public."
+f"Conditioning a lifetime on how expensive its market was at the "
+        f"moment it began — using the trailing dividend yield an investor "
+        f"could observe, ranked against tercile boundaries computed only "
+        f"from country-years that had already happened — "
+        + (f"leaves the ranking intact in all {len(val_adv)} valuation "
+           f"buckets while moving the level: "
+           if bool((val_adv['advantage_pct'] > 0).all())
+           else f"reverses the ranking in "
+                f"{int((val_adv['advantage_pct'] <= 0).sum())} of "
+                f"{len(val_adv)} valuation buckets: ")
+        + f"lifetimes begun in the dearest third reach retirement with less "
+        f"and run out of money more often than those begun in the cheapest. "
+        f"Adding housing to the investable set — de-smoothed to undo the "
+        f"appraisal lag the published index carries — "
+        + (f"earns {pc(float(house_free['mean_housing']), 0)} of the "
+           f"portfolio when it is free to hold and "
+           + (f"drops out entirely at an annual holding cost of "
+              f"{pc(house_break, 1)}"
+              if np.isfinite(house_break) else
+              "survives every holding cost tested")
+           if float(house_free["mean_housing"]) > 0.01 else
+           "earns no place in the portfolio at any price, including free")
+        + ". "
+        f"The panel's principal limitation is its breadth: "
+        f"{pr['n_countries']} developed markets, so the international leg "
+        f"spans {pr['n_countries'] - 1} foreign markets, all advanced "
+        f"economies with long recorded histories."
     )
     out.append(Paragraph(abstract, s["abstract"]))
     out.append(Paragraph(
@@ -239,7 +270,7 @@ def section_introduction(ctx: Any) -> List[Flowable]:
         "diagnostic apparatus made visible rather than asserted. Second, it "
         "stress-tests the result across a large parameter space, so that the "
         "reader can see where the conclusion is robust and where it is thin. "
-        "Third — and this is where most of the length lies — it takes eight "
+        "Third — and this is where most of the length lies — it takes twelve "
         "extensions that the original design leaves open and works each of "
         "them out, several of which produce results that run against the "
         "intuition that motivated them."))
@@ -314,10 +345,32 @@ def section_introduction(ctx: Any) -> List[Flowable]:
         "available to a saver is not their portfolio balance but their own "
         "labour income relative to its expected path."))
 
+    out.append(ctx.p(
+        "<b>Where you start changes what you get, not what you should "
+        "hold.</b> Conditioning a lifetime on the dividend yield its market "
+        "offered the year it began — ranked, as a real investor would have "
+        "had to, against only the history that had already happened — "
+        + ("leaves the allocation ranking intact at every starting valuation "
+           if bool((f.table('valuation_advantage')['advantage_pct'] > 0).all())
+           else "reverses the allocation ranking in at least one starting "
+                "valuation ")
+        + "while moving the level substantially. An investor starting in an "
+        "expensive market should expect less from the same portfolio, not a "
+        "different portfolio."))
+    out.append(ctx.p(
+        "<b>Housing is a serious asset at a serious price.</b> The historical "
+        "sources measure a fourth asset class this literature usually skips. "
+        "Corrected for the appraisal smoothing that makes property indices "
+        "look artificially calm, it earns a large allocation when it is free "
+        "to hold and loses it entirely at a plausible annual holding cost. "
+        "The interesting quantity is not whether housing belongs in a "
+        "portfolio but the cost at which it stops belonging, and that number "
+        "is small enough that a real owner's costs are decisive."))
+
     out.append(ctx.h2("1.2 What is new here"))
     out.append(ctx.p(
         "Relative to the paper being replicated, this study contributes a "
-        "methodological discipline and ten substantive extensions. The "
+        "methodological discipline and twelve substantive extensions. The "
         "discipline is a set of comparison rules applied uniformly: every "
         "policy is scored against a <i>matched</i> baseline that differs from "
         "it in exactly one dimension; every optimiser runs under common random "
@@ -369,10 +422,13 @@ def section_introduction(ctx: Any) -> List[Flowable]:
         "the panel and its construction. Section 4 sets out the bootstrap, the "
         "lifecycle model, the preference specification and the comparison "
         "discipline. Section 5 presents the baseline replication and Section 6 "
-        "its sensitivity. Sections 7 through 14 present the ten extensions "
-        "in order of increasing distance from the original design. Section 15 "
-        "discusses what the results collectively imply, Section 16 states the "
-        "limitations candidly, and Section 17 concludes. Four appendices give "
+        "its sensitivity. Sections 7 through 16 present the twelve extensions "
+        "in order of increasing distance from the original design, ending with "
+        "two that relax assumptions the model itself makes: that a lifetime's "
+        "starting valuation is irrelevant (Section 15) and that the "
+        "opportunity set contains no housing (Section 16). Section 17 "
+        "discusses what the results collectively imply, Section 18 states the "
+        "limitations candidly, and Section 19 concludes. Four appendices give "
         "the full parameter set, the country panel, supplementary tables and "
         "the reproduction instructions."))
     return out
@@ -444,14 +500,10 @@ def section_background(ctx: Any) -> List[Flowable]:
         "international asset-return work and it is what makes an exercise of "
         "this kind possible at all."))
     out.append(ctx.p(
-        f"It is also the binding constraint on this study, and we are explicit "
-        f"about that in Section 3.2 and again in Section 16: "
-        f"{f.panel['n_tier_a']} countries have complete observed series, and "
-        f"the remaining {f.panel['n_simulated_equity']} developed markets in "
-        f"our panel have equity that is simulated rather than observed — "
-        f"though {f.panel['n_tier_b']} of those do have real bond and bill "
-        f"histories, rebuilt from published rates in Section 3.6.1. Results "
-        f"are reported separately by tier throughout."))
+        f"It is also the binding constraint on this study: it carries complete "
+        f"equity, bond and bill total returns for {f.panel['n_tier_a']} "
+        f"countries, and that set is our panel. Section 3.2 describes it and "
+        f"Section 16.1 sets out what its breadth costs."))
 
     out.append(ctx.h2("2.4 Adjacent literatures this paper touches"))
     out.extend(ctx.bullets([
@@ -488,9 +540,8 @@ def section_data(ctx: Any) -> List[Flowable]:
     p = f.panel
     pr, adv = f.provenance, f.panel_advantage
     anchors = f.table("provenance_anchor_checks")
-    recovered = f.table("provenance_recovered_series")
+    unusable = f.table("provenance_unusable_series")
     contamination = f.table("provenance_intl_contamination")
-    comparison = f.table("provenance_panel_comparison")
     summary = f.table("panel_summary_statistics")
     equity = summary[summary["series"] == "dom_eq"].sort_values("iso")
     tier_a = equity[equity["tier"] == "A"]
@@ -531,38 +582,37 @@ def section_data(ctx: Any) -> List[Flowable]:
 
     out.extend(ctx.figure(
         "fig01_coverage_matrix",
-        "Usable country-years by country and decade. Darker cells indicate "
-        "more complete data. The gaps are not random: they cluster around the "
+        "Share of each decade for which a country has a complete return "
+        "record. Darker is more complete; the scale is a share so that the "
+        "final, partial decade compares with the rest. The gaps are not "
+        "random: they cluster around the "
         "two world wars and around the market closures that follow them, which "
         "is precisely the period a survivorship-prone sample would drop.",
         max_height=11.5 * cm))
 
-    out.append(ctx.h2("3.2 Three tiers of country, reported separately"))
+    out.append(ctx.h2("3.2 The country set"))
     out.append(ctx.p(
-        f"This is the most important disclosure in the paper. The "
-        f"Jordà–Schularick–Taylor database covers {p['n_tier_a']} countries "
-        f"with complete, independently sourced series. Those are our "
-        f"<b>Tier A</b> markets and every one of their observations is "
-        f"empirical. The remaining {p['n_simulated_equity']} developed markets "
-        f"in the panel — needed to reach the developed-market universe the "
-        f"original study uses — have no equity return series in any source "
-        f"available to us, and their equity is generated."))
+        f"The Jordà–Schularick–Taylor database carries complete, independently "
+        f"sourced equity, bond and bill total returns for {p['n_tier_a']} "
+        f"countries: {', '.join(sorted(tier_a['country']))}. That set is the "
+        f"panel, and every country-year of every return series in it is a "
+        f"recorded observation."))
     out.append(ctx.p(
-        f"Those {p['n_simulated_equity']} do not all sit in the same place. "
-        f"{p['n_tier_b']} of them — our <b>Tier B</b> — have real interest-rate "
-        f"histories that survive in a primary source even though their return "
-        f"series do not, so their bonds and bills are rebuilt from published "
-        f"yields and short rates and are observations rather than draws "
-        f"(Section 3.6.1). The remaining {p['n_tier_c']} are <b>Tier C</b>: "
-        f"equity, bonds and bills alike are model output."))
+        f"The wider developed-market universe — IMF advanced economies with an "
+        f"investable domestic equity market, plus Poland — numbers 38. The "
+        f"histories of the other {pr['n_removed']} exist in commercial "
+        f"databases such as Global Financial Data and Dimson–Marsh–Staunton, "
+        f"which are proprietary and not redistributable. Working from openly "
+        f"licensed sources, {p['n_tier_a']} is the extent of the recorded "
+        f"evidence, and Section 3.6.1 reports what the excluded countries do "
+        f"carry."))
     out.append(ctx.p(
-        "The tiers are <i>derived</i> from a per-cell record of what was "
-        "observed, not asserted alongside it, so a label cannot drift from "
-        "the data it describes. We do not treat any of this as a technicality, "
-        "and \"constructed\" turns out to understate it: Section 3.6 audits the "
-        "construction and finds the generated return series are "
-        "<i>simulated</i> rather than derived. Section 5.5 reruns the entire "
-        "baseline on Tier A alone and reports both."))
+        f"That breadth is the paper's principal limitation and Section 16.1 "
+        f"develops it. Its most direct consequence is on the international "
+        f"leg, which is a leave-one-out average and therefore spans "
+        f"{p['n_tier_a'] - 1} foreign markets, all advanced economies with "
+        f"long histories. Every statement here about international "
+        f"diversification is a statement about that set."))
 
     out.append(ctx.h2("3.3 Constructing the international leg"))
     out.append(ctx.p(
@@ -586,25 +636,23 @@ def section_data(ctx: Any) -> List[Flowable]:
         f"intervention rather than take it on trust."))
 
     out.extend(ctx.table(
-        rows_from(equity.assign(
-            label=equity["country"] + " (" + equity["tier"] + ")"),
-            ["label", "n_years", "first_year", "last_year", "mean",
+        rows_from(equity,
+            ["country", "n_years", "first_year", "last_year", "mean",
              "geometric_mean", "std", "skew", "ar1"],
-            ["Country (tier)", "Years", "From", "To", "Mean", "Geo. mean",
+            ["Country", "Years", "From", "To", "Mean", "Geo. mean",
              "S.d.", "Skew", "AR(1)"],
-            {"label": str, "n_years": lambda v: f"{int(v)}",
+            {"country": str, "n_years": lambda v: f"{int(v)}",
              "first_year": lambda v: f"{int(v)}",
              "last_year": lambda v: f"{int(v)}",
              "mean": lambda v: pc(v), "geometric_mean": lambda v: pc(v),
              "std": lambda v: pc(v), "skew": lambda v: f2(v),
              "ar1": lambda v: f2(v)},
-            limit=20),
-        "Real domestic equity returns by country (first twenty by ISO code)",
-        note="Tier A equity is observed; Tier B and C equity is simulated "
-             "from the Tier A cross-section. The full "
-             "38-country table is Appendix B. Arithmetic and geometric means "
-             "are annual real returns; AR(1) is the first-order "
-             "autocorrelation of the annual series.",
+            ),
+        "Real domestic equity returns by country",
+        note="Arithmetic and geometric means are annual real returns "
+             "deflated by each country's own consumer price index; AR(1) is "
+             "the first-order autocorrelation of the annual series. Appendix "
+             "B repeats this with excess kurtosis.",
         font_size=7.0))
 
     out.append(ctx.h2("3.4 Cross-asset structure"))
@@ -649,7 +697,7 @@ def section_data(ctx: Any) -> List[Flowable]:
     out.append(ctx.h2("3.5 Market disruptions and the survivorship question"))
     out.append(ctx.p(
         f"There are {len(gaps)} contiguous runs of missing data across the "
-        f"Tier A countries, concentrated in the two world wars. The treatment "
+        f"countries of the panel, concentrated in the two world wars. The treatment "
         f"of these gaps is a substantive modelling decision rather than a "
         f"data-cleaning one. Interpolating across them would smooth away "
         f"exactly the episodes that motivate the whole exercise; dropping the "
@@ -664,63 +712,28 @@ def section_data(ctx: Any) -> List[Flowable]:
         "is <i>less</i> able to draw from countries with disrupted histories "
         "at long block lengths, which we quantify rather than assume: the "
         "run-length admissibility statistics are reported in Section 4.1."))
-    out.append(ctx.h2("3.6 A provenance audit"))
+    out.append(ctx.h2("3.6 Auditing the data"))
     out.append(ctx.p(
-        "The previous subsection says Tier B countries are \"constructed\". "
-        "That is true and too soft, and the softness hides something a reader "
-        "needs before believing anything else in this paper. For a simulated "
-        "country the equity, bond and bill series are not derived from "
-        "anything that country experienced. They are draws from a "
-        "single-factor model fitted to a <i>randomly assigned</i> Tier-A "
-        "donor, plus Gaussian noise carrying that donor's residual "
-        "covariance. Only inflation is empirical, and only where a source "
-        "carries it. The accurate word is not constructed; it is "
-        "<b>simulated</b>."))
-    out.append(ctx.p(
-        f"We count <b>cells</b>: one country, one year, one return series. "
-        f"That is the unit the bootstrap draws, and the only unit that can "
-        f"describe a country whose bonds are observed for over a century while "
-        f"its equity is generated throughout. Of the panel's "
-        f"{pr['cells']:,} return cells, <b>{pr['cells_simulated']:,} "
-        f"({pr['share_cells_simulated']:.1%}) are simulated</b>. Because the "
-        f"bootstrap draws countries in proportion to their history length, "
-        f"the same share of a simulated lifetime's return draws never "
-        f"happened. The share is not constant: it rises to "
-        f"{pr['share_simulated_recent']:.0%} over {pr['recent_era']}, because "
-        f"the generated countries enter at documented market-inception dates "
-        f"while the observed sixteen do not grow in number."))
-    out.append(ctx.p(
-        f"Counting whole countries instead is coarser and worse: "
-        f"{pr['n_simulated']} of {pr['n_countries']} have no observed returns "
-        f"at all, a further {pr['n_partial']} have observed rates and "
-        f"simulated equity, and only {pr['n_observed']} are observed "
-        f"throughout — which puts {pr['share_simulated']:.1%} of country-years "
-        f"on the generated side. The gap between that figure and "
-        f"{pr['share_cells_simulated']:.1%} is what Section 3.6.1 recovered."))
+        "The database is used here through a redistributed copy rather than "
+        "obtained from its compilers, which deserves more scepticism than a "
+        "citation. This section asks whether the file is genuine, reports one "
+        "test it does not pass, and describes three bodies of recorded data "
+        "that sit in the sources and stay out of the model."))
 
-    out.append(ctx.h3("3.6.1 What we recovered rather than generated"))
+    out.append(ctx.h3("3.6.1 Why the panel stops at sixteen"))
     out.append(ctx.p(
-        "The audit's first consequence was to send us back through the "
-        "primary files for series the pipeline was not reading. Simulating a "
-        "series a source can supply is indefensible, and it turned out we "
-        "were doing exactly that."))
-    out.append(ctx.p(
-        f"Four countries have real interest-rate histories in the sources "
-        f"even though their return series are absent. Canada and Ireland sit "
-        f"in the macro half of the Jordà–Schularick–Taylor database with a "
-        f"long-term bond yield, a short rate and a consumer price index but "
-        f"no total-return series — a property of the published database, "
-        f"whose return series cover sixteen countries and not the eighteen in "
-        f"its macro file. New Zealand and Austria carry a long yield in the "
-        f"Clio-Infra bond-yield file. A bond total return follows from a yield "
-        f"and a duration, "
-        f"<i>r<sub>t</sub> = y<sub>t−1</sub> + D(y<sub>t−1</sub> − "
-        f"y<sub>t</sub>)</i>; a bill return is a lagged short rate; and "
-        f"deflating both by that country's own price index gives a real return "
-        f"that was measured rather than drawn."))
-    if len(recovered):
+        "The boundary is set by equity. Four countries outside the panel do "
+        "carry recorded interest-rate histories: long-term yields and short "
+        "rates in the macro file for Canada and Ireland, Clio-Infra long "
+        "yields for Austria and New Zealand. Those are enough to build real "
+        "bond and bill returns — a bond total return follows from a yield and "
+        "a duration, <i>r<sub>t</sub> = y<sub>t−1</sub> + D(y<sub>t−1</sub> − "
+        "y<sub>t</sub>)</i>; a bill return is a lagged short rate; and "
+        "deflating both by that country\u2019s own price index gives a real "
+        "return that was measured rather than modelled."))
+    if len(unusable):
         out.extend(ctx.table(
-            rows_from(recovered,
+            rows_from(unusable,
                       ["country", "series", "source", "first_year",
                        "last_year", "observed_years"],
                       ["Country", "Series", "Source", "From", "To",
@@ -729,51 +742,35 @@ def section_data(ctx: Any) -> List[Flowable]:
                        "first_year": lambda v: f"{int(v)}",
                        "last_year": lambda v: f"{int(v)}",
                        "observed_years": lambda v: f"{int(v):,}"}),
-            "Series rebuilt from published rates rather than simulated",
-            note=(f"{pr['recovered_years']:,} country-years across "
-                  f"{pr['n_partial']} countries stop being model output. "
-                  f"Nothing was recovered for equity, so the international-leg "
-                  f"share in Table 8 is unchanged."),
+            "Recorded series that exist and still cannot be used",
+            note=("Rebuilt from published rates and deflated by each "
+                  "country's own price index. None of these countries has an "
+                  "equity return series in any source available to us, which "
+                  "is why none is in the panel."),
             col_widths=[ctx.width * 0.17, ctx.width * 0.11, ctx.width * 0.38,
                         ctx.width * 0.10, ctx.width * 0.10,
                         ctx.width * 0.14]))
     out.append(ctx.p(
-        f"That converts <b>{pr['recovered_years']:,} country-years</b> from "
-        f"simulated to observed and cuts the simulated share of return cells "
-        f"to {pr['share_cells_simulated']:.1%}. Three constraints bound the "
-        f"exercise, and each one costs coverage. First, a real return needs a "
-        f"real deflator: a genuine nominal yield divided by a drawn price "
-        f"index is not an observation, so a country-year counts as observed "
-        f"only where its own inflation is empirical too. Second, "
-        f"<b>no equity was recovered</b>, because no source available to us "
-        f"carries an equity return for these countries — which is why they are "
-        f"Tier B rather than Tier A, and why the international-leg number "
-        f"below is untouched by any of this. Third, the reconstruction is a "
-        f"first-order approximation: it ignores convexity and assumes a "
-        f"constant modified duration, so the recovered series are smoother "
-        f"than a true total-return index. They understate bond volatility; "
-        f"they do not invent bond returns."))
-    out.append(ctx.p(
-        "No new <i>external</i> source could be added. Outbound access from "
-        "the build environment is governed by a policy that denies the "
-        "macrohistory host itself along with every other bulk macro-data "
-        "provider we tested, and guessing at redistributed mirrors would have "
-        "reproduced precisely the unverifiable provenance this section exists "
-        "to warn about. Sixteen countries is therefore the ceiling on observed "
-        "<i>equity</i> in this replication, and we state it as a limit rather "
-        "than work around it."))
+        "None of it gets them into the panel. A lifecycle investor needs a "
+        "domestic <i>equity</i> return, and the macro file carries none for "
+        "these four — not even the interpolated variants it supplies "
+        "elsewhere. Rates alone cannot support a portfolio choice. That is why "
+        "the panel is sixteen countries and not twenty."))
+
 
     hs = pr.get("housing", {})
     if hs.get("countries"):
-        out.append(ctx.h3("3.6.2 The asset class we measure and do not use"))
+        out.append(ctx.h3("3.6.2 The fourth asset class"))
         out.append(ctx.p(
             f"The macro file carries a fourth asset the source project "
-            f"measured and no result in this paper uses: <b>housing total "
-            f"returns</b>, empirical for all {hs['countries']} observed "
-            f"countries over {hs['country_years']:,} country-years "
-            f"({hs['first_year']}–{hs['last_year']}). It is the largest block "
-            f"of genuine data in our sources that nothing here reads, so we "
-            f"audit it rather than leave it unmentioned."))
+            f"measured: <b>housing total returns</b>, empirical for all "
+            f"{hs['countries']} observed countries over "
+            f"{hs['country_years']:,} country-years "
+            f"({hs['first_year']}–{hs['last_year']}). It is held out of the "
+            f"headline results, which use the same four-asset set as the paper "
+            f"being replicated, and audited here so the reason is visible "
+            f"rather than assumed. Section 16 then puts it into the "
+            f"opportunity set and prices it."))
         out.extend(ctx.table(
             rows_from(hs["frame"],
                       ["country", "years", "mean", "sd", "sd_desmoothed",
@@ -803,7 +800,7 @@ def section_data(ctx: Any) -> List[Flowable]:
             f"{f2(hs['sd'] / hs['equity_sd'], 2)}. Equity-like returns at that "
             f"volatility would look dominant in any mean-variance comparison "
             f"in this paper, which is precisely why the series deserves "
-            f"scrutiny rather than adoption."))
+            f"scrutiny before adoption."))
         out.append(ctx.p(
             f"A house price index is built from appraisals and sparse "
             f"transactions, and that smooths it. The median lag-one "
@@ -820,18 +817,19 @@ def section_data(ctx: Any) -> List[Flowable]:
             "an unlevered, untaxed, frictionless total return on an entire "
             "national housing stock, with no transaction costs, no vacancy, no "
             "maintenance and none of the single-property concentration a real "
-            "household bears. Treating it as a fourth sleeve would overstate "
-            "what a household can buy and would change the headline result. We "
-            "measure it, record it, and leave it out — deliberately, and on "
-            "the record."))
+            "household bears. Adopting it as a fourth sleeve at face value "
+            "would therefore overstate what a household can buy. Section 16 "
+            "adds it anyway, but only after de-smoothing it and charging an "
+            "explicit annual holding cost — and it is the size of that cost, "
+            "not the raw return, that decides the answer."))
         out.extend(ctx.figure(
             "fig39_housing_smoothing",
             "Left: risk and return by country for housing as published, for "
             "housing with its own first-order smoothing undone (arrows), and "
             "for that country's domestic equity. Right: the lag-one "
             "autocorrelation that does the work. De-smoothing closes part of "
-            "the volatility gap and not all of it, which is why housing is "
-            "reported here rather than added to the investable set.",
+            "the volatility gap and not all of it, which is why the holding "
+            "cost of Section 16 has to carry the rest of the argument.",
             max_height=8.5 * cm))
 
     wg = pr.get("wages", {})
@@ -926,7 +924,7 @@ def section_data(ctx: Any) -> List[Flowable]:
             "we record it as a quantified limitation rather than apply it "
             "silently."))
 
-    out.append(ctx.h3("Is the primary source genuine?"))
+    out.append(ctx.h3("3.6.4 Is the source we kept genuine?"))
     out.append(ctx.p(
         "The workbook was obtained from a redistributed copy rather than "
         "downloaded from the compilers, so it is audited rather than "
@@ -958,7 +956,7 @@ def section_data(ctx: Any) -> List[Flowable]:
         f"everywhere to machine precision would be one whose components had "
         f"been back-solved from its totals."))
 
-    out.append(ctx.h3("One finding that does not pass"))
+    out.append(ctx.h3("3.6.5 One finding that does not pass"))
     out.append(ctx.p(
         f"The last five years of every equity series are smoother than that "
         f"country's own history. <b>All {pr['tail_smoother']} of "
@@ -979,80 +977,14 @@ def section_data(ctx: Any) -> List[Flowable]:
         "percent of the panel's country-years and cannot move a 68-year "
         "lifecycle result materially, but the finding is recorded rather than "
         "left for a reader to discover."))
-
-    out.append(ctx.h3("The finding that bears hardest on the result"))
-    out.append(ctx.p(
-        "Section 5.2 attributes the headline to <i>international</i> "
-        "diversification rather than to equity exposure as such. The "
-        "international leg is a leave-one-out average across every country "
-        "with data that year — which means it averages over the simulated "
-        "countries too."))
-    out.extend(ctx.table(
-        rows_from(contamination, ["era", "observations",
-                                  "mean_synthetic_share_of_intl_leg"],
-                  ["Era", "Country-years",
-                   "Mean simulated share of the international leg"],
-                  {"era": str, "observations": lambda v: f"{int(v):,}",
-                   "mean_synthetic_share_of_intl_leg": lambda v: pc(v, 1)}),
-        "How much of an observed investor's international leg is simulated",
-        note="Computed only for investors in the sixteen countries whose own "
-             "series are empirical. The leave-one-out construction means each "
-             "of them holds an average that includes every simulated country "
-             "active that year."))
-    out.append(ctx.p(
-        f"<b>For an investor in one of the sixteen observed countries the "
-        f"international leg is {pr['intl_simulated']:.0%} simulated on "
-        f"average, rising to {pr['intl_simulated_recent']:.0%} after 2000.</b> "
-        f"The mechanism the headline rests on is therefore partly "
-        f"diversification into markets that do not exist. That is the "
-        f"strongest statement of the problem this audit can make, and it is "
-        f"why the next test is the one that matters."))
-
-    out.append(ctx.h3("Does the result survive on observed data alone?"))
-    out.append(ctx.p(
-        "The pipeline is re-run on the sixteen countries with complete "
-        "empirical return series, with no simulated data anywhere — not in "
-        "the country draw and not in the international leg."))
-    out.extend(ctx.table(
-        rows_from(comparison, ["strategy", "cec_dev38", "cec_jst16",
-                               "difference_pct"],
-                  ["Strategy", "38-country panel", "16 observed countries",
-                   "Change (%)"],
-                  {"strategy": str, "cec_dev38": lambda v: f2(v, 4),
-                   "cec_jst16": lambda v: f2(v, 4),
-                   "difference_pct": lambda v: f2(v, 2)}),
-        "The headline strategies on the full panel and on observed data alone",
-        note="Certainty-equivalent consumption at the baseline risk aversion. "
-             "The observed-only panel is the 16 Jordà–Schularick–Taylor "
-             "countries carrying complete equity, bond, bill and price series."))
-    out.append(ctx.p(
-        f"<b>The result does not depend on the simulated data. It is "
-        f"understated by it.</b> The all-equity advantage over the "
-        f"target-date fund is {adv['dev38']:.1f}% on the 38-country panel and "
-        f"<b>{adv['jst16']:.1f}% on observed data alone</b> — larger by "
-        f"{adv['jst16'] - adv['dev38']:.1f} percentage points."))
-    out.append(ctx.p(
-        "The mechanism is straightforward once stated. The simulated "
-        "countries are generated from a factor model fitted to the observed "
-        "cross-section, so they carry that cross-section's average behaviour "
-        "and none of its idiosyncrasy. Averaging them into the international "
-        "leg makes it smoother and more correlated with the domestic leg than "
-        "a genuine cross-section of national markets would be, which "
-        "<i>reduces</i> the diversification benefit the result depends on. "
-        "Simulated data dilute the finding; they do not manufacture it."))
-    out.append(ctx.p(
-        "Two consequences run through the rest of this paper. The "
-        "observed-only panel is the one to believe, and it is reported "
-        "alongside the full panel wherever the headline appears. And the "
-        "country count is not the strength of the evidence: thirty-eight "
-        "sounds broader than sixteen, and for the return series it is not."))
     out.extend(ctx.figure(
         "fig38_data_provenance",
-        "Left: the panel's composition by era, with the simulated share "
-        "labelled. Centre: how much of an observed investor's international "
-        "leg is simulated. Right: the ratio of each country's 2016–2020 "
-        "equity-return standard deviation to its 1950–2015 standard "
-        "deviation — every country below one.",
+        "The variance test, read two ways. Left: each country's standard "
+        "deviation over the final five years as a ratio of its own 1950–2015 "
+        "standard deviation. Right: the two standard deviations plotted "
+        "against each other, with the 45-degree line. One country below the "
+        "line would be unremarkable; every country below it is a property of "
+        "the file rather than of the markets.",
         max_height=8.0 * cm))
 
     out.extend(ctx.figure(
@@ -1124,9 +1056,15 @@ def section_methods(ctx: Any) -> List[Flowable]:
         f"(<i>{cfg['bootstrap']['country_draw']}</i>) with probability "
         f"proportional to the length of that country's usable history "
         f"(<i>{cfg['bootstrap']['country_weighting']}</i>). Both choices are "
-        f"varied in the robustness analysis of Section 5.5, where the "
-        f"alternatives — redrawing the country at every block, and weighting "
-        f"countries uniformly — leave the ranking unchanged."))
+        f"varied in Appendix C: redrawing the country at every block, and "
+        f"weighting countries uniformly, both leave the ranking unchanged. "
+        f"The weighting choice has little room to bite here, because every "
+        f"country carries between {f.panel['min_years']} and "
+        f"{f.panel['max_years']} usable years — history weighting and uniform "
+        f"weighting assign nearly the same probabilities. The choice would "
+        f"matter on a panel with short histories, where a country covering "
+        f"only one era could otherwise speak as loudly as one covering a "
+        f"century and a half."))
 
     out.extend(ctx.table(
         rows_from(moments, ["series", "bootstrap_mean", "panel_pooled_mean",
@@ -1360,15 +1298,14 @@ def section_methods(ctx: Any) -> List[Flowable]:
     # -- 4.5 implementation ----------------------------------------------
     out.append(ctx.h2("4.5 Implementation and verification"))
     out.append(ctx.p(
-        f"The pipeline is implemented in Python with NumPy and pandas, "
-        f"organised as thirteen sequential steps behind a single entry point. "
+        f"The model is implemented in Python with NumPy and pandas. "
         f"Portfolio returns for a whole cohort are formed as a batched matrix "
         f"product and the wealth recursion runs vectorised across paths, which "
         f"is what makes a hundred thousand lifetimes per strategy — and the "
         f"tens of thousands of policy evaluations the optimisers require — "
         f"tractable on a single core."))
     out.append(ctx.p(
-        f"Correctness is enforced by {f.n_tests} unit tests. The "
+        f"Correctness is enforced by {f.n_tests} automated tests. The "
         f"load-bearing ones "
         f"are equivalence tests: the path-dependent engine used for flexible "
         f"retirement and conditional saving must reproduce the fixed-date "
@@ -1378,9 +1315,9 @@ def section_methods(ctx: Any) -> List[Flowable]:
         f"extension in this paper is built on a simulator that is asserted "
         f"equal to the one that produced the baseline."))
     out.append(ctx.p(
-        "Appendix D lists the module structure and the exact commands needed "
-        "to regenerate every number, figure and table in this paper from the "
-        "raw data."))
+        "Appendix D sets out how the computation is organised, what the test "
+        "suite establishes, and the discipline by which the prose in this "
+        "paper is held to the tables it describes."))
     return out
 
 
@@ -1413,7 +1350,6 @@ def section_baseline(ctx: Any) -> List[Flowable]:
     gamma = f.baseline_gamma
     dominance = f.table("dominance_check")
     swr = f.table("sensitivity_safe_withdrawal_rates")
-    tiers = f.table("results_by_country_tier")
     eq = f.strategy_row("balanced_all_equity")
     tdf = f.strategy_row("target_date_fund")
     dom = f.strategy_row("domestic_equity")
@@ -1537,10 +1473,10 @@ def section_baseline(ctx: Any) -> List[Flowable]:
              "criteria_lost_n": lambda v: f"{int(v)}",
              "strict_dominance": lambda v: "yes" if bool(v) else "no"}),
         "Distributional dominance of the 50/50 all-equity portfolio",
-        note="A tie is counted separately rather than as a loss; an earlier "
-             "version of this test counted ties against the challenger and "
-             "understated the result. The single tie in each row is the "
-             "zero-bequest floor, which several strategies reach."))
+        note="A tie is counted separately rather than as a loss, since "
+             "counting it either way would misstate the comparison. The "
+             "single tie in each row is the zero-bequest floor, which several "
+             "strategies reach."))
     out.extend(ctx.figure(
         "fig08_shortfall_probabilities",
         "Shortfall probabilities against a fixed consumption target. Measuring "
@@ -1590,68 +1526,31 @@ def section_baseline(ctx: Any) -> List[Flowable]:
         "used to define the sustainable rate.",
         max_height=8.0 * cm))
 
-    out.append(ctx.h2("5.5 Does the result depend on the synthetic countries?"))
+    out.append(ctx.h2("5.5 How the countries are drawn"))
     out.append(ctx.p(
-        f"Because {f.panel['n_simulated_equity']} of the "
-        f"{f.panel['n_countries']} countries have simulated equity rather than "
-        f"observed, the single most important robustness question is whether "
-        f"the result survives on the observed subset alone."))
-    out.extend(ctx.table(
-        rows_from(tiers.assign(label=tiers["strategy"].map(LABELS)),
-                  ["tier", "label", "n_paths", "cec_crra_gamma5", "prob_ruin",
-                   "median_bequest"],
-                  ["Tier", "Strategy", "Paths", "CEC γ=5", "P(ruin)",
-                   "Median bequest"],
-                  {"tier": str, "label": str,
-                   "n_paths": lambda v: f"{int(v):,}",
-                   "prob_ruin": lambda v: pc(v, 1),
-                   "median_bequest": lambda v: f2(v, 1)}),
-        "Results split by country tier",
-        note="Tier A countries have observed Jordà–Schularick–Taylor series; "
-             "Tier B has observed bonds and bills with simulated equity; "
-             "Tier C is simulated throughout. Paths are allocated by the "
-             "history-weighted country draw, so the split is uneven.",
-        font_size=7.2))
-    # Classified from the table rather than asserted: the direction of this
-    # comparison is the whole point of the subsection, so it must not be
-    # written down in advance of the numbers.
-    adv_a = _tier_adv(tiers, "A")
-    others = [t for t in ("B", "C") if (tiers["tier"] == t).any()]
-    adv_other = {t: _tier_adv(tiers, t) for t in others}
-    weaker = [t for t, v in adv_other.items() if v < adv_a]
-    survives = "does" if adv_a > 0 else "does not"
-    if adv_other and len(weaker) == len(adv_other):
-        direction = "<i>larger</i>"
-        reading = ("The simulated countries dilute the result rather than "
-                   "creating it, which is the direction one would expect if "
-                   "the factor model smooths away national idiosyncrasy.")
-    elif weaker:
-        direction = "<i>not uniformly larger</i>"
-        reading = (
-            "The comparison is mixed: the advantage is larger than on Tier "
-            + ", ".join(weaker) + " and smaller elsewhere, so the simulated "
-            "countries cannot be said to create the result, but neither do "
-            "they uniformly dilute it.")
-    else:
-        direction = "<i>smaller</i>"
-        reading = ("This runs against the reading elsewhere in this section "
-                   "and is reported as it stands: on these paths the "
-                   "simulated countries strengthen rather than dilute the "
-                   "advantage, and the observed subset is the weaker case.")
+        f"Two choices in the sampler decide how the cross-section enters a "
+        f"simulated life, and neither is obviously right. A lifetime's "
+        f"domestic country can be drawn once and held, or redrawn at every "
+        f"block; and countries can be weighted by the length of their recorded "
+        f"history or treated as equally likely. Appendix C reports both "
+        f"variants in full. Neither reverses a ranking."))
     out.append(ctx.p(
-        f"The answer is that it {survives}. On Tier A paths alone the "
-        f"all-equity portfolio's certainty equivalent is "
-        f"{f2(_tier_cec(tiers, 'A', 'balanced_all_equity'), 3)} against "
-        f"{f2(_tier_cec(tiers, 'A', 'target_date_fund'), 3)} for the "
-        f"target-date fund — an advantage of {adv_a:.1f}%, which is "
-        f"{direction} than on the tiers whose equity was generated ("
-        + ", ".join(f"{v:.1f}% on Tier {t}" for t, v in adv_other.items())
-        + f"). {reading}"))
+        f"The weighting choice has little room to bite, because every country "
+        f"in the panel carries between {f.panel['min_years']} and "
+        f"{f.panel['max_years']} usable years — history weighting and uniform "
+        f"weighting assign nearly the same probabilities. It would matter on a "
+        f"panel containing short histories, where a country covering a single "
+        f"era could otherwise speak as loudly as one covering a century and a "
+        f"half."))
     out.append(ctx.p(
-        "Two further sampling variations are reported in Appendix C: drawing "
-        "the country afresh at every block rather than once per lifetime, and "
-        "weighting countries uniformly rather than by history length. Neither "
-        "reverses any ranking."))
+        f"Redrawing the country at every block is the more consequential "
+        f"variant, and it is the design the original study uses. It "
+        f"implicitly assumes an investor can be resident in a different "
+        f"country every decade, which is not a description of anybody, but it "
+        f"pools the cross-section more aggressively and so gives the "
+        f"international mechanism its most favourable reading. Holding the "
+        f"country fixed for a lifetime — the specification behind every "
+        f"headline number here — is the more conservative of the two."))
 
     out.extend(ctx.figure(
         "fig10_wealth_fan",
@@ -1661,16 +1560,6 @@ def section_baseline(ctx: Any) -> List[Flowable]:
         "bottom, it is lower throughout.",
         max_height=8.5 * cm))
     return out
-
-
-def _tier_cec(tiers: pd.DataFrame, tier: str, strategy: str) -> float:
-    block = tiers[(tiers["tier"] == tier) & (tiers["strategy"] == strategy)]
-    return float(block["cec_crra_gamma5"].iloc[0])
-
-
-def _tier_adv(tiers: pd.DataFrame, tier: str) -> float:
-    return (_tier_cec(tiers, tier, "balanced_all_equity")
-            / _tier_cec(tiers, tier, "target_date_fund") - 1.0) * 100.0
 
 
 # ---------------------------------------------------------------------------
@@ -2227,7 +2116,7 @@ def section_allocation(ctx: Any) -> List[Flowable]:
         f"Solved and benchmark schedules at risk aversion {gamma:g}",
         note="\"Full simplex optimal\" is this section's solution. The "
              "comparison also includes the schedules solved in Section 8 under "
-             "the 70/30 restriction, where the pipeline has them available."))
+             "the 70/30 restriction, where those are available."))
     out.append(ctx.p(
         f"The solved schedule leads the best fixed benchmark "
         f"({str(a['runner_up']).replace('_', ' ')}) by "
@@ -2701,7 +2590,8 @@ def section_hedging(ctx: Any) -> List[Flowable]:
         "parameter of interest. Hedging is not free — it consumes bid-offer, "
         "collateral and roll — and the question a practitioner faces is not "
         "\"is hedging good?\" but \"is hedging good at the price I can get it "
-        "for?\""))
+        "for?\" Setting the cost to zero therefore gives the decision its "
+        "most favourable possible reading, which is where we start."))
 
     out.extend(ctx.table(
         rows_from(breakeven, ["hedge_ratio", "unhedged_cec",
@@ -2712,46 +2602,57 @@ def section_hedging(ctx: Any) -> List[Flowable]:
                   {"hedge_ratio": lambda v: pc(v, 0),
                    "gain_at_zero_cost_pct": lambda v: f2(v, 3),
                    "break_even_annual_cost": lambda v: (
-                       "never" if not np.isfinite(v) or pd.isna(v)
+                       "never" if pd.isna(v) or not np.isfinite(float(v))
                        else pc(v, 2))}),
         "Break-even annual hedging cost by hedge ratio",
         note="The break-even cost is the annual charge at which hedging "
              "exactly offsets its benefit. \"Never\" means the hedged "
              "position loses even at zero cost, so no price makes it "
              "worthwhile."))
-    out.append(ctx.p(
-        f"At a {pc(float(be25['hedge_ratio']), 0)} hedge ratio and zero cost "
-        f"the gain is {f2(float(be25['gain_at_zero_cost_pct']), 2)}% of "
-        f"certainty-equivalent consumption, and the break-even annual cost is "
-        f"{pc(float(be25['break_even_annual_cost']), 2)}. That is a thin "
-        f"margin. A fully hedged position "
-        f"({pc(float(full['hedge_ratio']), 0)}) is worse than unhedged even "
-        f"before any cost is charged — it gives up "
-        f"{f2(abs(float(full['gain_at_zero_cost_pct'])), 2)}% at zero cost — "
-        f"so there is no price at which it makes sense."))
-    out.append(ctx.p(
-        f"Tracing the optimal hedge ratio as a function of cost makes the "
-        f"practical conclusion sharp: the optimum is "
-        f"{pc(float(free['optimal_hedge_ratio']), 0)} when hedging is free, "
-        f"and it collapses to zero once the annual cost exceeds roughly "
-        f"{pc(float(optimal[optimal['optimal_hedge_ratio'] == 0.0]['hedge_cost'].min()), 2)}. "
-        f"Since realistic all-in hedging costs for a retail investor sit above "
-        f"that threshold, the model's answer is that a lifecycle investor "
-        f"should not hedge the international leg at all."))
-    out.append(ctx.p(
-        "The mechanism is worth stating because it is not the usual one. "
-        "Currency exposure does add volatility, and over a single year hedging "
-        "reduces it. But over a 68-year horizon the real exchange rate is "
-        "mean-reverting and partially offsets the equity shock — a domestic "
-        "crisis tends to come with a weaker home currency, which raises the "
-        "home-currency value of foreign assets exactly when they are needed. "
-        "Hedging removes that offset. The cost is paid in the left tail, "
-        "which is where the certainty equivalent is most sensitive."))
+    # Classified from the table: whether any ratio pays at zero cost is the
+    # whole question, and it must not be written down in advance of the answer.
+    payers = breakeven[breakeven["gain_at_zero_cost_pct"] > 0.0]
+    best_free = float(free["optimal_hedge_ratio"])
+    if payers.empty:
+        worst = breakeven.loc[breakeven["gain_at_zero_cost_pct"].idxmin()]
+        least = breakeven.loc[breakeven["gain_at_zero_cost_pct"].idxmax()]
+        out.append(ctx.p(
+            f"<b>The answer here is that no price is low enough.</b> Every "
+            f"hedge ratio tested loses certainty-equivalent consumption "
+            f"before a single basis point of cost is charged. The mildest is "
+            f"a {pc(float(least['hedge_ratio']), 0)} hedge, which gives up "
+            f"{f2(abs(float(least['gain_at_zero_cost_pct'])), 2)}%; the "
+            f"fully hedged position gives up "
+            f"{f2(abs(float(worst['gain_at_zero_cost_pct'])), 2)}%. The loss "
+            f"grows monotonically in the ratio, so there is no break-even cost "
+            f"to report: the decision is settled at zero, and adding a "
+            f"realistic charge only widens the gap."))
+        out.append(ctx.p(
+            f"Tracing the optimal ratio as a function of cost adds nothing, "
+            f"because it is {pc(best_free, 0)} at every cost including free. "
+            f"For a lifecycle investor holding this international leg, the "
+            f"model's answer is not \u201chedge if you can get it cheaply\u201d "
+            f"but \u201cdo not hedge.\u201d"))
+    else:
+        out.append(ctx.p(
+            f"At a {pc(float(be25['hedge_ratio']), 0)} hedge ratio and zero "
+            f"cost the gain is "
+            f"{f2(float(be25['gain_at_zero_cost_pct']), 2)}% of "
+            f"certainty-equivalent consumption, with a break-even annual cost "
+            f"of {pc(float(be25['break_even_annual_cost']), 2)}. A fully "
+            f"hedged position ({pc(float(full['hedge_ratio']), 0)}) gives up "
+            f"{f2(abs(float(full['gain_at_zero_cost_pct'])), 2)}% even before "
+            f"cost, so there is no price at which it makes sense."))
+
     out.extend(ctx.figure(
         "fig23_currency_hedging",
-        "Currency hedging by ratio and by annual cost. The advantage of "
-        "hedging is small and positive at low ratios and zero cost, and turns "
-        "negative quickly in both dimensions.",
+        "Left: the certainty-equivalent cost of hedging by ratio, at five "
+        "annual hedging costs; every line is below zero, so hedging loses even "
+        "when free. Centre: where the loss lands — fifth-percentile retirement "
+        "consumption falls monotonically in the hedge ratio, and the certainty "
+        "equivalent weighs that tail heavily. Right: why — hedging lowers the "
+        "standalone volatility of the foreign sleeve up to a half hedge, but "
+        "raises its correlation with the home market over the same range.",
         max_height=8.5 * cm))
     return out
 
@@ -3678,6 +3579,523 @@ def _gamma_net(by_gamma: pd.DataFrame, gamma: float) -> float:
 
 
 # ---------------------------------------------------------------------------
+# 15. Starting valuation
+# ---------------------------------------------------------------------------
+def section_valuation(ctx: Any) -> List[Flowable]:
+    f = ctx.f
+    predictive = f.table("valuation_predictive_power").sort_values(
+        "horizon_years")
+    buckets = f.table("valuation_by_bucket")
+    advantage = f.table("valuation_advantage")
+    distribution = f.table("valuation_buckets")
+
+    short = predictive.iloc[0]
+    long = predictive.iloc[-1]
+    long_h = int(long["horizon_years"])
+    multiple = float((1.0 + float(long["gap"])) ** long_h)
+
+    out: List[Flowable] = [ctx.h1("15. What the Market Costs When You Start")]
+    out.append(ctx.p(
+        "Every result so far treats one starting point as interchangeable "
+        "with another. The bootstrap draws calendar windows without regard to "
+        "how expensive equities were when the window opened, so a lifetime "
+        "that begins at a market peak is statistically identical to one that "
+        "begins at a trough. That is a strong assumption, and it is the one a "
+        "reader is least able to accept: they know what today's market costs, "
+        "and the model does not."))
+    out.append(ctx.p(
+        "This section supplies the missing state variable. It is constrained "
+        "throughout by a single rule — nothing may condition on information "
+        "the investor could not have had at the moment they started."))
+
+    out.append(ctx.h2("15.1 The observable, and why it is not the obvious one"))
+    out.append(ctx.p(
+        "The natural candidate is the dividend-price ratio the source "
+        "workbook records. It cannot be used directly. That series is a "
+        "dividend <i>return</i> — the dividend paid during year t over the "
+        "price at the start of it — and its numerator is unknown until the "
+        "year is over. Conditioning on it would build look-ahead into every "
+        "number that followed."))
+    out.append(ctx.p(
+        "What an investor standing at the start of year t can actually see is "
+        "the trailing yield on the current price, D(t-1) / P(t-1), which we "
+        "recover as the previous year's dividend return divided by one plus "
+        "the previous year's capital gain. Both terms are last year's, so the "
+        "value is fully formed before the year being predicted begins."))
+    out.append(ctx.p(
+        "We verify this structurally rather than statistically, because a "
+        "correlation cannot tell the two cases apart: a yield built from the "
+        "current year's dividend would predict the current year's return, and "
+        "a correctly lagged one still correlates with the <i>previous</i> "
+        "year's return because a bad year lowers the price in the "
+        "denominator. Both are expected; neither distinguishes a leak from a "
+        "signal. Instead we overwrite everything the workbook records for a "
+        "probe year, rebuild the series, and confirm that the row for that "
+        "year does not move. It does not, at six probe years spread across "
+        "the panel, and the pipeline aborts rather than reporting anything if "
+        "that check ever fails."))
+    out.append(ctx.p(
+        "The international leg needs its own answer, since it holds many "
+        "markets at once. We use the equal-weighted leave-one-out mean of the "
+        "other countries' yields rather than the median, because the leg "
+        "holds equal money in each market and the dividend yield of an "
+        "equally weighted portfolio is the plain mean of its constituents'. "
+        "The median is retained as a robustness check on the pull of any one "
+        "distressed market."))
+
+    out.append(ctx.h2("15.2 The yield forecasts returns"))
+    out.extend(ctx.table(
+        rows_from(predictive,
+                  ["horizon_years", "observations", "correlation",
+                   "forward_return_expensive", "forward_return_cheap", "gap"],
+                  ["Horizon (years)", "Observations", "Correlation",
+                   "Started expensive (%)", "Started cheap (%)", "Gap (pp)"],
+                  {"horizon_years": lambda v: f"{int(v)}",
+                   "observations": lambda v: f"{int(v):,}",
+                   "correlation": lambda v: f2(v, 2),
+                   "forward_return_expensive": lambda v: f2(float(v) * 100, 2),
+                   "forward_return_cheap": lambda v: f2(float(v) * 100, 2),
+                   "gap": lambda v: f2(float(v) * 100, 2)}),
+        "Trailing dividend yield and subsequent real equity returns",
+        note="Annualised real return over the years following the "
+             "observation, split at the terciles of the yield distribution. "
+             "The conditioning in this section is only worth doing if these "
+             "gaps are positive."))
+
+    # Classified from the table, not asserted: the whole section rests on it.
+    predicts = bool((predictive["gap"] > 0).all())
+    strengthens = float(long["correlation"]) > float(short["correlation"])
+    if not predicts:
+        out.append(ctx.p(
+            "<b>The yield does not separate outcomes at every horizon.</b> "
+            "The buckets below therefore split lifetimes that are not "
+            "different in expectation, and the results should be read as a "
+            "null rather than as a valuation effect."))
+    else:
+        out.append(ctx.p(
+            f"The relationship is present at every horizon"
+            + (" and strengthens with it" if strengthens else "")
+            + f". Over {long_h} years the correlation is "
+            f"{f2(float(long['correlation']), 2)} against "
+            f"{f2(float(short['correlation']), 2)} at "
+            f"{int(short['horizon_years'])} year, and the third of history "
+            f"that began cheapest returned "
+            f"{f2(float(long['gap']) * 100, 2)} percentage points a year more "
+            f"than the third that began dearest. Compounded over "
+            f"{long_h} years that is a factor of {f2(multiple, 2)} on "
+            f"terminal wealth — not a rounding difference."))
+
+    out.append(ctx.h2("15.3 Which tercile, on what was knowable at the time"))
+    out.append(ctx.p(
+        "A look-ahead-free yield is only half of an implementable signal. The "
+        "<i>boundaries</i> are the other half, and the obvious way to draw "
+        "them fails: terciles of the pooled sample put the cut-points at "
+        "fixed values estimated from 1890 through 2020, so a lifetime "
+        "beginning in 1910 is called cheap or dear against a threshold that "
+        "already knows what happened a century later. Nobody in 1910 could "
+        "have known which tercile they were standing in."))
+    out.append(ctx.p(
+        "We therefore compute the boundaries recursively. A lifetime "
+        "beginning in year t is ranked against every country-year strictly "
+        "before t — the distribution its own investor could have seen — with "
+        "a minimum-history requirement below which lifetimes are left "
+        "unclassified rather than classified badly."))
+
+    try:
+        bounds = f.table("valuation_expanding_boundaries")
+        decades = bounds[bounds["year"] % 20 == 0]
+        if decades.empty:
+            decades = bounds
+        out.extend(ctx.table(
+            rows_from(decades,
+                      ["year", "prior_country_years",
+                       "cut_expensive_middling", "cut_middling_cheap"],
+                      ["Lifetime begins", "Country-years of history",
+                       "Expensive / middling", "Middling / cheap"],
+                      {"year": lambda v: f"{int(v)}",
+                       "prior_country_years": lambda v: f"{int(v):,}",
+                       "cut_expensive_middling": lambda v: pc(v, 2),
+                       "cut_middling_cheap": lambda v: pc(v, 2)}),
+            "Tercile boundaries an investor could have computed at the time",
+            note="Quantiles of every country-year strictly before the "
+                 "lifetime's first year. The pooled boundaries used by a "
+                 "hindsight split are fixed at a single pair of values for "
+                 "the whole sample."))
+        first, last = bounds.iloc[0], bounds.iloc[-1]
+        out.append(ctx.p(
+            f"The boundaries move a long way — the expensive/middling cut "
+            f"falls from {pc(float(first['cut_expensive_middling']), 2)} in "
+            f"{int(first['year'])} to "
+            f"{pc(float(last['cut_expensive_middling']), 2)} by "
+            f"{int(last['year'])}. That movement is the whole point: early "
+            f"cohorts faced higher yields, and ranking them against a sample "
+            f"dragged down by the low-yield modern era makes them look "
+            f"cheaper than they could possibly have known themselves to be."))
+    except FileNotFoundError:
+        pass
+
+    out.append(ctx.p(
+        "Two consequences follow, and both are results rather than defects. "
+        "The correction is <b>large</b>: the pooled and recursive labellings "
+        "disagree on close to a third of the lifetimes both can classify. And "
+        "the buckets no longer come out balanced — a majority of lifetimes "
+        "land in the expensive third. Terciles of a fixed sample are balanced "
+        "by construction; terciles of an expanding one are not. Yields fell "
+        "across this panel, so a lifetime drawn in year t typically begins "
+        "below the average of everything before t and is expensive relative "
+        "to its own history. An investor running this rule in real time would "
+        "have called the market dear for most of a century while yields went "
+        "on falling — which is precisely the gap between a signal fitted to a "
+        "sample and one a person could have executed."))
+
+    out.append(ctx.h2("15.4 What it does to the allocation decision"))
+    out.append(ctx.p(
+        "Each simulated lifetime takes the blended portfolio yield at the "
+        "country-year its first block opened, and is bucketed against the "
+        "boundaries in force that year. Only the first block carries a "
+        "starting condition: the rest of the chain is the future, which no "
+        "investor chooses."))
+    out.extend(ctx.table(
+        rows_from(advantage,
+                  ["bucket", "n_paths", "challenger_cec", "incumbent_cec",
+                   "advantage_pct", "challenger_ruin", "incumbent_ruin"],
+                  ["Started", "Lifetimes", "All-equity CEC",
+                   "Glide-path CEC", "Advantage (%)", "All-equity ruin (%)",
+                   "Glide-path ruin (%)"],
+                  {"n_paths": lambda v: f"{int(v):,}",
+                   "challenger_cec": lambda v: f2(v, 3),
+                   "incumbent_cec": lambda v: f2(v, 3),
+                   "advantage_pct": lambda v: f2(v, 2),
+                   "challenger_ruin": lambda v: f2(float(v) * 100, 2),
+                   "incumbent_ruin": lambda v: f2(float(v) * 100, 2)}),
+        "The headline comparison, conditioned on starting valuation"))
+
+    lead = advantage["advantage_pct"]
+    holds = bool((lead > 0).all())
+    spread = float(lead.max() - lead.min())
+    if holds:
+        out.append(ctx.p(
+            f"<b>The ranking survives at every starting valuation.</b> The "
+            f"all-equity portfolio leads the glide path in all "
+            f"{len(lead)} buckets, and the advantage varies by only "
+            f"{f2(spread, 2)} percentage points across them. An investor "
+            f"starting at a market peak faces the same allocation answer as "
+            f"one starting at a trough."))
+    else:
+        losers = advantage[advantage["advantage_pct"] <= 0]
+        out.append(ctx.p(
+            f"<b>The ranking does not survive conditioning.</b> The all-equity "
+            f"portfolio loses in "
+            f"{', '.join(str(b) for b in losers['bucket'])}, which is the "
+            f"exception this section exists to look for and is reported here "
+            f"rather than buried."))
+
+    out.append(ctx.p(
+        "What does change is the level. The valuation an investor starts at "
+        "does not tell them what to hold; it tells them what to expect from "
+        "holding it. That distinction matters for planning — a withdrawal "
+        "rate calibrated on unconditional averages is calibrated on a mixture "
+        "of starting points, most of which are cheaper than the one a reader "
+        "in an expensive market actually faces."))
+
+    out.extend(ctx.figure(
+        "fig40_starting_valuation",
+        "Left: annualised real equity returns following cheap and expensive "
+        "starting yields, by horizon, with the correlation printed above each "
+        "pair. Centre: the distribution of blended starting dividend yields "
+        "across the panel's country-years, with the most recent United States "
+        "observation marked so a reader can place themselves in it. Centre "
+        "right: the all-equity advantage over the glide path within each "
+        "valuation bucket (bars, left axis) against the level of "
+        "certainty-equivalent consumption it wins at (line, right axis) — the "
+        "advantage is flat and the level is not, which is the section's whole "
+        "result. Far right: the tercile boundaries as an investor could have "
+        "computed them at each date, drifting down across the century; a "
+        "pooled split replaces both lines with a single pair of values and is "
+        "what the recursive construction exists to avoid.",
+        max_height=8.0 * cm))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# 16. Housing
+# ---------------------------------------------------------------------------
+def section_housing(ctx: Any) -> List[Flowable]:
+    f = ctx.f
+    audit = f.table("housing_desmoothing_audit")
+    sweep = f.table("housing_cost_sweep")
+    five = sweep[sweep["investable_set"] == "five assets"].sort_values(
+        "holding_cost")
+    control = sweep[sweep["investable_set"] == "four assets"].iloc[0]
+    free = five.iloc[0]
+    dearest = five.iloc[-1]
+
+    from src.housing import break_even_cost
+    break_even = break_even_cost(five)
+
+    out: List[Flowable] = [ctx.h1("16. Housing as a Fifth Asset")]
+    out.append(ctx.p(
+        "The historical sources behind this study measure four asset classes. "
+        "Three of them — equity, bonds and bills — form the investable set "
+        "everywhere above. The fourth is housing, measured just as carefully "
+        f"across {int(len(audit))} countries and "
+        f"{int(audit['years_raw'].sum()):,} country-years, and excluded from "
+        "every result so far. This section asks what including it would do."))
+    out.append(ctx.p(
+        "Two obstacles stand in the way, and both are addressed rather than "
+        "assumed away."))
+
+    out.append(ctx.h2("16.1 The index is smoothed"))
+    out.append(ctx.p(
+        "House prices come from transactions and valuations rather than from "
+        "a continuous auction, so this year's index still carries part of "
+        "last year's level. The published series therefore understates the "
+        "volatility an owner actually bears, and comparing it with a traded "
+        "series would flatter it — the classic error in this literature. We "
+        "invert the smoothing country by country using each country's own "
+        "estimated first-order coefficient, since index construction differs "
+        "between them and a pooled coefficient would over-correct the cleanly "
+        "measured series and under-correct the rest. A country whose returns "
+        "are not positively autocorrelated is left alone: there is nothing to "
+        "undo."))
+    out.extend(ctx.table(
+        rows_from(audit.sort_values("autocorrelation", ascending=False),
+                  ["iso", "years_raw", "autocorrelation", "mean_raw",
+                   "sd_raw", "sd_desmoothed", "equity_sd"],
+                  ["Country", "Years", "Lag-1 autocorr.", "Mean (%)",
+                   "SD published (%)", "SD de-smoothed (%)",
+                   "Equity SD (%)"],
+                  {"years_raw": lambda v: f"{int(v)}",
+                   "autocorrelation": lambda v: f2(v, 2),
+                   "mean_raw": lambda v: f2(float(v) * 100, 2),
+                   "sd_raw": lambda v: f2(float(v) * 100, 2),
+                   "sd_desmoothed": lambda v: f2(float(v) * 100, 2),
+                   "equity_sd": lambda v: f2(float(v) * 100, 2)}),
+        "Appraisal smoothing in the housing series, by country",
+        note="De-smoothing preserves the mean in expectation and restores the "
+             "variance the filter removed. Countries with non-positive "
+             "autocorrelation are unchanged."))
+    out.append(ctx.p(
+        "This leaves housing with an equity-like average return and "
+        "materially less volatility than equity even after the correction — "
+        "which is exactly why the second obstacle cannot be waved through."))
+
+    out.append(ctx.h2("16.2 A building costs money to hold"))
+    out.append(ctx.p(
+        "A share certificate does not. Rates, insurance, maintenance and "
+        "management fall on a property owner every year whether the asset "
+        "rose or fell, and the right figure is specific to the investor and "
+        "the jurisdiction. Rather than choose one, we sweep it: the whole "
+        "allocation is re-solved over the five-asset simplex at each annual "
+        "holding cost, charged on value rather than on gains. The source "
+        "builds its housing total return from capital gains plus a rental "
+        "yield it describes as net of running costs, so the swept figure is "
+        "best read as <i>additional</i> to whatever that construction already "
+        "deducts. If the published series is in fact grosser than that, the "
+        "break-even below overstates how much extra cost housing can bear; "
+        "the direction of that error is known even though its size is not, "
+        "which is why we report the whole curve rather than a single "
+        "recommended weight."))
+    out.append(ctx.p(
+        "Housing is recorded for fewer country-years than equity is, so the "
+        "study runs on the intersection; filling the gaps would mean "
+        "inventing returns. The four-asset control is re-solved on that same "
+        "restricted panel, against the same lifetimes and the same income "
+        "draws, so the restriction cancels out of every comparison. Its own "
+        f"optimum is {pc(float(control['mean_dom_eq']), 0)} domestic equity "
+        f"and {pc(float(control['mean_intl_eq']), 0)} international."))
+    out.append(ctx.p(
+        "Housing enters as a <b>domestic</b> asset: each simulated investor "
+        "holds their own country's housing index, drawn on the same calendar "
+        "years, countries and blocks as their equity and bonds, so the "
+        "cross-asset correlation the bootstrap exists to preserve is "
+        "preserved. There is no international housing sleeve — people buy "
+        "property where they live, and the leave-one-out construction that "
+        "gives equity a foreign leg has no counterpart a household could "
+        "execute in bricks."))
+
+    out.extend(ctx.table(
+        rows_from(five,
+                  ["holding_cost", "mean_housing", "mean_dom_eq",
+                   "mean_intl_eq", "mean_bond", "mean_bill", "advantage_pct"],
+                  ["Holding cost (%)", "Housing (%)", "Dom. equity (%)",
+                   "Intl. equity (%)", "Bonds (%)", "Bills (%)",
+                   "Gain over four assets (%)"],
+                  {"holding_cost": lambda v: f2(float(v) * 100, 1),
+                   "mean_housing": lambda v: f2(float(v) * 100, 1),
+                   "mean_dom_eq": lambda v: f2(float(v) * 100, 1),
+                   "mean_intl_eq": lambda v: f2(float(v) * 100, 1),
+                   "mean_bond": lambda v: f2(float(v) * 100, 1),
+                   "mean_bill": lambda v: f2(float(v) * 100, 1),
+                   "advantage_pct": lambda v: f2(v, 2)}),
+        "The optimal portfolio at each annual housing holding cost",
+        note="One allocation held for life, re-solved at each cost under "
+             "common random numbers, so a difference between rows is the cost "
+             "and nothing else."))
+
+    wanted_free = float(free["mean_housing"]) > 0.01
+    if not wanted_free:
+        out.append(ctx.p(
+            "<b>Housing earns no place in the portfolio at any price, "
+            "including free.</b> Once the smoothing is undone, the "
+            "de-smoothed series is dominated by assets the investor can "
+            "already hold."))
+    elif np.isfinite(break_even):
+        out.append(ctx.p(
+            f"<b>Housing is worth holding below an annual cost of "
+            f"{pc(break_even, 1)} and not above it.</b> Offered free it takes "
+            f"{pc(float(free['mean_housing']), 0)} of the portfolio and adds "
+            f"{f2(float(free['advantage_pct']), 1)}% to certainty-equivalent "
+            f"consumption over the best four-asset portfolio on the same "
+            f"paths. That gain erodes as the cost rises and vanishes at "
+            f"{pc(break_even, 1)} a year."))
+    else:
+        out.append(ctx.p(
+            f"<b>Housing survives every cost this sweep tried.</b> Even at "
+            f"{pc(float(dearest['holding_cost']), 0)} a year the optimum "
+            f"holds {pc(float(dearest['mean_housing']), 0)} of it. The "
+            f"break-even cost lies above the top of the grid and is not "
+            f"reported: extrapolating it would invent the number the sweep "
+            f"failed to find."))
+
+    moves = {
+        "domestic equity": float(free["mean_dom_eq"]) - float(dearest["mean_dom_eq"]),
+        "international equity": float(free["mean_intl_eq"]) - float(dearest["mean_intl_eq"]),
+        "bonds": float(free["mean_bond"]) - float(dearest["mean_bond"]),
+        "bills": float(free["mean_bill"]) - float(dearest["mean_bill"]),
+    }
+    loser = min(moves, key=moves.get)
+    if moves[loser] < -0.01:
+        untouched = [name for name, move in moves.items() if abs(move) < 0.01]
+        tail = (
+            f" {', '.join(untouched).capitalize()} "
+            f"{'is' if len(untouched) == 1 else 'are'} untouched at every "
+            f"cost, so housing is not substituting for the portfolio at "
+            f"large — it is competing with the single holding that already "
+            f"does this job."
+            if untouched else " The rest of the portfolio absorbs the "
+                              "remainder.")
+        out.append(ctx.p(
+            f"The weight comes out of <b>{loser}</b>, which gives up "
+            f"{pc(abs(moves[loser]), 0)} of the portfolio between the dearest "
+            f"case and the free one — more than any other asset." + tail))
+
+    out.append(ctx.h2("16.3 Two checks on that answer"))
+    out.append(ctx.p(
+        "The result rests on two choices that could each be driving it, so "
+        "both are tested rather than defended."))
+
+    try:
+        raw = f.table("housing_raw_sweep")
+        raw_five = raw[raw["investable_set"] == "five assets"].sort_values(
+            "holding_cost")
+        raw_free = float(raw_five.iloc[0]["mean_housing"])
+        raw_break = break_even_cost(raw_five)
+        overstates = raw_free > float(free["mean_housing"])
+        out.append(ctx.p(
+            f"<b>Is it an artefact of the de-smoothing?</b> Re-running the "
+            f"whole sweep on the raw, still-smoothed series puts "
+            f"{pc(raw_free, 0)} in housing at zero cost against "
+            f"{pc(float(free['mean_housing']), 0)} once the smoothing is "
+            f"undone"
+            + (f", with a break-even cost of {pc(raw_break, 2)} against "
+               f"{pc(break_even, 2)}"
+               if np.isfinite(raw_break) and np.isfinite(break_even) else "")
+            + ". "
+            + ("The naive treatment therefore <b>overstates</b> the case for "
+               "housing, which is the direction the mechanism predicts: "
+               "smoothing hides volatility, and hidden volatility reads as "
+               "risk-adjusted return. The correction is doing real work, and "
+               "it works against housing rather than for it."
+               if overstates else
+               "The naive treatment does <b>not</b> overstate the case here, "
+               "which is worth flagging because it is the opposite of what "
+               "the mechanism predicts.")))
+    except FileNotFoundError:
+        pass
+
+    try:
+        age = f.table("housing_age_varying")
+        best_gain = float(age["cec_gain_pct"].max())
+        worst_move = float(np.abs(age["housing_difference"]).max())
+        out.append(ctx.p(
+            f"<b>Is it an artefact of holding one allocation for life?</b> "
+            f"Re-solving the full age-by-asset schedule over the five-asset "
+            f"simplex — seeded at the constant-mix optimum, so the search can "
+            f"only improve on it — moves the mean housing weight by at most "
+            f"{pc(worst_move, 0)} of the portfolio and buys at most "
+            f"{f2(best_gain, 2)}% more certainty-equivalent consumption. "
+            + ("Age-variation adds essentially nothing here: the single "
+               "lifetime-long allocation is, to the resolution of this "
+               "search, the answer."
+               if best_gain <= 0.05 else
+               "That is small enough that the constant-mix figures above "
+               "stand as reported."
+               if worst_move < 0.10 and best_gain < 1.0 else
+               "That is large enough that the constant-mix figures above "
+               "should be read as indicative of the level rather than as the "
+               "optimum itself.")))
+        working = age["housing_working"].to_numpy()
+        retired = age["housing_retired"].to_numpy()
+        widest = int(np.argmax(np.abs(retired - working)))
+        if bool((retired > working).all()):
+            out.append(ctx.p(
+                f"The <i>shape</i> of that schedule is worth naming whatever "
+                f"its size. Housing is the one asset in this paper whose "
+                f"optimal weight <b>rises</b> with age: at a "
+                f"{pc(float(age['holding_cost'].iloc[widest]), 0)} holding "
+                f"cost the solved schedule holds "
+                f"{pc(float(working[widest]), 0)} of it while working and "
+                f"{pc(float(retired[widest]), 0)} in retirement. That is the "
+                f"opposite of the declining glide path Sections 8 and 9 "
+                f"searched for and did not find in equities, and it has a "
+                f"reading: a retiree drawing on the portfolio wants the asset "
+                f"with the best return per unit of volatility, and once the "
+                f"appraisal smoothing is undone housing is still that asset. "
+                f"It is also the sharpest illustration of this section's "
+                f"caveat — the schedule is only implementable by someone who "
+                f"can rebalance into and out of property annually, which is "
+                f"nobody."))
+        elif bool((retired < working).all()):
+            out.append(ctx.p(
+                f"The solved schedule holds <b>less</b> housing in retirement "
+                f"than while working — {pc(float(retired[widest]), 0)} against "
+                f"{pc(float(working[widest]), 0)} at the widest point — a "
+                f"conventional glide-path shape, in an asset the rest of this "
+                f"paper does not hold."))
+    except FileNotFoundError:
+        pass
+
+    out.append(ctx.h2("16.4 What this is not"))
+    out.append(ctx.p(
+        "The asset priced here is a liquid, continuously rebalanced, "
+        "nationally diversified claim on a country's housing stock, because "
+        "that is what a national house price index measures. <b>It is not a "
+        "house.</b> A single owner-occupied property is concentrated in one "
+        "street rather than spread across a country, cannot be rebalanced, is "
+        "bought with leverage, carries transaction costs measured in percent "
+        "rather than basis points, and pays part of its return as "
+        "accommodation rather than as cash. None of those differences is in "
+        "the numbers above. The section prices an asset class; it is not "
+        "advice about a mortgage."))
+    out.append(ctx.p(
+        "The cost is also modelled as a constant annual percentage of value. "
+        "Real holding costs are lumpy, partly fixed, and correlated with the "
+        "cycle. A flat charge is the tractable approximation, not the truth."))
+
+    out.extend(ctx.figure(
+        "fig41_housing_cost_sweep",
+        "Far left: the volatility the appraisal smoothing hides, by country, "
+        "against the same country's equity. Centre left: the optimal "
+        "portfolio at each holding cost. Centre right: what adding housing is "
+        "worth, with and without the de-smoothing correction. Far right: "
+        "which sleeve housing displaces as its cost falls.",
+        max_height=8.0 * cm))
+    return out
+
+
+
+# ---------------------------------------------------------------------------
 # 15. Discussion
 # ---------------------------------------------------------------------------
 def section_discussion(ctx: Any) -> List[Flowable]:
@@ -3687,8 +4105,8 @@ def section_discussion(ctx: Any) -> List[Flowable]:
     swr_eq = float(swr[swr["strategy"] == "balanced_all_equity"]
                    ["safe_withdrawal_rate_at_5%_ruin"].iloc[0])
 
-    out: List[Flowable] = [ctx.h1("15. Discussion")]
-    out.append(ctx.h2("15.1 What the replication does and does not establish"))
+    out: List[Flowable] = [ctx.h1("17. Discussion")]
+    out.append(ctx.h2("17.1 What the replication does and does not establish"))
     out.append(ctx.p(
         "The central claim reproduces cleanly and survives an unusually wide "
         "robustness exercise. That is a real result and it should update "
@@ -3700,10 +4118,13 @@ def section_discussion(ctx: Any) -> List[Flowable]:
         "draw from the developed-market twentieth century, then a diversified "
         "all-equity portfolio dominates a declining glide path on essentially "
         "every metric a lifecycle investor would use. What has <i>not</i> been "
-        "established is that the future will resemble that process. The "
-        "bootstrap has no view on valuations, on the secular decline in real "
-        "yields, or on whether the equity premium that the twentieth century "
-        "delivered is a structural feature or a realised surprise."))
+        "established is that the future will resemble that process. Section 15 "
+        "removes part of that gap by conditioning on the valuation a lifetime "
+        "starts at, which is the piece of the objection an investor can "
+        "actually observe. What remains outside the model is the rest of it: "
+        "the secular decline in real yields, and whether the equity premium "
+        "the twentieth century delivered is a structural feature or a "
+        "realised surprise."))
     out.append(ctx.p(
         "That distinction matters most for the sceptic's strongest objection, "
         "which we take seriously: the sample is a sample of survivors at the "
@@ -3713,7 +4134,7 @@ def section_discussion(ctx: Any) -> List[Flowable]:
         "outside the support of the sampler, and no amount of block "
         "resampling can put it back in."))
 
-    out.append(ctx.h2("15.2 The hierarchy of levers"))
+    out.append(ctx.h2("17.2 The hierarchy of levers"))
     out.append(ctx.p(
         "Reading the extensions together produces a ranking of what actually "
         "moves a retirement outcome, and it is not the ranking the industry's "
@@ -3744,13 +4165,23 @@ def section_discussion(ctx: Any) -> List[Flowable]:
         "one exception is worth noting: the leverage schedule is the only "
         "policy in this paper that an unconstrained search makes genuinely "
         "age-varying, and it declines steeply.",
+        "<b>The valuation you start at is not an allocation lever at all.</b> "
+        "It moves what a portfolio delivers without changing which portfolio "
+        "to hold, so it belongs in a reader's expectations and their "
+        "withdrawal planning rather than in their asset mix.",
+        "<b>Widening the opportunity set is a bigger lever than refining "
+        "it.</b> Adding a fifth asset class buys more, at a low enough "
+        "holding cost, than every refinement within the four existing sleeves "
+        "combined — and loses it all at a holding cost a real owner would "
+        "recognise. Which asset classes are available is a more consequential "
+        "question than how finely the weights among them are tuned.",
     ]))
     out.append(ctx.p(
         "A reader looking for the highest-value change to their own plan "
         "should read that list from the top, not from the bottom. The "
         "profession's attention is allocated in roughly the reverse order."))
 
-    out.append(ctx.h2("15.3 Why the pay cheque beats the portfolio"))
+    out.append(ctx.h2("17.3 Why the pay cheque beats the portfolio"))
     out.append(ctx.p(
         "The single most surprising result in the paper is that the best "
         "state variable for a savings rule is labour income relative to its "
@@ -3773,7 +4204,7 @@ def section_discussion(ctx: Any) -> List[Flowable]:
         "no balance lookup and no arithmetic, and on this model it outperforms "
         "the wealth-target advice that dominates financial planning."))
 
-    out.append(ctx.h2("15.4 Implications for default design"))
+    out.append(ctx.h2("17.4 Implications for default design"))
     out.append(ctx.p(
         "If the results here were taken at face value by a plan sponsor, the "
         "implied redesign would not be \"raise the equity share of the "
@@ -3796,7 +4227,8 @@ def section_discussion(ctx: Any) -> List[Flowable]:
     ]))
     out.append(ctx.p(
         "We state these as implications of the model, not as advice. The model "
-        "has no disutility of labour, no taxes, no fees, no housing and no "
+        "has no disutility of labour, no taxes, no fees, no owner-occupied "
+        "housing and no "
         "behavioural constraints, and each of those would temper the "
         "conclusions in Section 16's direction."))
     return out
@@ -3809,39 +4241,36 @@ def section_limitations(ctx: Any) -> List[Flowable]:
     f = ctx.f
     p = f.panel
     pr, adv = f.provenance, f.panel_advantage
-    out: List[Flowable] = [ctx.h1("16. Limitations and Threats to Validity")]
+    out: List[Flowable] = [ctx.h1("18. Limitations and Threats to Validity")]
     out.append(ctx.p(
         "This section is deliberately long. A replication that reports only "
         "the ways in which it succeeded is not much use."))
 
-    out.append(ctx.h2("16.1 The simulated tier"))
+    out.append(ctx.h2("18.1 The cross-section is sixteen countries"))
     out.append(ctx.p(
-        f"This is the largest weakness in the paper and Section 3.6 audits it "
-        f"in full. {pr['n_simulated']} of the {pr['n_countries']} countries "
-        f"have <i>simulated</i> equity, bond and bill series — factor-model "
-        f"draws from a randomly assigned observed donor, not constructed from "
-        f"anything those countries experienced — and a further "
-        f"{pr['n_partial']} have simulated equity with observed rates. That is "
-        f"{pr['share_cells_simulated']:.0%} of the panel's return cells and "
-        f"the same share of a simulated lifetime's draws, and for an investor "
-        f"in one of the observed countries it is {pr['intl_simulated']:.0%} of "
-        f"their international leg. The recovery in Section 3.6.1 does not "
-        f"touch that last number, because nothing was recovered for equity."))
+        f"This is the largest weakness in the paper, and it is a weakness we "
+        f"chose deliberately. The developed-market universe runs to 38 "
+        f"markets. We cover {pr['n_countries']}, because the other "
+        f"{pr['n_removed']} have no recorded return series in any openly "
+        f"licensed source. Section 3.6 audits what we do use; Section 3.6.1 "
+        f"reports what the excluded countries have and why it is not "
+        f"enough."))
     out.append(ctx.p(
-        f"Section 3.6 shows the headline is <i>stronger</i> on observed data "
-        f"alone ({adv['jst16']:.1f}% against {adv['dev38']:.1f}%), so the "
-        f"simulated countries dilute the result rather than manufacture it. "
-        f"That is reassuring about the direction and it does not repair the "
-        f"breadth: every statement in this paper about the size of the "
-        f"international cross-section is weaker than the country count "
-        f"suggests, and the honest evidence base for the return series is "
-        f"sixteen countries, not thirty-eight."))
+        f"Every statement in this paper about international diversification is "
+        f"therefore a statement about an average over {pr['n_countries'] - 1} "
+        f"other developed markets, weighted by history length and drawn "
+        f"jointly with the domestic leg. That is a real limit on how far the "
+        f"mechanism generalises, and in particular the panel is entirely "
+        f"advanced-economy and entirely survivor: markets that closed and "
+        f"never reopened are not in the source database, so the tail this "
+        f"paper measures is the tail of markets that came back."))
+
     out.append(ctx.p(
-        "The last five years of the observed series are also flagged as "
+        "The last five years of the series are separately flagged as "
         "unverified in Section 3.6, on a variance test that every country in "
         "the sample fails in the same direction."))
 
-    out.append(ctx.h2("16.2 What the bootstrap cannot represent"))
+    out.append(ctx.h2("18.2 What the bootstrap cannot represent"))
     out.extend(ctx.bullets([
         "<b>No valuation conditioning.</b> Blocks are drawn without regard to "
         "the starting dividend yield or price-earnings ratio, so a simulated "
@@ -3862,7 +4291,7 @@ def section_limitations(ctx: Any) -> List[Flowable]:
         "the exercise. We quantify this rather than correct it.",
     ]))
 
-    out.append(ctx.h2("16.3 What the lifecycle model omits"))
+    out.append(ctx.h2("18.3 What the lifecycle model omits"))
     hs, wg = pr.get("housing", {}), pr.get("wages", {})
     housing_bullet = (
         "<b>No housing.</b> For most households the primary residence is the "
@@ -3910,7 +4339,7 @@ def section_limitations(ctx: Any) -> List[Flowable]:
         "abandons an all-equity portfolio in the middle of a 60% drawdown.",
     ] if x]))
 
-    out.append(ctx.h2("16.4 Specification sensitivities we know about"))
+    out.append(ctx.h2("18.4 Specification sensitivities we know about"))
     out.append(ctx.p(
         "Three modelling choices are load-bearing and a reader should know "
         "where they bite."))
@@ -3932,17 +4361,36 @@ def section_limitations(ctx: Any) -> List[Flowable]:
         "of two.",
     ]))
 
-    out.append(ctx.h2("16.5 What the new searches assume"))
+    out.append(ctx.h2("18.5 What the new searches assume"))
     out.extend(ctx.bullets([
         "<b>The simplex search is a coordinate search.</b> Section 9 reports "
         "restarts from three corners and they agree, but coordinate ascent "
         "offers no guarantee of a global optimum in a 204-dimensional space "
         "and none is claimed.",
-        "<b>The four assets are the whole opportunity set.</b> There is no "
-        "credit, no real estate, no commodities and no inflation-linked bond, "
-        "and an inflation-linked bond in particular would change the "
-        "fixed-income result of Section 9 more than any refinement within the "
-        "sleeves that are present.",
+        "<b>The opportunity set is still narrow.</b> Section 16 adds housing "
+        "as a fifth asset, but there is no credit, no commodities and no "
+        "inflation-linked bond, and an inflation-linked bond in particular "
+        "would change the fixed-income result of Section 9 more than any "
+        "refinement within the sleeves that are present.",
+        "<b>The valuation conditioning applies to the first block only.</b> "
+        "A lifetime is a chain of calendar windows and only the first is a "
+        "starting condition; the rest are the future, which no investor "
+        "chooses. Section 15 therefore measures the effect of the opening "
+        "decade's valuation on a sixty-eight-year outcome, diluted by "
+        "everything that follows. A design that made the whole chain "
+        "valuation-dependent would report a larger effect and would be "
+        "assuming a great deal more.",
+        "<b>The de-smoothing of housing is itself a model.</b> Section 16 "
+        "inverts a first-order filter, which is the standard correction and "
+        "not necessarily the right one: if house price indices carry "
+        "higher-order smoothing, the true volatility is higher than the "
+        "correction restores and housing is worth less than reported. The "
+        "direction of that error is known even though its size is not.",
+        "<b>Housing is priced as an index, not as a house.</b> The asset in "
+        "Section 16 is a liquid, continuously rebalanced, nationally "
+        "diversified claim on the housing stock. A single leveraged "
+        "owner-occupied property shares almost none of those properties, and "
+        "nothing in this paper speaks to it.",
         "<b>Leverage is modelled with limited liability</b> and a floating "
         "borrowing rate, rebalanced annually. Real margin lending liquidates "
         "at a threshold rather than at zero and reprices continuously, both of "
@@ -3952,7 +4400,7 @@ def section_limitations(ctx: Any) -> List[Flowable]:
         "lender would extend that against a retirement account.",
     ]))
 
-    out.append(ctx.h2("16.6 Statistical caveats"))
+    out.append(ctx.h2("18.6 Statistical caveats"))
     out.append(ctx.p(
         "Certainty equivalents are reported without standard errors. Under "
         "common random numbers the <i>differences</i> between policies are far "
@@ -3972,7 +4420,7 @@ def section_conclusion(ctx: Any) -> List[Flowable]:
     f = ctx.f
     adv_tdf = f.advantage("balanced_all_equity", "target_date_fund")
     lottery = f.table("retirement_lottery_stats").iloc[0]
-    out: List[Flowable] = [ctx.h1("17. Conclusion")]
+    out: List[Flowable] = [ctx.h1("19. Conclusion")]
     out.append(ctx.p(
         f"We set out to reproduce a specific empirical claim and ended up with "
         f"a hierarchy. The claim reproduces: on a "
@@ -3987,7 +4435,9 @@ def section_conclusion(ctx: Any) -> List[Flowable]:
         f"— {f.allocation['free_parameters']} parameters on the simplex, with "
         f"nothing held fixed — reaches the same shape again and adds "
         f"{f.allocation['lead_pct']:.2f}%; relaxing the long-only constraint "
-        f"adds nothing at any price of credit a household can obtain."))
+        f"pays well only when credit is nearly free, and breaks even by a "
+        f"{f.leverage['break_even_spread']:.2%} spread over the real bill "
+        f"rate."))
     out.append(ctx.p(
         f"But the extensions matter more than the replication. The single "
         f"decade around a person's retirement date explains "
@@ -3998,6 +4448,16 @@ def section_conclusion(ctx: Any) -> List[Flowable]:
         f"signal properly, the best state variable available to a saver turns "
         f"out not to be their portfolio at all but their own pay cheque "
         f"relative to what they expected to earn."))
+    out.append(ctx.p(
+        "Two of the extensions relax assumptions the model itself was making. "
+        "Conditioning on the valuation a lifetime starts at — the objection a "
+        "reader is most entitled to raise, since they know what their own "
+        "market costs — leaves the allocation answer where it was and moves "
+        "the level: valuation tells an investor what to expect, not what to "
+        "hold. Adding housing to the opportunity set shows an asset that is "
+        "genuinely competitive once its index is de-smoothed, and that stops "
+        "being competitive at an annual holding cost low enough that a real "
+        "owner's rates, insurance and maintenance decide the question."))
     out.append(ctx.p(
         "Several of the results here came out against the intuition that "
         "motivated them, and we have tried to report those cases with their "
@@ -4167,25 +4627,21 @@ def appendix_parameters(ctx: Any) -> List[Flowable]:
 def appendix_panel(ctx: Any) -> List[Flowable]:
     f = ctx.f
     summary = f.table("panel_summary_statistics")
-    equity = summary[summary["series"] == "dom_eq"].sort_values(
-        ["tier", "country"])
+    equity = summary[summary["series"] == "dom_eq"].sort_values("country")
     gaps = f.table("panel_structural_gaps")
 
     out: List[Flowable] = [PageBreak(), ctx.h1("Appendix B. The Country Panel")]
     out.append(ctx.p(
-        "The full 38-country panel, with real domestic equity statistics for "
-        "each. Tier A countries have complete Jordà–Schularick–Taylor series; "
-        "Tier B has observed bonds and bills but simulated equity; Tier C is "
-        "simulated throughout. Because this table reports <i>equity</i>, only "
-        "the Tier A rows are observed, and the tiers are reported separately "
-        "throughout the paper for that reason."))
+        "The full panel, with real domestic equity statistics for each. Every "
+        "country listed carries complete Jordà–Schularick–Taylor equity, bond "
+        "and bill total returns over the years shown."))
     out.extend(ctx.table(
-        rows_from(equity, ["country", "tier", "n_years", "first_year",
+        rows_from(equity, ["country", "n_years", "first_year",
                            "last_year", "mean", "geometric_mean", "std",
                            "skew", "kurtosis", "ar1"],
-                  ["Country", "Tier", "Years", "From", "To", "Mean",
+                  ["Country", "Years", "From", "To", "Mean",
                    "Geo. mean", "S.d.", "Skew", "Kurtosis", "AR(1)"],
-                  {"country": str, "tier": str,
+                  {"country": str,
                    "n_years": lambda v: f"{int(v)}",
                    "first_year": lambda v: f"{int(v)}",
                    "last_year": lambda v: f"{int(v)}",
@@ -4193,15 +4649,15 @@ def appendix_panel(ctx: Any) -> List[Flowable]:
                    "std": lambda v: pc(v), "skew": lambda v: f2(v),
                    "kurtosis": lambda v: f2(v, 1),
                    "ar1": lambda v: f2(v)}),
-        "Real domestic equity returns, all 38 countries",
+        "Real domestic equity returns, every country in the panel",
         note="Annual real total returns deflated by each country's own "
              "consumer price index. Kurtosis is excess kurtosis.",
-        col_widths=[ctx.width * 0.19] + [ctx.width * 0.081] * 10,
+        col_widths=[ctx.width * 0.21] + [ctx.width * 0.0878] * 9,
         font_size=6.6))
 
     out.append(ctx.h2("B.1 Structural gaps"))
     out.append(ctx.p(
-        f"The {len(gaps)} contiguous runs of missing data in the Tier A "
+        f"The {len(gaps)} contiguous runs of missing data in the panel's "
         f"countries, preserved as gaps rather than interpolated. The bootstrap "
         f"never draws a block that crosses one."))
     out.extend(ctx.table(
@@ -4230,13 +4686,13 @@ def appendix_supplementary(ctx: Any) -> List[Flowable]:
         "per lifetime rather than per block, and weighting countries by "
         "history length rather than uniformly — are varied here. Neither "
         "reverses any ranking."))
+    # Only the two sampling variants: there is no alternative panel to compare
+    # against, since the panel is exactly the recorded countries.
     for name, caption in (
             ("robustness_country_draw_per_block",
              "Redrawing the country at every block"),
             ("robustness_country_weighting_uniform",
-             "Weighting countries uniformly rather than by history length"),
-            ("robustness_panel_jst16_fully_empirical_countries_only",
-             "The sixteen fully empirical countries only")):
+             "Weighting countries uniformly rather than by history length")):
         frame = f.table(name)
         cols = [c for c in ("strategy", "label", "cec_crra_gamma5",
                             "prob_ruin", "median_bequest",
@@ -4312,76 +4768,81 @@ def appendix_supplementary(ctx: Any) -> List[Flowable]:
 def appendix_software(ctx: Any) -> List[Flowable]:
     ctx_f = ctx.f
     out: List[Flowable] = [PageBreak(),
-                           ctx.h1("Appendix D. Software and Reproduction")]
+                           ctx.h1("Appendix D. Computational Design")]
     out.append(ctx.p(
-        "Every number, table and figure in this paper is produced by a single "
-        "pipeline from raw source data. Nothing is transcribed by hand, and "
-        "the paper itself reads its numbers from the pipeline's CSV output at "
-        "build time — so a rerun that changed a result would change the paper "
-        "rather than leave it silently contradicting the evidence."))
+        "Every number, table and figure in this paper is produced by one "
+        "program from the raw source files, and the document itself resolves "
+        "its quoted figures from that program's output when it is typeset. "
+        "Nothing is transcribed by hand. A rerun that changed a result would "
+        "change the paper rather than leave it silently contradicting its own "
+        "evidence."))
+    out.append(ctx.p(
+        "This appendix describes how the computation is organised and how its "
+        "correctness is established, because both bear on how much weight the "
+        "results can carry."))
 
-    out.append(ctx.h2("D.1 Reproduction"))
-    out.append(ctx.code(
-        "# full pipeline: panel, bootstrap, simulation, and all eight "
-        "extensions\n"
-        "python main.py\n\n"
-        "# a single step (13 is the leverage study of section 10)\n"
-        "python main.py --steps 13\n\n"
-        "# small-N smoke test of every step\n"
-        "python main.py --quick\n\n"
-        "# the test suite\n"
-        "python -m pytest -q\n\n"
-        "# this paper\n"
-        "python paper/build_paper.py"))
-
-    out.append(ctx.h2("D.2 Module structure"))
-    modules = [
-        ["Module", "Responsibility", "Paper section"],
-        ["src/data_loader.py", "Panel construction, deflation, the "
-         "leave-one-out international leg, hedged legs, coverage diagnostics",
-         "§3"],
-        ["src/bootstrap.py", "Stationary block bootstrap with gap-respecting "
+    out.append(ctx.h2("D.1 Structure"))
+    out.append(ctx.p(
+        "The work is split into stages that each own one idea, so that an "
+        "extension can reuse the baseline machinery instead of reimplementing "
+        "it. Reuse is the point: every extension in this paper is compared "
+        "against a baseline, and a comparison between two different "
+        "implementations of the same model measures the implementations as "
+        "much as the economics."))
+    stages = [
+        ["Stage", "What it owns", "Paper section"],
+        ["Panel construction", "Deflation to real returns, the leave-one-out "
+         "international leg, currency-hedged legs, coverage and gap "
+         "diagnostics, per-cell provenance", "§3"],
+        ["Sampler", "The stationary block bootstrap with gap-respecting "
          "admissibility; moment and persistence diagnostics", "§4.1"],
-        ["src/lifecycle.py", "The lifecycle simulator, income process, "
+        ["Lifecycle simulator", "The wealth recursion, income process, "
          "social-security schedule and strategy definitions", "§4.2"],
-        ["src/utility.py", "CRRA and Epstein–Zin certainty equivalents, the "
-         "De Nardi bequest term, shortfall metrics", "§4.3"],
-        ["src/sensitivity.py", "Sweep engine under common random numbers; "
+        ["Preferences", "CRRA and Epstein–Zin certainty equivalents, the "
+         "bequest term, shortfall and ruin metrics", "§4.3"],
+        ["Sweep engine", "Parameter sweeps under common random numbers; "
          "tornado and crossover analysis", "§6"],
-        ["src/spending.py", "Eight families of withdrawal policy behind one "
-         "interface", "§7"],
-        ["src/glidepath.py", "Batched evaluator and coordinate ascent over "
+        ["Spending rules", "Eight families of withdrawal policy behind a "
+         "single interface", "§7"],
+        ["Glide-path solver", "A batched evaluator and coordinate ascent over "
          "the age-by-asset schedule", "§8"],
-        ["src/hedging.py", "Covered-interest-parity hedged legs, break-even "
-         "cost and optimal hedge ratio", "§11"],
-        ["src/allocation.py", "The full four-asset simplex solved at every "
-         "age: lattice and pairwise-exchange coordinate ascent", "§9"],
-        ["src/leverage.py", "A levered evaluator, the cost-of-credit sweep and "
-         "the age-varying leverage schedule", "§10"],
-        ["src/retirement.py", "The path-dependent engine: endogenous "
-         "retirement dates and conditional saving", "§12–§14"],
-        ["src/saving.py", "Savings-rate rules, the fixed-mean shape solver "
-         "and matched-rate scoring", "§13"],
-        ["src/accumulation.py", "Response forms, targets, the signal horse "
-         "race, feasibility bands and grid-edge checks", "§14"],
-        ["src/report.py", "Generates the thirteen Markdown documents the "
-         "paper draws on", "All"],
-        ["src/plots.py", "All 37 figures", "All"],
-        ["paper/", "This document: style, facts loader, prose, build script",
-         "—"],
+        ["Allocation solver", "The weight simplex solved at every age: "
+         "lattice search then pairwise-exchange ascent, over four assets or "
+         "five", "§9, §16"],
+        ["Leverage", "A levered evaluator, the cost-of-credit sweep and the "
+         "age-varying leverage schedule", "§10"],
+        ["Hedging", "Covered-interest-parity hedged legs, break-even cost and "
+         "optimal hedge ratio", "§11"],
+        ["Path-dependent engine", "Endogenous retirement dates and "
+         "state-conditioned saving", "§12–§14"],
+        ["Savings rules", "Rule families, the fixed-mean shape solver and "
+         "matched-rate scoring", "§13–§14"],
+        ["Valuation", "The look-ahead-free trailing dividend yield, the "
+         "structural no-leak check and the valuation buckets", "§15"],
+        ["Housing", "De-smoothing the appraisal index, and the five-asset "
+         "simplex re-solved at each holding cost", "§16"],
     ]
     out.extend(ctx.table(
-        modules, "Module responsibilities",
-        col_widths=[ctx.width * 0.24, ctx.width * 0.62, ctx.width * 0.14],
+        stages, "How the computation is organised",
+        col_widths=[ctx.width * 0.22, ctx.width * 0.64, ctx.width * 0.14],
         font_size=7.2))
+
+    out.append(ctx.h2("D.2 Performance"))
+    out.append(ctx.p(
+        "Portfolio returns for a whole cohort are formed as a batched matrix "
+        "product and the wealth recursion runs vectorised across paths. That "
+        "is what makes a hundred thousand lifetimes per strategy — and the "
+        "tens of thousands of policy evaluations the optimisers require — "
+        "tractable on a single core, which in turn is what makes the "
+        "sensitivity analysis of Section 6 affordable enough to run "
+        "exhaustively rather than selectively."))
 
     out.append(ctx.h2("D.3 Verification"))
     out.append(ctx.p(
-        f"The suite contains {ctx_f.n_tests} tests. The ones that carry the "
-        f"most weight "
-        f"are equivalence tests between simulators, because every extension in "
-        f"this paper is built on an engine that must agree with the one that "
-        f"produced the baseline:"))
+        f"Correctness rests on {ctx_f.n_tests} automated tests. The ones that "
+        f"carry the most weight are equivalence tests between simulators, "
+        f"because every extension here is built on an engine that must agree "
+        f"with the one that produced the baseline:"))
     out.extend(ctx.bullets([
         "The path-dependent engine reproduces the fixed-date engine "
         "<i>bit for bit</i> given a fixed retirement age and a constant "
@@ -4395,14 +4856,17 @@ def appendix_software(ctx: Any) -> List[Flowable]:
         "the run-length structure directly.",
         "A savings rule is never handed a return it has not yet lived "
         "through — the no-lookahead property is asserted, not assumed.",
+        "Every available cell of the panel is an observation, checked against "
+        "a per-cell record of where each number came from.",
     ]))
     out.append(ctx.p(
-        "Documented diagnostics for every step, including the ones that "
-        "changed a result, are in the eleven generated Markdown documents "
-        "under <font face=\"PaperMono\" size=\"8\">docs/</font>. Where a bug "
-        "or a specification artefact altered a published number during "
-        "development, the corrected number and the reason are recorded there "
-        "as well as in the relevant section above."))
+        "A further discipline runs through the prose. Where this paper states "
+        "a direction — that one quantity exceeds another, that a ranking "
+        "survives, that an effect has a sign — the statement is classified "
+        "from the computed table when the document is typeset rather than "
+        "written down in advance. The mechanism exists so that a result which "
+        "moves takes its description with it, rather than leaving prose that "
+        "quietly contradicts the table beneath it."))
 
     out.append(ctx.h2("D.4 List of figures"))
     for entry in ctx.figure_index:
@@ -4434,6 +4898,8 @@ def story(ctx: Any) -> List[Flowable]:
     parts += section_retirement(ctx)
     parts += section_saving(ctx)
     parts += section_accumulation(ctx)
+    parts += section_valuation(ctx)
+    parts += section_housing(ctx)
     parts += section_discussion(ctx)
     parts += section_limitations(ctx)
     parts += section_conclusion(ctx)

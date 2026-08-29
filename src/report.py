@@ -68,6 +68,16 @@ def _write(path: str | Path, sections: Sequence[str]) -> Path:
     return path
 
 
+def _and_list(items: Sequence[str]) -> str:
+    """``"a"``, ``"a and b"``, ``"a, b and c"`` -- prose, not a Python repr."""
+    items = list(items)
+    if not items:
+        return ""
+    if len(items) == 1:
+        return items[0]
+    return f"{', '.join(items[:-1])} and {items[-1]}"
+
+
 def _header(title: str, subtitle: str) -> str:
     stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     return textwrap.dedent(f"""
@@ -107,8 +117,6 @@ def write_doc_01(
     data_cfg = cfg["data"]
     run_cfg = cfg["run"]
     tier_a = [i for i, t in zip(panel.countries, panel.tier) if t == "A"]
-    tier_b = [i for i, t in zip(panel.countries, panel.tier) if t == "B"]
-    tier_c = [i for i, t in zip(panel.countries, panel.tier) if t == "C"]
 
     # -- everything that needs computing is computed first, then interpolated
     def by_series(key: str) -> str:
@@ -166,59 +174,65 @@ provenance:
 | Tier | Countries | Equity | Bonds and bills | Inflation |
 | --- | --- | --- | --- | --- |
 | **A** | {len(tier_a)} | observed (JST / JKKST) | observed | observed |
-| **B** | {len(tier_b)} | simulated (factor model) | **observed**, rebuilt from published yields and short rates | observed |
-| **C** | {len(tier_c)} | simulated (factor model) | simulated (factor model) | observed where a source exists, otherwise factor model |
 
-The tiers are **derived from the per-cell observation masks, not asserted**:
-`src.data_loader.derive_tiers` labels a country A when every available cell of
-every return series is an observation, C when none is, and B in between. A
-label therefore cannot drift away from the data it describes.
+There is one tier because there is one kind of data in this panel: recorded.
+Every country-year of every return series is a number somebody measured.
 
-Tier B exists because four countries have real interest-rate histories in the
-sources but no equity return series. Simulating a series a source can supply
-would be indefensible, so those cells are rebuilt from the published rates and
-recorded as observations. `14_data_provenance.md` section 3.1 lists what was
-recovered and over which years. Their equity is still generated, which is why
-they are not Tier A.
+That is a change. This project previously ran to **38 developed markets**, of
+which 22 had no recorded returns at all -- their equity, bond and bill series
+were draws from a single-factor model fitted to a randomly assigned observed
+donor, plus Gaussian noise. Those countries have been removed.
+`14_data_provenance.md` records what they were, what the removal cost, and what
+of theirs was real but still unusable.
 
-Read the headline results on the understanding that the Tier-A countries carry
-the empirical content. Section 5 of `04_replicated_results_and_tables.md`
-reruns the whole analysis on the Tier-A-only panel so the reader can see
-exactly how much the calibrated extension moves the answer. Short version: it
-does not move the ranking.
+The tier label is **derived from the per-cell observation masks, not
+asserted**: `src.data_loader.derive_tiers` labels a country A only when every
+available cell of every return series is an observation, C when none is, and B
+in between. Every country here is A, and `provenance.generated_cells` reports
+any cell that is available but not observed -- so if a generated block ever
+came back, the label would change and the audit would say so. Nothing needs to
+be taken on trust.
+
+The cost of the change is a narrower cross-section: the international leg is
+now an average over {len(tier_a) - 1} other markets rather than 37. That is the
+honest trade, and `14_data_provenance.md` section 7 states it.
 
 ## 2. Country universe
 
-The target cross-section is **38 developed markets**, matching the paper's
-count. Membership rule: IMF *advanced economies* that host an investable
-domestic equity market -- which excludes Andorra, Macao SAR, Puerto Rico and
-San Marino -- **plus Poland**, reclassified by FTSE Russell as a Developed
-Market in September 2018.
+The paper's cross-section is **38 developed markets**: IMF *advanced economies*
+that host an investable domestic equity market -- excluding Andorra, Macao SAR,
+Puerto Rico and San Marino -- plus Poland, reclassified by FTSE Russell as a
+Developed Market in September 2018.
 
-* **Tier A ({len(tier_a)}):** {", ".join(tier_a)}
-* **Tier B ({len(tier_b)}):** {", ".join(tier_b)}
-* **Tier C ({len(tier_c)}):** {", ".join(tier_c)}
+**This replication covers {len(tier_a)} of them.** The other
+{len(dl.REMOVED_SIMULATED)} have no recorded return series in any source
+available here, and generating them is what section 4.3 describes and no longer
+does. Matching the paper's country count by simulating the difference would
+make this a wider study on paper and a weaker one in fact.
 
-Tier A is exactly the set of countries for which the
+* **The panel ({len(tier_a)}):** {", ".join(tier_a)}
+* **Removed ({len(dl.REMOVED_SIMULATED)}):** {", ".join(dl.REMOVED_SIMULATED)}
+
+The panel is exactly the set of countries for which the
 Jorda-Knoll-Kuvshinov-Schularick-Taylor *Rate of Return on Everything* series
-carry complete equity, bond and bill total returns.
+carry complete equity, bond and bill total returns. It is a smaller
+cross-section than the paper's, and every observation in it is one somebody
+recorded.
 
-Tier B is the four countries whose interest rates survive in a primary source
-even though their return series do not. Canada and Ireland appear in the macro
-half of the JST database with a long-term bond yield, a short rate and a
-consumer price index but no return series; New Zealand and Austria carry a
-long-term yield in the Clio-Infra bond-yield file. A bond total return follows
-from a yield and a duration assumption, a bill return is a lagged short rate,
-and both are then deflated by that country's own price index -- so the result
-is an observation, not a draw. Section 4.3 gives the arithmetic.
+The removed set is the rest of the developed-market universe the original study
+covers. Four of them -- Austria, Canada, Ireland and New Zealand -- do have real
+interest-rate histories, and `14_data_provenance.md` section 8 rebuilds and
+reports them. None has an equity return series in any source available here,
+which is why none of them is in the panel: a lifecycle investor needs a
+domestic equity return, and generating one is what this project stopped doing.
 
 ## 3. Primary sources
 
 | Source | Used for | Coverage | Licence |
 | --- | --- | --- | --- |
 | Jorda-Schularick-Taylor Macrohistory Database, release carrying `eq_tr` / `bond_tr` / `bill_rate` (Jorda, Knoll, Kuvshinov, Schularick & Taylor, *The Rate of Return on Everything, 1870-2015*, QJE 2019) | nominal equity, bond and bill total returns; CPI; USD exchange rates | 18 countries 1870-2020, returns for 16 | CC BY-NC-SA 4.0 |
-| Clio Infra, `clio_infra_inflation.csv` | CPI inflation for Tier-B countries | ~180 countries, 1500-2010 | CC BY 4.0 |
-| Clio Infra, `clio_infra_bond_yield.csv` | cross-check on Tier-B long yields | 42 countries | CC BY 4.0 |
+| Clio Infra, `clio_infra_inflation.csv` | audit only: deflator for the non-panel rate histories in `docs/14` s8 | ~180 countries, 1500-2010 | CC BY 4.0 |
+| Clio Infra, `clio_infra_bond_yield.csv` | audit only: long yields for the non-panel countries in `docs/14` s8 | 42 countries | CC BY 4.0 |
 
 Both Clio files and the JST workbook were obtained from the openly licensed
 [`unbalancedparentheses/forex-centuries`](https://github.com/unbalancedparentheses/forex-centuries)
@@ -269,70 +283,39 @@ the panel -- rather than bolting it on during simulation -- is what lets the
 bootstrap preserve domestic/international correlation for free: a drawn
 country-year carries both legs together.
 
-### 4.3 Calibrating the extension, and recovering what can be recovered
+### 4.3 What used to be here
 
-The {len(tier_b) + len(tier_c)} countries outside Tier A are built in four
-steps, and then a fifth step takes back everything a source can supply.
+This section documented a four-step procedure for generating returns for the
+22 countries that had none: a single-factor model fitted to the observed
+cross-section, a randomly assigned donor supplying that country's loadings and
+residual covariance, and a documented market-inception year to stagger their
+entry.
 
-1. **Inflation** is empirical wherever a source exists: JST CPI for Canada and
-   Ireland, Clio-Infra CPI inflation elsewhere. Clio-Infra ends in 2010, so
-   2011-2020 is filled from the model in step 2.
-2. **Equity, bond and bill real returns** come from a single-factor model
-   estimated on the Tier-A cross-section, `x_it = alpha_i + beta_i * f_t +
-   eps_it`, where `f_t` is the equally weighted cross-country mean of that
-   series. Each country draws a *donor* Tier-A country and inherits its
-   `(alpha, beta)` and its full residual covariance across equity/bond/bill,
-   so the synthetic market has a realistic cross-asset correlation structure
-   rather than an assumed one.
-3. **Coverage** starts at a documented market-inception year, reproducing the
-   staggered entry of the real developed-market universe (Singapore 1965,
-   Slovenia 1990, ...) instead of pretending every market has 131 years of
-   history.
-4. The nominal CPI level and USD rate are cumulated from the inflation series
-   under a PPP-consistent rule, which is what folds these countries into other
-   countries' international leg.
-5. **Simulated cells are overwritten wherever a source carries the real
-   thing.** Four countries have interest-rate histories the return databases
-   lack, and generating a series a source can supply would be indefensible.
-   This is what separates Tier B from Tier C.
+It is gone, along with the countries it produced. The procedure was careful and
+it was still simulation: no draw from it corresponds to anything any of those
+markets did. `14_data_provenance.md` records the removal.
 
-**The recovery arithmetic.** A long-term yield gives a bond total return under
-a constant-maturity assumption,
+What survives is the *recovery* arithmetic, which is the opposite operation --
+turning a published rate into a return rather than a random number into one.
+A long-term yield gives a bond total return under a constant-maturity
+assumption,
 
 ```
 r_t = y_{{t-1}} + D * (y_{{t-1}} - y_t)
 ```
 
--- one year of carry at last year's yield, plus the capital gain a
-duration-`D` bond makes when the yield falls -- with `D` set to
+-- one year of carry at last year's yield, plus the capital gain a duration-`D`
+bond makes when the yield falls -- with `D` set to
 {float(data_cfg.get('bond_duration_years', 7.0)):g} years
-(`data.bond_duration_years`). A bill return is the *lagged* short rate, since
-a bill bought at `t-1` earns the rate quoted then. Both are deflated by the
-country's own price index. The first year of each series is undefined and is
+(`data.bond_duration_years`). A bill return is the *lagged* short rate, since a
+bill bought at `t-1` earns the rate quoted then. Both are deflated by the
+country's own price index, and the first year of each series is undefined and
 left missing rather than filled.
 
-Three constraints bound this, and each costs coverage:
-
-* **A real return needs a real deflator.** A genuine nominal yield divided by a
-  drawn price index is not an observation, so a cell counts as observed only
-  where that country's inflation is itself empirical.
-* **No equity is recovered**, because no available source carries an equity
-  return for these countries. That is why they are Tier B and not Tier A, and
-  why the international-leg contamination in `14_data_provenance.md` is
-  unchanged by the exercise.
-* **The reconstruction is first-order.** It ignores convexity and holds
-  duration constant, so the recovered series are smoother than a true
-  total-return index. They understate bond volatility; they do not invent bond
-  returns.
-
-Countries with short histories inherit short-sample noise: Poland, Slovenia
-and Malta post extreme geometric means over 25-30 year windows drawn from a
-strong era for the world equity factor. That is precisely why the headline
-bootstrap weights the domestic-country draw by usable history (see
-`02_multicountry_block_bootstrap.md`, section 3.2) and why the Tier-A-only
-replication is reported alongside.
-
-### 4.4 Real exchange rate against the world basket
+No panel country needs this: all {len(tier_a)} carry recorded bond and bill
+total returns. It is used only by the provenance audit, to report which
+non-panel countries have recoverable rate histories and how far they reach.
+`src.observed` holds the implementation.### 4.4 Real exchange rate against the world basket
 
 CPI base years differ across countries, so only *changes* in `cpi_i / xrusd_i`
 are comparable. The panel reports an index cumulating
@@ -423,8 +406,9 @@ for the best ({best_iso}) -- a spread of
 {(eq_rows['geometric_mean'].max() - eq_rows['geometric_mean'].min()) * 100:.1f}
 percentage points per year, compounded over a lifetime. A US-only study never
 sees that spread, which is exactly the hindsight bias the paper is built to
-remove. (Short-history Tier-B markets post wider extremes still, but those are
-small-sample artefacts rather than evidence; see section 4.3.)
+remove. Every country in that range has a recorded history behind it; the
+project used to show a wider spread, and the extra width came from simulated
+markets with short samples.
 """
 
     coverage_section = f"""
@@ -616,16 +600,27 @@ Section 6 reports the `per_block` variant.
 
 ### 3.2 Why the domestic country draw is history-weighted
 
-A uniform draw over 38 countries gives Slovenia's 30 observed years the same
-weight as the United Kingdom's {int(panel.available.sum(axis=0).max())}. Worse, in this panel the
-short-history countries are Tier-B synthetics whose windows fall in a strong
-era for the world equity factor, so uniform weighting silently tilts the
-answer *toward* equities -- the very direction the headline result runs, which
-would make the result an artefact of the weighting scheme.
+A uniform draw gives the shortest history in the panel
+({int(panel.available.sum(axis=0).min())} years) the same weight as the longest
+({int(panel.available.sum(axis=0).max())}). A short history is a narrow window
+on one era rather than a small sample of every era, so uniform weighting lets
+whichever era a country happens to cover speak as loudly as a century and a
+half of another's. Weighting by usable country-years is both the neutral choice
+and the one implied by pooling country-time blocks in the first place.
 
-Weighting the country draw by usable country-years is both the neutral choice
-and the one implied by ACO's pooling of country-time blocks. Section 6 reports
-the uniform-weighting variant so the reader can see the size of the effect.
+**On this panel the choice barely matters.** Every country carries between
+{int(panel.available.sum(axis=0).min())} and
+{int(panel.available.sum(axis=0).max())} usable years, a spread of
+{int(panel.available.sum(axis=0).max() - panel.available.sum(axis=0).min())}
+years across {panel.n_countries} countries, so the two weightings assign nearly
+the same probabilities. That was not true of the panel this project used to
+have: its short histories belonged to the generated markets, which entered at
+documented inception dates and whose windows fell in a strong era for the world
+equity factor -- so uniform weighting silently tilted the answer toward
+equities, the very direction the headline result runs. Removing those countries
+removed the hazard along with them. Section 6 still reports the
+uniform-weighting variant, and it should now be close to the baseline rather
+than merely consistent with it.
 
 ## 4. Validation battery
 
@@ -1241,21 +1236,21 @@ Each variant re-runs the entire pipeline end to end with one change.
 
 {tier_tbl}
 
-The ranking is stable across the empirical-only panel, the `per_block` country
-draw and uniform country weighting. That the Tier-A-only (fully empirical,
-16-country) panel reproduces the ordering is the check that matters most: the
-conclusion is not an artefact of the calibrated Tier-B extension.
+The ranking is stable across the `per_block` country draw and uniform country
+weighting.
 
-The tier split says something stronger. The all-equity advantage over the
-glide path is **larger** on the observed Tier-A histories than on the
-simulated ones, and 60/40 does relatively *better* among domestic markets whose
-equity was generated. The synthetic countries are drawn from a factor model
-fitted to Tier-A, so their equity returns are less fat-tailed and less
-persistent than the real thing -- they dilute the result rather than create
-it. If the extension were manufacturing the finding, this table would show the
-opposite pattern. (Tier B carries observed bonds and bills but simulated
-equity, so it sits with the simulated group on the mechanism that matters
-here.)
+There is no panel variant left to report here, and that is the point. This
+section used to compare a 38-country panel against its 16-country empirical
+subset, because 22 of those countries had factor-model returns. The simulated
+countries have been removed, so the empirical subset *is* the panel and there
+is nothing to hold it against. `14_data_provenance.md` records what the removal
+cost -- an international leg averaged over {runtime_notes.get('n_countries', 0) - 1}
+markets rather than 37 -- and what it bought.
+
+The tier split below is therefore degenerate by construction: every country is
+Tier A. It is still reported, because it is computed from the observation masks
+rather than from a label, and a non-degenerate result would mean a generated
+block had returned to the panel.
 
 ## 6. Comparison with the published paper
 
@@ -1279,10 +1274,13 @@ its economic mechanism**, which is what the paper's contribution actually is.
 
 ## 7. Limitations
 
-1. **The extension is largely calibrated, not observed.** {runtime_notes.get('n_tier_c')} of the
-   {runtime_notes.get('n_countries')} countries have simulated equity, bond *and* bill returns, and a further
-   {runtime_notes.get('n_partial')} have simulated equity with observed rates. Section 5
-   shows the ranking survives dropping them entirely.
+1. **The cross-section is {runtime_notes.get('n_countries')} countries, not 38.** Every one of them has a
+   recorded equity, bond, bill and inflation history, and nothing here is
+   generated -- but the paper this replicates uses a wider universe, and the
+   international leg is correspondingly an average over
+   {runtime_notes.get('n_countries', 0) - 1} markets rather than 37. That narrowness is the
+   price of the previous limitation being gone; `14_data_provenance.md` states
+   both halves.
 2. **Annual, not monthly.** Blocks are drawn in years. This coarsens the
    persistence structure relative to ACO's 120-month blocks.
 3. **No mortality risk.** Every investor lives to exactly {cfg['lifecycle']['age_death']}. Real longevity
@@ -4173,11 +4171,11 @@ the obvious failure and it did not fire.
   result of `docs/08`: real, measurable, and far too small to be where an
   investor's attention should go.
 
-## 7. Figures
+## 8. Figures
 
 {figure_list}
 
-## 8. Reproduction
+## 9. Reproduction
 
 ```bash
 python main.py --steps 12
@@ -4691,15 +4689,16 @@ quantified limitation and not silently applied.
     # than rendered as a row of zeros when the audit has nothing to report.
     housing_section = ""
     if len(housing) and house.get("countries"):
-        housing_section = f"""### 3.1 The asset class nobody here invests in
+        housing_section = f"""### 3.1 The fourth asset class
 
 The macro file carries a fourth asset the "Rate of Return on Everything"
-project measured and nothing in this pipeline reads: **housing total returns**,
-empirical for all {int(house.get('countries', 0))} observed countries over
+project measured: **housing total returns**, empirical for all
+{int(house.get('countries', 0))} observed countries over
 {int(house.get('country_years', 0)):,} country-years
-({int(house.get('first_year', 0))}-{int(house.get('last_year', 0))}). That is
-the largest block of genuine data in the sources that no result in this project
-uses, so it is audited here rather than left unmentioned.
+({int(house.get('first_year', 0))}-{int(house.get('last_year', 0))}). The
+headline results hold it out, using the same four-asset set as the work being
+replicated; it is audited here so that decision is visible rather than
+implicit, and `16_housing.md` then puts it in and prices it.
 
 {housing_tbl}
 
@@ -4712,9 +4711,9 @@ equity -- indistinguishable -- at a published standard deviation of
 {float(house.get('sd', float('nan'))) / float(house.get('equity_sd', float('nan'))):.2f}.
 Equity-like returns at that volatility would look dominant in any
 mean-variance comparison in this project, which is exactly why the series
-earns scrutiny rather than adoption.
+earns scrutiny before adoption.
 
-**It is not added to the investable set, and the table says why.** A house price
+**The table says why it cannot be taken at face value.** A house price
 index is built from appraisals and sparse transactions, which smooths it: the
 median lag-one autocorrelation of housing returns is
 {float(house.get('autocorrelation', float('nan'))):+.2f} against
@@ -4731,9 +4730,10 @@ free lunch is a measurement artefact.
 Even de-smoothed the series is not investable as written: it is an unlevered,
 untaxed, frictionless total return on the national housing stock, with no
 transaction costs, no vacancy, no maintenance and no concentration in a single
-property. Treating it as a fourth sleeve would overstate what a household can
-actually buy, and it would change the headline result. So it is measured,
-recorded, and left out — deliberately, and on the record.
+property. Adopting it as a fifth sleeve at face value would therefore overstate
+what a household can actually buy. `16_housing.md` adds it anyway, but only
+after de-smoothing it and charging an explicit annual holding cost -- and it is
+the size of that cost, not the raw return, that decides the answer.
 """
 
     advantage = float(notes.get("advantage", float("nan")))
@@ -4964,3 +4964,812 @@ Runtime {float(notes['elapsed_seconds']):.0f}s. Tables in
 `{cfg['run']['table_dir']}/provenance_*.csv`.
 """
     return _write(path, [intro, body])
+
+def write_doc_15(
+    path: str | Path,
+    cfg: Mapping[str, Any],
+    frames: Mapping[str, pd.DataFrame],
+    figures: Sequence[str],
+    notes: Mapping[str, Any],
+) -> Path:
+    """What the starting valuation predicts, and what it does to a lifetime."""
+    predictive = frames["predictive"]
+    buckets = frames["buckets"]
+    advantage = frames["advantage"]
+    distribution = frames["distribution"]
+    position = notes["position"]
+    meta = notes["meta"]
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    column = f"cec_crra_gamma{gamma:g}"
+
+    predictive_tbl = md_table(_compact(
+        _pct(predictive, ["forward_return_expensive", "forward_return_cheap",
+                          "gap"]),
+        ["horizon_years", "observations", "correlation",
+         "forward_return_expensive", "forward_return_cheap", "gap"],
+        {"horizon_years": "Horizon (years)", "observations": "Observations",
+         "correlation": "Correlation", "forward_return_expensive":
+             "Started expensive (%)", "forward_return_cheap":
+             "Started cheap (%)", "gap": "Gap (pp)"}),
+        floatfmt="{:.2f}")
+    advantage_tbl = md_table(_compact(
+        _pct(advantage, ["challenger_ruin", "incumbent_ruin"]),
+        ["bucket", "n_paths", "challenger_cec", "incumbent_cec",
+         "advantage_pct", "challenger_ruin", "incumbent_ruin"],
+        {"bucket": "Started", "n_paths": "Paths",
+         "challenger_cec": "All-equity CEC", "incumbent_cec": "Glide-path CEC",
+         "advantage_pct": "Advantage (%)",
+         "challenger_ruin": "All-equity ruin (%)",
+         "incumbent_ruin": "Glide-path ruin (%)"}),
+        floatfmt="{:.3f}")
+    bucket_tbl = md_table(_compact(
+        _pct(buckets, ["prob_ruin"]),
+        ["bucket", "label", "n_paths", column, "prob_ruin",
+         "median_retirement_consumption", "p5_retirement_consumption"],
+        {"bucket": "Started", "label": "Strategy", "n_paths": "Paths",
+         column: f"CEC (gamma={gamma:g})", "prob_ruin": "P(ruin) (%)",
+         "median_retirement_consumption": "Median retirement consumption",
+         "p5_retirement_consumption": "5th percentile"}),
+        floatfmt="{:.3f}")
+
+    boundaries = frames.get("boundaries")
+    leak = notes.get("leak", {})
+    hind = notes.get("hindsight_meta", {})
+    if boundaries is not None and len(boundaries):
+        decades = boundaries[boundaries["year"] % 10 == 0]
+        if decades.empty:
+            decades = boundaries
+        boundaries_tbl = md_table(_compact(
+            _pct(decades, ["cut_expensive_middling", "cut_middling_cheap"]),
+            ["year", "prior_country_years", "cut_expensive_middling",
+             "cut_middling_cheap"],
+            {"year": "Lifetime begins",
+             "prior_country_years": "Country-years of history",
+             "cut_expensive_middling": "Expensive / middling (%)",
+             "cut_middling_cheap": "Middling / cheap (%)"}),
+            floatfmt="{:.2f}")
+        pooled = ", ".join(f"{c:.2%}" for c in hind.get("cuts", []))
+        agreement = float(leak.get("agreement_pct", float("nan")))
+        if agreement > 95.0:
+            leak_verdict = (
+                f"and it turns out to have been worth little: the two "
+                f"labellings agree on {agreement:.1f}% of the lifetimes both "
+                f"can classify, so only "
+                f"{int(leak.get('reassigned', 0)):,} change bucket.")
+        elif agreement > 80.0:
+            leak_verdict = (
+                f"and it was worth something: the two labellings agree on "
+                f"{agreement:.1f}% of the lifetimes both can classify, so "
+                f"{int(leak.get('reassigned', 0)):,} of "
+                f"{int(leak.get('compared', 0)):,} were in the wrong bucket "
+                "under the pooled boundaries.")
+        else:
+            leak_verdict = (
+                f"**and it was worth a great deal.** The two labellings agree "
+                f"on only {agreement:.1f}% of the lifetimes both can "
+                f"classify: {int(leak.get('reassigned', 0)):,} of "
+                f"{int(leak.get('compared', 0)):,} sat in the wrong bucket "
+                "under the pooled boundaries, which is enough to have changed "
+                "what the conditioning appeared to show.")
+        # The buckets will not come out balanced, and the reason is a result
+        # rather than a defect. Classify it from the counts.
+        counts = list(meta.get("counts", []))
+        total_classified = max(sum(counts), 1)
+        shares = [c / total_classified for c in counts]
+        skewed = max(shares) > 0.40 if shares else False
+        biggest = list(meta.get("labels", []))[int(np.argmax(shares))] \
+            if shares else ""
+        if skewed:
+            balance_note = (
+                f"One consequence is worth stating plainly, because it looks "
+                f"like a bug and is not. The buckets do **not** come out "
+                f"balanced: {shares[0]:.0%} of classified lifetimes land in "
+                f"*{list(meta['labels'])[0].lower()}* against "
+                f"{shares[-1]:.0%} in *{list(meta['labels'])[-1].lower()}*. "
+                "Terciles of a fixed sample are balanced by construction; "
+                "terciles of an expanding one are not. Yields fell across "
+                "this panel, so a lifetime drawn in year `t` typically starts "
+                "at a yield below the average of everything before `t`, and "
+                "is therefore expensive *relative to its own history*. An "
+                "investor applying this rule in real time would have "
+                "concluded 'dear versus history' most of the time, for over "
+                "a century, while yields went on falling. That is the "
+                "difference between a signal fitted to a sample and one a "
+                "person could have run, and it is the reason the correction "
+                "was worth making.")
+        else:
+            balance_note = (
+                f"The buckets come out close to balanced -- "
+                f"{shares[0]:.0%} / {shares[len(shares)//2]:.0%} / "
+                f"{shares[-1]:.0%} -- which is not guaranteed once the "
+                "boundaries move, and means the drift in yields over the "
+                "panel was mild enough not to tip the classification.")
+
+        first_year = notes.get("first_usable_year")
+        boundaries_section = f"""## 5. Which bucket, on what an investor could know
+
+The yield above uses no future data. The *boundaries* are a second and
+separate question, and the obvious way to draw them gets it wrong: taking
+terciles of the whole panel at once puts the cut-points at {pooled}, so a
+lifetime beginning in 1910 is called cheap or dear against a threshold that
+already knows what happened in 2020. Nobody in 1910 could have known which
+tercile they were in.
+
+So the boundaries are computed recursively instead. A lifetime beginning in
+year `t` is ranked against every country-year strictly before `t` -- the
+distribution its own investor could have seen. The boundaries therefore move
+as history accumulates:
+
+{boundaries_tbl}
+
+They move a long way. Early cohorts faced higher yields, so ranking them
+against the whole sample -- dragged down by the low-yield modern era -- makes
+them look cheaper than they could possibly have known themselves to be.
+
+This costs coverage. Lifetimes beginning before enough history had
+accumulated cannot be classified at all, and are excluded rather than
+assigned to the nearest bucket: the study can label
+{float(meta.get('classified_pct', float('nan'))):.1f}% of lifetimes, those
+beginning in {first_year} or later. That is the price of a statistic a reader
+could actually have computed at the time.
+
+The difference between the two labellings is the size of the error,
+{leak_verdict}
+
+{balance_note}
+
+"""
+    else:
+        boundaries_section = ""
+
+    sleeve = frames.get("sleeve")
+    sleeve_notes = notes.get("sleeve", {})
+    if sleeve is not None and len(sleeve):
+        agree = float(sleeve_notes.get("agreement_pct", float("nan")))
+        corr = float(sleeve_notes.get("correlation", float("nan")))
+        sleeve_tbl = md_table(_compact(
+            _pct(sleeve, ["cut_low", "cut_high"]),
+            list(sleeve.columns),
+            {"sleeve": "Sleeve statistic", "cut_low": "Lower cut (%)",
+             "cut_high": "Upper cut (%)"}), floatfmt="{:.2f}")
+        if agree > 90.0:
+            sleeve_verdict = (
+                f"The choice barely matters: the two rank lifetimes almost "
+                f"identically (correlation {corr:.3f}) and "
+                f"{agree:.1f}% of them land in the same bucket either way, so "
+                f"the {int(sleeve_notes.get('reassigned', 0)):,} that move do "
+                f"not change any conclusion below.")
+        elif agree > 75.0:
+            sleeve_verdict = (
+                f"The choice moves a meaningful minority of lifetimes: the two "
+                f"correlate at {corr:.3f} and agree on {agree:.1f}% of "
+                f"bucket assignments, so "
+                f"{int(sleeve_notes.get('reassigned', 0)):,} lifetimes are "
+                f"classified differently. The results below use the mean; a "
+                f"reader who prefers the median should treat the bucket "
+                f"boundaries as approximate.")
+        else:
+            sleeve_verdict = (
+                f"**The choice matters.** The two statistics agree on only "
+                f"{agree:.1f}% of bucket assignments (correlation "
+                f"{corr:.3f}), which is low enough that the construction "
+                f"argument above is carrying real weight rather than settling "
+                f"a distinction without a difference.")
+        sleeve_section = f"""### 4.1 Mean or median across the sleeve?
+
+The international leg holds equal money in every other market with data that
+year. The dividend yield of an equally weighted portfolio is the plain mean of
+its constituents' yields, so the mean is what the leg's own construction
+implies. The median is the natural alternative -- it resists a single market
+trading at a distressed yield -- and the argument for the mean is an argument,
+not a measurement. So here is the measurement.
+
+{sleeve_tbl}
+
+{sleeve_verdict}
+"""
+    else:
+        sleeve_section = ""
+
+    def _edge(v: float) -> str:
+        return "-" if not np.isfinite(v) else f"{v:.2%}"
+
+    distribution_tbl = md_table(_compact(
+        distribution.assign(
+            yield_floor=distribution["yield_floor"].map(_edge),
+            yield_ceiling=distribution["yield_ceiling"].map(_edge)),
+        ["bucket", "n_paths", "yield_floor", "yield_ceiling"],
+        {"bucket": "Started", "n_paths": "Paths",
+         "yield_floor": "Yield from", "yield_ceiling": "Yield to"}))
+    distribution_tbl = (
+        "Counts and boundaries below are the whole-panel (hindsight) split, "
+        "shown for orientation only:\n\n" + distribution_tbl)
+
+    # Every verdict below is classified from the table it describes; none of
+    # them is asserted, because any of them could come out the other way on a
+    # rebuild and the prose has to survive that.
+    by_horizon = predictive.sort_values("horizon_years")
+    short_corr = float(by_horizon["correlation"].iloc[0])
+    long_corr = float(by_horizon["correlation"].iloc[-1])
+    long_horizon = int(by_horizon["horizon_years"].iloc[-1])
+    long_gap = float(by_horizon["gap"].iloc[-1])
+    strengthens = long_corr > short_corr
+    monotone = bool(by_horizon["correlation"].is_monotonic_increasing)
+    predicts = bool((by_horizon["gap"] > 0).all())
+    multiple = float((1.0 + long_gap) ** long_horizon)
+
+    if not predicts:
+        verdict_3 = (
+            "No -- the cheap third does not out-return the dear third at "
+            "every horizon, so the conditioning below separates lifetimes "
+            "that are not actually different in expectation.")
+    elif strengthens and monotone:
+        verdict_3 = (
+            "Yes, and monotonically more strongly the longer the horizon -- "
+            "the signature of valuation mean reversion rather than of noise.")
+    elif strengthens:
+        verdict_3 = (
+            "Yes, and more strongly over long horizons than short ones, "
+            "though not monotonically -- the signature of valuation mean "
+            "reversion rather than of noise.")
+    else:
+        verdict_3 = (
+            "Yes at every horizon, but the relationship does not strengthen "
+            "with horizon here, so read it as a level effect rather than as "
+            "mean reversion.")
+
+    lead = advantage.set_index("bucket")["advantage_pct"] if len(advantage) \
+        else pd.Series(dtype=float)
+    holds = bool((lead > 0).all()) if len(lead) else False
+    spread = float(lead.max() - lead.min()) if len(lead) else float("nan")
+    dearest, cheapest = (lead.index[0], lead.index[-1]) if len(lead) else ("", "")
+
+    # Does starting expensive actually cost the investor anything? Read the
+    # headline strategy's own numbers in the dearest and cheapest buckets
+    # rather than assuming the sign.
+    headline = buckets[buckets["strategy"] == "balanced_all_equity"]
+    headline = headline.set_index("bucket") if len(headline) else headline
+    have_ends = bool(len(headline)) and dearest in headline.index \
+        and cheapest in headline.index
+    if have_ends:
+        wealth_dear = float(headline.loc[dearest, "median_wealth_at_retirement"])
+        wealth_cheap = float(headline.loc[cheapest, "median_wealth_at_retirement"])
+        ruin_dear = float(headline.loc[dearest, "prob_ruin"])
+        ruin_cheap = float(headline.loc[cheapest, "prob_ruin"])
+        wealth_gap = (wealth_dear / wealth_cheap - 1.0) * 100.0
+        ruin_gap = (ruin_dear - ruin_cheap) * 100.0
+        costly = wealth_dear < wealth_cheap and ruin_dear > ruin_cheap
+        if costly:
+            verdict_5 = (
+                f"A lifetime begun in the {dearest.lower()} bucket reaches "
+                f"retirement with {abs(wealth_gap):.0f}% less median wealth "
+                f"than one begun in the {cheapest.lower()} bucket and runs out "
+                f"of money {abs(ruin_gap):.1f} percentage points more often "
+                "under the same withdrawal rule, so it has less room for the "
+                "four-percent convention than the unconditional averages "
+                "elsewhere in this project suggest.")
+        elif wealth_dear < wealth_cheap:
+            verdict_5 = (
+                f"A lifetime begun in the {dearest.lower()} bucket reaches "
+                f"retirement with {abs(wealth_gap):.0f}% less median wealth "
+                f"than one begun in the {cheapest.lower()} bucket, though its "
+                "ruin probability is not correspondingly higher -- the "
+                "spending rule absorbs part of the shortfall.")
+        else:
+            verdict_5 = (
+                "Starting expensive does not measurably cost this investor: "
+                f"median wealth at retirement is {abs(wealth_gap):.0f}% "
+                f"{'higher' if wealth_gap > 0 else 'lower'} in the "
+                f"{dearest.lower()} bucket than in the {cheapest.lower()} one. "
+                "The first block is one decade of a sixty-eight-year chain, "
+                "and at this sample size that is what the dilution looks "
+                "like.")
+    else:
+        verdict_5 = (
+            "The buckets do not carry the headline strategy, so the effect on "
+            "wealth and ruin is not reported here.")
+
+    intro = _header(
+        "15 - Starting Valuation",
+        "What the market costs when a lifetime begins, and how much of the "
+        "answer depends on it.",
+    )
+
+    body = f"""
+## 1. The assumption this relaxes
+
+The bootstrap of `02_multicountry_block_bootstrap.md` draws calendar windows
+without regard to how expensive equities were when the window opened. A
+lifetime that begins at a market peak is therefore statistically identical to
+one that begins at a trough.
+
+That is a strong assumption and an unrealistic one. It is also the assumption a
+reader is least able to accept, because they know what today's market costs and
+the model does not.
+
+## 2. The observable, and why it is not the obvious one
+
+The workbook records `eq_dp`, a dividend *return*: the dividend paid during
+year `t` over the price at the start of it. Conditioning on that would leak,
+because the numerator is unknown until the year is over. What an investor
+standing at the start of year `t` can actually see is the trailing yield on the
+current price:
+
+```
+y_(t-1) = D_(t-1) / P_(t-1) = eq_dp_(t-1) / (1 + eq_capgain_(t-1))
+```
+
+Both terms are last year's, so the value is fully formed before the year being
+predicted begins.
+
+**This is checked structurally rather than argued.** Correlations cannot
+establish it: a yield built from the current year's dividend would still
+predict the current year's return, and a correctly lagged one still correlates
+with the *previous* year's return, because a bad year lowers the price in the
+denominator. Both are expected and neither separates a leak from a signal. So
+the test overwrites everything the workbook records for a probe year, rebuilds
+the series, and confirms the row for that year did not move --
+{"which it does not, at all " + str(len(notes["probe_years"])) + " probe years spread across the panel" if notes["leak_free"] else "**which it does, and the results below cannot be trusted**"}.
+
+## 3. Does it predict anything?
+
+{predictive_tbl}
+
+{verdict_3} Over {long_horizon} years the
+correlation is {long_corr:.2f}, against {short_corr:.2f} at
+{int(by_horizon['horizon_years'].iloc[0])} year(s), and the third of history
+that began cheapest returned {long_gap:.1%} a year more than the third that
+began dearest. Compounded over those {long_horizon} years that gap is a
+factor of {multiple:.2f} on terminal wealth, which is not a rounding
+difference.
+
+## 4. Where a reader starts
+
+{distribution_tbl}
+
+Those boundaries are the ones a reader with the whole panel in front of them
+would draw. Section 5 replaces them with the ones an investor could actually
+have drawn at the time, which is not the same thing.
+
+**{position['iso']} in {int(position['year'])} carries a blended starting yield
+of {float(position['blended_yield']):.2%}, which is the
+{float(position['blended_percentile']):.0f}th percentile of this panel.** The
+domestic leg alone is {float(position['domestic_yield']):.2%}, against a panel
+median of {float(position['panel_median_yield']):.2%}. A reader starting from
+that market today is starting more expensively than roughly
+{100 - float(position['blended_percentile']):.0f}% of the country-years this
+study draws from -- which is precisely why the unconditional average is the
+wrong number for them.
+
+{sleeve_section}
+{boundaries_section}## 6. What it does to the result
+
+{advantage_tbl}
+
+{"**The ranking survives at every starting valuation.**" if holds else "**The ranking does not survive at every starting valuation, and the exception is reported here rather than buried.**"}
+The all-equity portfolio leads the glide path in
+{int((lead > 0).sum())} of {len(lead)} buckets. What moves is the *level*: the
+advantage spans {spread:.1f} percentage points between the
+{dearest.lower()} and {cheapest.lower()} buckets.
+
+{bucket_tbl}
+
+The reading a practitioner should take is not that the allocation question
+changes much with valuation -- the spread above is
+{spread:.1f} percentage points on an advantage of
+{float(lead.mean()):.1f}% -- but what happens to the level.
+{verdict_5}
+
+## 7. What this does not do
+
+The conditioning applies to the **first** drawn block only. A lifetime is a
+chain of calendar windows and only the first is a starting condition; the rest
+are the future, which no investor chooses. So the effect measured here is the
+effect of the opening decade's valuation on a 68-year outcome, diluted by
+everything that follows. A design that made the whole chain valuation-dependent
+would report a larger effect and would be assuming a great deal more.
+
+Nor is the expanding window the only real-time normalisation available. A
+rolling window would forget the distant past rather than accumulate it, and
+ranking a country against its own history rather than the panel's would drop
+the assumption that an investor watches every market. Both are defensible and
+both would produce a different split; the expanding panel-wide window is
+chosen because it uses the most information that was genuinely available, and
+because it is the one whose failure mode -- persistent drift in the boundaries
+-- is visible in the table above rather than hidden.
+
+Nor does this speak to timing. The result is conditional on where you start,
+not a claim that anyone should wait for a better entry point: the sampler
+contains no mechanism for choosing when to begin, and the retirement-timing
+study of `09_retirement_timing.md` is the closest this project comes to that
+question.
+
+## 7. Figures
+
+{chr(10).join(f"* `{f}`" for f in figures)}
+
+## 8. Reproduction
+
+```bash
+python main.py --steps 15
+```
+
+Runtime {float(notes['elapsed_seconds']):.0f}s.
+"""
+    return _write(path, [intro, body])
+
+
+def write_doc_16(
+    path: str | Path,
+    cfg: Mapping[str, Any],
+    frames: Mapping[str, pd.DataFrame],
+    figures: Sequence[str],
+    notes: Mapping[str, Any],
+) -> Path:
+    """Housing as a fifth asset, priced by the cost of holding it."""
+    audit = frames["audit"]
+    sweep = frames["sweep"]
+    raw_sweep = frames.get("raw_sweep")
+    age_varying = frames.get("age_varying")
+    displacement = frames.get("displacement", pd.DataFrame())
+    if len(displacement):
+        columns = [c for c in ("holding_cost", "dom_eq", "intl_eq", "bond",
+                               "bill", "housing")
+                   if c in displacement.columns]
+        displacement_tbl = md_table(_compact(
+            _pct(displacement, columns),
+            columns,
+            {"holding_cost": "Holding cost (%)", "housing": "Housing (pp)",
+             "dom_eq": "Dom. equity (pp)", "intl_eq": "Intl. equity (pp)",
+             "bond": "Bonds (pp)", "bill": "Bills (pp)"}),
+            floatfmt="{:.1f}")
+        reference = float(displacement["reference_cost"].iloc[0])
+        displacement_tbl = (
+            f"Read against the dearest case tried ({reference:.0%} a year), "
+            "where housing earns whatever the sweep gives it at that price, "
+            "each row is the change in the optimal weight as the cost falls "
+            "to that row's level:\n\n" + displacement_tbl)
+    else:
+        displacement_tbl = ""
+    break_even = float(notes["break_even"])
+    gamma = float(notes["gamma"])
+
+    five = sweep[sweep["investable_set"] == "five assets"].sort_values(
+        "holding_cost")
+    control = sweep[sweep["investable_set"] == "four assets"]
+
+    audit_tbl = md_table(_compact(
+        _pct(audit, ["mean_raw", "mean_desmoothed", "sd_raw", "sd_desmoothed",
+                     "equity_mean", "equity_sd"]),
+        ["iso", "years_raw", "autocorrelation", "mean_raw", "sd_raw",
+         "sd_desmoothed", "sd_ratio", "equity_mean", "equity_sd"],
+        {"iso": "Country", "years_raw": "Years",
+         "autocorrelation": "Lag-1 autocorr.", "mean_raw": "Mean (%)",
+         "sd_raw": "SD published (%)", "sd_desmoothed": "SD de-smoothed (%)",
+         "sd_ratio": "Ratio", "equity_mean": "Equity mean (%)",
+         "equity_sd": "Equity SD (%)"}),
+        floatfmt="{:.2f}")
+
+    sweep_tbl = md_table(_compact(
+        _pct(five, ["holding_cost", "mean_dom_eq", "mean_intl_eq", "mean_bond",
+                    "mean_bill", "mean_housing"]),
+        ["holding_cost", "mean_housing", "mean_dom_eq", "mean_intl_eq",
+         "mean_bond", "mean_bill", "cec", "advantage_pct"],
+        {"holding_cost": "Holding cost (%)", "mean_housing": "Housing (%)",
+         "mean_dom_eq": "Dom. equity (%)", "mean_intl_eq": "Intl. equity (%)",
+         "mean_bond": "Bonds (%)", "mean_bill": "Bills (%)",
+         "cec": "CEC", "advantage_pct": "Gain over four assets (%)"}),
+        floatfmt="{:.2f}")
+
+    # -- verdicts, every one classified from the table above ---------------
+    free = five.iloc[0] if len(five) else None
+    dearest = five.iloc[-1] if len(five) else None
+    wanted_free = bool(free is not None and float(free["mean_housing"]) > 0.01)
+    wanted_dearest = bool(dearest is not None
+                          and float(dearest["mean_housing"]) > 0.01)
+
+    if not wanted_free:
+        verdict = ("**Housing earns no place in the portfolio at any price, "
+                   "including free.** The de-smoothed series is dominated by "
+                   "what the investor can already hold.")
+    elif np.isfinite(break_even):
+        verdict = (
+            f"**Housing is worth holding below an annual cost of "
+            f"{break_even:.1%} and not above it.** At no cost the optimum puts "
+            f"{float(free['mean_housing']):.0%} of the portfolio in it, worth "
+            f"{float(free['advantage_pct']):.1f}% in certainty-equivalent "
+            f"consumption over the best four-asset portfolio on the same "
+            f"paths; that gain falls away as the cost rises and reaches zero "
+            f"at {break_even:.1%} a year.")
+    elif wanted_dearest:
+        verdict = (
+            f"**Housing survives every cost this sweep tried.** Even at "
+            f"{float(dearest['holding_cost']):.0%} a year the optimum still "
+            f"holds {float(dearest['mean_housing']):.0%} of it. The break-even "
+            "cost is above the top of the grid, so it is not reported: "
+            "extrapolating it would be inventing the number the sweep failed "
+            "to find.")
+    else:
+        verdict = ("**Housing enters at low cost and leaves at high cost, but "
+                   "the crossing falls between grid points in a way the "
+                   "interpolation could not resolve.**")
+
+    # Which asset does housing displace? Compare the free and dearest rows.
+    displaced = ""
+    if free is not None and dearest is not None:
+        moves = {
+            "domestic equity": float(free["mean_dom_eq"]) - float(dearest["mean_dom_eq"]),
+            "international equity": float(free["mean_intl_eq"]) - float(dearest["mean_intl_eq"]),
+            "bonds": float(free["mean_bond"]) - float(dearest["mean_bond"]),
+            "bills": float(free["mean_bill"]) - float(dearest["mean_bill"]),
+        }
+        loser = min(moves, key=moves.get)
+        if moves[loser] < -0.01:
+            untouched = [name for name, move in moves.items()
+                         if abs(move) < 0.01]
+            givers = [name for name, move in moves.items() if move < -0.01]
+            displaced = (
+                f"The weight comes out of **{loser}**, which falls "
+                f"{abs(moves[loser]):.0%} of the portfolio between the dearest "
+                f"and the free case -- more than any other asset gives up."
+                + (f" {_and_list(untouched).capitalize()} "
+                   f"{'is' if len(untouched) == 1 else 'are'} untouched at "
+                   "every cost. Housing is therefore not substituting for the "
+                   "portfolio at large but for its "
+                   + ("growth sleeve" if len(givers) > 1 else "single largest "
+                      "holding") + ".")
+                   if untouched else
+                   " The rest of the portfolio absorbs the remainder.")
+
+    # Does the smoothing bias the answer, and in which direction?
+    raw_note = "_The comparison against the raw series was not run._"
+    if raw_sweep is not None and len(raw_sweep):
+        raw_five = raw_sweep[
+            raw_sweep["investable_set"] == "five assets"].sort_values(
+            "holding_cost")
+        raw_break = hs_break_even(raw_five)
+        raw_free = float(raw_five.iloc[0]["mean_housing"])
+        naive_higher = raw_free > float(free["mean_housing"])
+        raw_note = (
+            f"Left smoothed, the same search puts {raw_free:.0%} in housing at "
+            f"zero cost against {float(free['mean_housing']):.0%} once the "
+            f"smoothing is undone"
+            + (f", and its break-even cost is {raw_break:.2%} against "
+               f"{break_even:.2%}" if np.isfinite(raw_break)
+               and np.isfinite(break_even) else "")
+            + ". "
+            + ("The naive treatment therefore **overstates** the case for "
+               "housing, which is the direction the mechanism predicts: "
+               "smoothing hides volatility, and hidden volatility looks like "
+               "risk-adjusted return."
+               if naive_higher else
+               "The naive treatment does **not** overstate the case here, "
+               "which is worth noting because it is the opposite of what the "
+               "mechanism predicts."))
+
+    age_note = "_The constant-mix restriction was not tested._"
+    if age_varying is not None and len(age_varying):
+        gaps = age_varying.get("housing_difference")
+        gains = age_varying.get("cec_gain_pct")
+        if gaps is not None and gains is not None:
+            worst = float(np.abs(gaps).max())
+            best_gain = float(gains.max())
+            # The search starts from the constant-mix optimum, so it can only
+            # improve on it. A gain that rounds to zero means age-variation
+            # found nothing, which is a result about the shape rather than a
+            # failure of the search.
+            if best_gain <= 0.05:
+                age_note = (
+                    "Letting the allocation vary with age buys essentially "
+                    f"nothing: at most {best_gain:.2f}% more "
+                    "certainty-equivalent consumption, from a search that "
+                    "began at the constant-mix optimum and could only improve "
+                    "on it. The single lifetime-long allocation reported above "
+                    "is, to the resolution of this search, the answer.")
+            elif worst < 0.10 and best_gain < 1.0:
+                age_note = (
+                    f"Letting the allocation vary with age moves the mean "
+                    f"housing weight by at most {worst:.0%} of the portfolio "
+                    f"and buys at most {best_gain:.2f}% more "
+                    "certainty-equivalent consumption -- small enough that the "
+                    "constant-mix reading above stands.")
+            else:
+                age_note = (
+                    f"Letting the allocation vary with age moves the mean "
+                    f"housing weight by up to {worst:.0%} of the portfolio and "
+                    f"buys up to {best_gain:.2f}% more certainty-equivalent "
+                    "consumption -- large enough that the constant-mix reading "
+                    "above should be treated as indicative only.")
+
+            working = age_varying.get("housing_working")
+            retired = age_varying.get("housing_retired")
+            if working is not None and retired is not None:
+                rises = bool((retired.to_numpy() > working.to_numpy()).all())
+                falls = bool((retired.to_numpy() < working.to_numpy()).all())
+                widest = int(np.argmax(np.abs(retired.to_numpy()
+                                              - working.to_numpy())))
+                if rises:
+                    age_note += (
+                        f"\n\nThe shape is worth naming whatever its size. "
+                        f"Housing is the one asset in this project whose "
+                        f"optimal weight **rises** with age: at a "
+                        f"{float(age_varying['holding_cost'].iloc[widest]):.0%} "
+                        f"holding cost the solved schedule holds "
+                        f"{float(working.iloc[widest]):.0%} of it while working "
+                        f"and {float(retired.iloc[widest]):.0%} in retirement. "
+                        "That is the opposite of the glide path this project "
+                        "spends most of its length arguing against, and it has "
+                        "a reading: a retiree drawing on the portfolio wants "
+                        "the asset whose volatility is lowest relative to its "
+                        "return, and once the smoothing is undone housing is "
+                        "still that asset.")
+                elif falls:
+                    age_note += (
+                        f"\n\nThe solved schedule holds **less** housing in "
+                        f"retirement than while working -- "
+                        f"{float(retired.iloc[widest]):.0%} against "
+                        f"{float(working.iloc[widest]):.0%} at the widest "
+                        "point -- which is a conventional glide-path shape, in "
+                        "an asset the rest of this project does not hold.")
+
+    age_tbl = md_table(_compact(
+        _pct(age_varying, ["holding_cost", "mean_housing",
+                           "housing_working", "housing_retired",
+                           "constant_mix_housing"]),
+        ["holding_cost", "mean_housing", "housing_working", "housing_retired",
+         "constant_mix_housing", "cec", "cec_gain_pct"],
+        {"holding_cost": "Holding cost (%)", "mean_housing": "Housing, mean (%)",
+         "housing_working": "While working (%)",
+         "housing_retired": "In retirement (%)",
+         "constant_mix_housing": "Constant-mix housing (%)",
+         "cec": "CEC", "cec_gain_pct": "Gain over constant mix (%)"}),
+        floatfmt="{:.2f}") if age_varying is not None and len(age_varying) \
+        else "_Not run._"
+
+    moments_d = notes.get("moments_desmoothed", {})
+    moments_r = notes.get("moments_raw", {})
+
+    intro = _header(
+        "16 - Housing",
+        "The fourth asset class the sources measure, priced by what it costs "
+        "to hold.",
+    )
+
+    body = f"""
+## 1. The asset that was left out
+
+The source project measures four asset classes. Three of them -- equity, bonds
+and bills -- are the investable set everywhere else in this study. The fourth,
+housing, is measured just as carefully across
+{int(len(audit))} countries and
+{int(audit['years_raw'].sum()):,} country-years, and nothing else here invests
+in it.
+
+There are two honest reasons for that, and this section confronts both rather
+than repeating them.
+
+**The index is smoothed.** House prices come from transactions and valuations,
+not from a continuous auction, so this year's index still carries part of last
+year's level. The published series therefore understates the volatility an
+owner actually bears, and comparing it with a traded series would flatter it.
+
+**A building costs money to hold.** A share certificate does not. Rates,
+insurance, maintenance and management fall on the owner every year whether the
+asset rose or fell, and the right number is investor- and
+jurisdiction-specific. Rather than pick one, this section sweeps it.
+
+The source builds its housing total return from capital gains plus a rental
+yield it describes as net of running costs, so the swept cost is best read as
+*additional* to whatever that construction already deducts. If the published
+series is in fact grosser than that, the break-even below overstates how much
+extra cost housing can bear -- the direction of the error is known even though
+its size is not, which is why the whole curve is reported rather than a single
+recommended weight.
+
+## 2. Undoing the smoothing
+
+Each country is de-smoothed with its own estimated first-order coefficient --
+`r*_t = (r_t - a·r_(t-1)) / (1 - a)` -- because index construction differs by
+country, and a pooled coefficient would over-correct the cleanly measured
+series and under-correct the rest. A country whose returns are not positively
+autocorrelated is left alone: there is nothing to undo.
+
+{audit_tbl}
+
+Pooled across the panel this lifts the standard deviation of real housing
+returns from {float(moments_r.get('sd', float('nan'))):.1%} to
+{float(moments_d.get('sd', float('nan'))):.1%} while leaving the mean at
+{float(moments_d.get('mean', float('nan'))):.1%} -- which is what inverting a
+first-order filter should do, since the transformation preserves the mean in
+expectation and restores the variance the filter removed.
+
+That leaves housing with an equity-like average return and materially less
+volatility than equity, which is precisely why the holding cost has to be taken
+seriously rather than assumed away.
+
+## 3. Which country-years the study can use
+
+Housing is recorded for {int(notes['kept_cells']):,} of the
+{int(notes['total_cells']):,} country-years the panel otherwise has
+({100.0 * int(notes['kept_cells']) / max(int(notes['total_cells']), 1):.0f}%).
+The study runs on that intersection. The alternative -- filling the missing
+cells -- would mean inventing returns, so instead every asset is drawn from the
+same, smaller set of genuinely observed years.
+
+The four-asset control is re-solved on that same restricted panel and against
+the same {int(notes['n_paths']):,} lifetimes and the same income draws, so the
+restriction cancels out of every comparison below. Its own optimum is
+{float(control.iloc[0]['mean_dom_eq']):.0%} domestic equity,
+{float(control.iloc[0]['mean_intl_eq']):.0%} international,
+{float(control.iloc[0]['mean_bond']):.0%} bonds and
+{float(control.iloc[0]['mean_bill']):.0%} bills.
+
+## 4. The sweep
+
+One allocation, held for life, re-solved over the whole five-asset simplex at
+each annual holding cost. Common random numbers throughout: the paths, the
+income draws and the search are identical across rows, so a difference between
+two rows is the holding cost and nothing else.
+
+Housing enters as a **domestic** asset: each simulated investor holds their own
+country's housing index, drawn on the same calendar years, countries and blocks
+as their equity and bonds. There is no international housing sleeve, because
+people buy property where they live, and because the leave-one-out construction
+that gives equity a foreign leg has no counterpart a household could actually
+execute in bricks.
+
+{sweep_tbl}
+
+{verdict}
+
+{displaced}
+
+{displacement_tbl}
+
+## 5. Is the answer an artefact of the smoothing?
+
+{raw_note}
+
+## 6. Is the answer an artefact of holding one allocation for life?
+
+{age_tbl}
+
+{age_note}
+
+## 7. What this is not
+
+The asset priced here is a **liquid, continuously rebalanced, nationally
+diversified claim on the housing stock**, because that is what a national house
+price index measures. It is not a house.
+
+A single owner-occupied property is concentrated in one street rather than
+spread across a country, cannot be rebalanced, is bought with leverage, carries
+transaction costs measured in percent rather than basis points, and pays part of
+its return as accommodation rather than cash. Every one of those differences
+matters, and none of them is in the numbers above. Read this section as the
+price of the *asset class*, not as advice about a mortgage.
+
+Nor does the sweep model the cost as anything but a constant annual percentage
+of value. Real costs are lumpy, partly fixed, and correlated with the cycle;
+a constant charge is the tractable approximation, not the truth.
+
+## 8. Figures
+
+{chr(10).join(f"* `{f}`" for f in figures)}
+
+## 9. Reproduction
+
+```bash
+python main.py --steps 16
+```
+
+Runtime {float(notes['elapsed_seconds']):.0f}s at {int(notes['n_paths']):,}
+paths, risk aversion {gamma:g}.
+"""
+    return _write(path, [intro, body])
+
+
+def hs_break_even(frame: pd.DataFrame) -> float:
+    """:func:`src.housing.break_even_cost`, imported lazily for the report."""
+    from .housing import break_even_cost
+    return break_even_cost(frame)

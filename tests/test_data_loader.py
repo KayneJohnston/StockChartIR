@@ -136,9 +136,27 @@ class TestDiagnostics:
         assert int(gap_row["n_years"].iloc[0]) == 17
 
     def test_coverage_matrix_counts_available_years(self, toy_panel) -> None:
-        coverage = dl.coverage_matrix(toy_panel, decade=True)
+        """Undecaded, the matrix is the availability mask transposed."""
+        coverage = dl.coverage_matrix(toy_panel, decade=False)
         assert coverage.loc["AAA"].sum() == 20
         assert coverage.loc["GAP"].sum() == 17
+
+    def test_decade_coverage_is_a_share_not_a_count(self, toy_panel) -> None:
+        """A partial final decade must compare with the full ones.
+
+        Counting raw years puts a one-year bucket at 1 against a scale of 10,
+        which reads as missing data rather than as a short bucket.
+        """
+        coverage = dl.coverage_matrix(toy_panel, decade=True)
+        assert coverage.to_numpy().max() <= 1.0
+        assert (coverage.loc["AAA"] == 1.0).all(), (
+            "a country with no gaps is fully covered in every decade it spans"
+        )
+        # Same information, different unit: share times bucket width is the
+        # count the undecaded matrix reports.
+        widths = np.array([int((toy_panel.years // 10 * 10 == d).sum())
+                           for d in coverage.columns], dtype=float)
+        assert float((coverage.loc["GAP"].to_numpy() * widths).sum()) == 17.0
 
     def test_monthly_disaggregation_preserves_annual_returns(self,
                                                              toy_panel) -> None:

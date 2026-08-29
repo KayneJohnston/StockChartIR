@@ -1,7 +1,7 @@
 strategy,label,safe_withdrawal_rate_at_5%_ruin,ruin_at_4pct
-international_equity,100% International Equity,0.02889463781749765,0.11556
-balanced_all_equity,50/50 Domestic/International Equity,0.027921826625386996,0.14448
-target_date_fund,Target-Date Fund (glide path),0.022520000000000002,0.22082
-sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.018302047781569967,0.23874
-domestic_equity,100% Domestic Equity,0.014517148014440434,0.28052
-bills_only,100% Bills (cash),0.0129496699669967,0.57972
+international_equity,100% International Equity,0.03477611940298508,0.09082
+balanced_all_equity,50/50 Domestic/International Equity,0.03165924984106802,0.11702
+target_date_fund,Target-Date Fund (glide path),0.021007428040854228,0.2202
+sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.016890569395017794,0.23958
+domestic_equity,100% Domestic Equity,0.015654411764705882,0.25162
+bills_only,100% Bills (cash),0.010732940185341197,0.5601

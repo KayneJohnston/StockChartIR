@@ -28,10 +28,13 @@ from src import bootstrap as bs
 from src import data_loader as dl
 from src import glidepath as gp
 from src import hedging as hg
+from src import housing as hsg
 from src import leverage as lev
 from src import lifecycle as lc
+from src import observed as obs
 from src import plots
 from src import provenance as pvn
+from src import valuation as vln
 from src import report as rp
 from src import retirement as rt
 from src import saving as sav
@@ -87,6 +90,12 @@ def _apply_quick(cfg: Dict[str, Any]) -> Dict[str, Any]:
         cfg["leverage"]["schedule"]["spreads"] = [0.0]
         cfg["leverage"]["schedule"]["grid"] = [1.0, 1.5, 2.0]
         cfg["leverage"]["schedule"]["sweeps"] = 1
+    if "housing" in cfg:
+        cfg["housing"]["n_paths"] = 2000
+        cfg["housing"]["holding_costs"] = [0.0, 0.02, 0.04]
+        cfg["housing"]["coarse_step"] = 0.25
+        cfg["housing"]["fine_step"] = 0.05
+        cfg["housing"]["age_varying_costs"] = [0.0]
     if "accumulation" in cfg:
         cfg["accumulation"]["n_paths"] = 2000
         cfg["accumulation"]["response_grids"] = {
@@ -1899,6 +1908,273 @@ def step14_provenance(cfg: Dict[str, Any],
     return state
 
 
+def step15_valuation(cfg: Dict[str, Any],
+                     state: Dict[str, Any]) -> Dict[str, Any]:
+    """Condition the headline on the valuation a lifetime started at."""
+    val_cfg = cfg.get("valuation", {})
+    if not val_cfg.get("enabled", False):
+        LOGGER.info("valuation study disabled; skipping step 15")
+        return state
+    LOGGER.info("=== STEP 15: starting valuation ===")
+    started = time.perf_counter()
+
+    panel = state["panel"]
+    jst = dl.load_jst(cfg)
+    spec = lc.spec_from_config(cfg)
+    sampler = state.get("sampler") or bs.from_config(panel, cfg)
+    n_paths = int(cfg["bootstrap"]["n_paths"])
+    chunk_size = int(cfg["bootstrap"]["chunk_size"])
+
+    domestic = vln.trailing_yield(jst, panel.countries, panel.years)
+    international = vln.international_yield(domestic)
+    blended = vln.blended_yield(domestic, international,
+                                float(val_cfg.get("domestic_share", 0.5)))
+
+    # The property the whole step rests on, checked rather than claimed. Probe
+    # years are spread across the panel so a leak confined to one era would
+    # still be caught.
+    probes = [int(y) for y in np.linspace(int(panel.years[5]),
+                                          int(panel.years[-2]), 6)]
+    leak_free = all(vln.depends_only_on_past(jst, panel.countries, panel.years, y)
+                    for y in probes)
+    if not leak_free:
+        raise RuntimeError(
+            "the valuation state uses contemporaneous data; conditioning on it "
+            "would build look-ahead into every result in this step")
+    LOGGER.info("no-look-ahead check passed at %d probe years", len(probes))
+
+    predictive = vln.predictive_power(
+        domestic, panel.dom_eq,
+        [int(h) for h in val_cfg.get("horizons", (1, 10, 20, 30))])
+
+    results = state.get("results")
+    if results is None:
+        state = step3_lifecycle(cfg, state)
+        results = state["results"]
+
+    starts: List[np.ndarray] = []
+    start_years: List[np.ndarray] = []
+    for chunk in sampler.chunks(n_paths, chunk_size):
+        starts.append(vln.path_starting_yield(chunk, blended))
+        start_years.append(vln.path_start_cells(chunk)[0])
+    starting = np.concatenate(starts)
+    start_year = np.concatenate(start_years)
+
+    labels = list(val_cfg.get("bucket_labels", vln.BUCKET_LABELS))
+    edges = [float(e) for e in val_cfg.get("quantile_edges",
+                                           vln.DEFAULT_EDGES)]
+
+    # Two labellings of the same lifetimes. The pooled one takes its
+    # boundaries from the whole panel at once, so a lifetime beginning in 1910
+    # is called cheap or dear against a threshold that already knows about
+    # 2020 -- the yield is look-ahead-free but the *classification* is not.
+    # The expanding one takes its boundaries from country-years strictly
+    # before each lifetime started, which is what its investor could have
+    # known. The expanding one is used for every result; the pooled one is
+    # kept only to measure what the look-ahead was worth.
+    hindsight_index, hindsight_meta = vln.bucket_paths(starting, edges, labels)
+    cuts, prior_counts = vln.expanding_cuts(
+        blended, edges, int(val_cfg.get("min_history", vln.MIN_HISTORY)))
+    index, meta = vln.expanding_bucket_paths(starting, start_year, cuts,
+                                             labels)
+    leak = vln.bucket_agreement(hindsight_index, index)
+    first_usable = int(meta.get("first_usable_year_index", -1))
+    LOGGER.info("implementable buckets: %s (%.1f%% of lifetimes classified; "
+                "history begins %s)",
+                dict(zip(labels, meta["counts"])), meta["classified_pct"],
+                int(panel.years[first_usable]) if first_usable >= 0 else "never")
+    LOGGER.info("pooled boundaries would have reclassified %d of %d "
+                "lifetimes (%.1f%% agreement)", leak["reassigned"],
+                leak["compared"], leak["agreement_pct"])
+    if meta["classified"] < 1000:
+        raise RuntimeError(
+            "fewer than 1,000 lifetimes have enough prior history to be "
+            "classified against boundaries their own investor could have "
+            "known; the conditioning below would be estimated on noise")
+
+    # The sleeve is a mean on construction grounds; measure what the median
+    # would have done rather than leaving that as an argument.
+    median_blended = vln.blended_yield(
+        domestic, vln.international_yield_median(domestic),
+        float(val_cfg.get("domestic_share", 0.5)))
+    median_starts: List[np.ndarray] = []
+    for chunk in sampler.chunks(n_paths, chunk_size):
+        median_starts.append(vln.path_starting_yield(chunk, median_blended))
+    sleeve, sleeve_notes = vln.sleeve_comparison(
+        domestic, starting, np.concatenate(median_starts),
+        [float(e) for e in val_cfg.get("quantile_edges", vln.DEFAULT_EDGES)],
+        labels)
+    LOGGER.info("sleeve check: mean and median agree on %.1f%% of lifetimes "
+                "(correlation %.3f)", sleeve_notes["agreement_pct"],
+                sleeve_notes["correlation"])
+
+    # The bucket index is built from a re-drawn chunk stream; the outcomes came
+    # from step 3's. Both use the same (seed, n_paths, chunk_size), which is
+    # the sampler's reproducibility contract, but a silent mismatch here would
+    # show up as a null result rather than an error -- so check the one thing
+    # that is cheap to check.
+    n_outcomes = int(next(iter(results.values())).ruin.shape[0])
+    if index.size != n_outcomes:
+        raise RuntimeError(
+            f"valuation buckets cover {index.size} paths but the lifecycle "
+            f"results hold {n_outcomes}; the two were drawn from different "
+            "samplers and conditioning them on each other would be meaningless")
+
+    buckets = vln.by_bucket(results, index, labels, cfg, spec)
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    column = f"cec_crra_gamma{gamma:g}"
+    advantage = vln.advantage_by_bucket(
+        buckets, "balanced_all_equity", "target_date_fund", column)
+    position = vln.current_position(
+        blended, domestic, panel.years, panel.countries,
+        str(val_cfg.get("reference_country", "USA")))
+
+    distribution = pd.DataFrame({
+        "bucket": labels,
+        "n_paths": meta["counts"],
+        "yield_floor": [-np.inf] + list(hindsight_meta["cuts"]),
+        "yield_ceiling": list(hindsight_meta["cuts"]) + [np.inf],
+    })
+
+    # The boundaries an investor would actually have faced, decade by decade.
+    usable = np.isfinite(cuts).all(axis=1)
+    boundaries = pd.DataFrame({
+        "year": panel.years[usable],
+        "prior_country_years": prior_counts[usable],
+        "cut_expensive_middling": cuts[usable, 0],
+        "cut_middling_cheap": cuts[usable, 1],
+    })
+
+    tables = cfg["run"]["table_dir"]
+    for frame, name in ((predictive, "valuation_predictive_power"),
+                        (buckets, "valuation_by_bucket"),
+                        (advantage, "valuation_advantage"),
+                        (sleeve, "valuation_sleeve_check"),
+                        (boundaries, "valuation_expanding_boundaries"),
+                        (distribution, "valuation_buckets")):
+        _save_table(frame, tables, name)
+
+    figures = [str(plots.plot_valuation(predictive, buckets, advantage,
+                                        domestic, blended, position,
+                                        cfg["run"]["figure_dir"],
+                                        boundaries=boundaries))]
+
+    elapsed = time.perf_counter() - started
+    rp.write_doc_15(
+        Path("docs") / "15_starting_valuation.md", cfg,
+        {"predictive": predictive, "buckets": buckets,
+         "advantage": advantage, "distribution": distribution,
+         "sleeve": sleeve, "boundaries": boundaries},
+        figures,
+        {"elapsed_seconds": elapsed, "position": position, "meta": meta,
+         "probe_years": probes, "leak_free": leak_free,
+         "sleeve": sleeve_notes, "leak": leak,
+         "hindsight_meta": hindsight_meta,
+         "first_usable_year": int(panel.years[first_usable])
+         if first_usable >= 0 else None})
+    LOGGER.info("docs/15 written (%.0fs); %s sits at the %.0fth percentile",
+                elapsed, position["iso"], position["blended_percentile"])
+    state.update({"valuation_buckets": buckets,
+                  "valuation_position": position})
+    return state
+
+
+def step16_housing(cfg: Dict[str, Any],
+                   state: Dict[str, Any]) -> Dict[str, Any]:
+    """Add housing to the investable set and price it by its holding cost."""
+    house_cfg = cfg.get("housing", {})
+    if not house_cfg.get("enabled", False):
+        LOGGER.info("housing study disabled; skipping step 16")
+        return state
+    LOGGER.info("=== STEP 16: housing as a fifth asset ===")
+    started = time.perf_counter()
+
+    panel = state["panel"]
+    jst = dl.load_jst(cfg)
+    spec = lc.spec_from_config(cfg)
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    n_paths = int(house_cfg.get("n_paths", 20000))
+    coarse = float(house_cfg.get("coarse_step", 0.10))
+    fine = float(house_cfg.get("fine_step", 0.025))
+
+    desmoothed, audit = hsg.desmoothed_panel(jst, panel)
+    raw = obs.housing_returns(jst, panel.countries, panel.years)
+
+    # Housing is recorded for fewer country-years than equity is, so the study
+    # runs on the intersection. The four-asset control is solved on the same
+    # restricted panel, which is what stops the restriction from being read as
+    # a housing effect.
+    restricted = hsg.restrict_to_housing(panel, desmoothed)
+    kept = int(restricted.available.sum())
+    LOGGER.info("housing restricts the panel to %d of %d country-years (%.0f%%)",
+                kept, int(panel.available.sum()),
+                100.0 * kept / max(int(panel.available.sum()), 1))
+
+    sampler = bs.from_config(restricted, cfg, horizon_years=spec.horizon)
+    paths = sampler.sample(n_paths,
+                           chunk_size=int(cfg["bootstrap"]["chunk_size"]))
+    income = lc.simulate_income(spec, paths.n_paths,
+                                np.random.default_rng(12345))
+
+    gross = hsg.gather(paths, desmoothed)
+    costs = [float(c) for c in house_cfg.get("holding_costs", hsg.cost_grid(cfg))]
+    sweep = hsg.solve_sweep(paths, spec, income, cfg, gross, costs, gamma,
+                            coarse, fine, variant="de-smoothed")
+
+    frames: Dict[str, pd.DataFrame] = {"audit": audit, "sweep": sweep}
+    if bool(house_cfg.get("compare_raw_series", True)):
+        raw_gross = hsg.gather(paths, np.where(np.isfinite(raw), raw, np.nan))
+        if np.isfinite(raw_gross).all():
+            frames["raw_sweep"] = hsg.solve_sweep(
+                paths, spec, income, cfg, raw_gross, costs, gamma, coarse,
+                fine, variant="raw (still smoothed)")
+        else:
+            LOGGER.warning("raw housing series has gaps on the drawn paths; "
+                           "the smoothed comparison is skipped")
+
+    five = sweep[sweep["investable_set"] == "five assets"]
+    break_even = hsg.break_even_cost(five)
+    moved = hsg.displacement(five)
+
+    age_costs = [float(c) for c in house_cfg.get("age_varying_costs", [])]
+    if age_costs:
+        frames["age_varying"] = hsg.age_varying_check(
+            paths, spec, income, cfg, gross, age_costs, gamma, five)
+
+    tables = cfg["run"]["table_dir"]
+    _save_table(audit, tables, "housing_desmoothing_audit")
+    _save_table(sweep, tables, "housing_cost_sweep")
+    _save_table(moved, tables, "housing_displacement")
+    if "raw_sweep" in frames:
+        _save_table(frames["raw_sweep"], tables, "housing_raw_sweep")
+    if "age_varying" in frames:
+        _save_table(frames["age_varying"], tables, "housing_age_varying")
+
+    figures = [str(plots.plot_housing_sweep(
+        sweep, audit, frames.get("raw_sweep"), break_even,
+        cfg["run"]["figure_dir"]))]
+
+    elapsed = time.perf_counter() - started
+    notes = {
+        "elapsed_seconds": elapsed,
+        "break_even": break_even,
+        "gamma": gamma,
+        "n_paths": int(paths.n_paths),
+        "kept_cells": kept,
+        "total_cells": int(panel.available.sum()),
+        "moments_desmoothed": hsg.moments(desmoothed),
+        "moments_raw": hsg.moments(raw),
+    }
+    frames["displacement"] = moved
+    rp.write_doc_16(Path("docs") / "16_housing.md", cfg, frames, figures, notes)
+    LOGGER.info("docs/16 written (%.0fs); housing break-even holding cost %s",
+                elapsed,
+                f"{break_even:.2%}" if np.isfinite(break_even) else "not reached")
+    state.update({"housing_sweep": sweep, "housing_break_even": break_even})
+    return state
+
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -1907,11 +2183,12 @@ STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
          7: step7_glide_path, 8: step8_hedging, 9: step9_retirement_timing,
          10: step10_saving, 11: step11_accumulation,
          12: step12_allocation, 13: step13_leverage,
-         14: step14_provenance}
+         14: step14_provenance, 15: step15_valuation,
+         16: step16_housing}
 
 
 def run(config_path: str = "config.yaml",
-        steps: Sequence[int] = tuple(range(1, 15)),
+        steps: Sequence[int] = tuple(range(1, 17)),
         quick: bool = False) -> Dict[str, Any]:
     """Execute the pipeline and return the accumulated state."""
     cfg = dl.load_config(config_path)
@@ -1941,8 +2218,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--steps", nargs="+", type=int,
-                        default=list(range(1, 15)),
-                        choices=list(range(1, 15)))
+                        default=list(range(1, 17)),
+                        choices=list(range(1, 17)))
     parser.add_argument("--quick", action="store_true",
                         help="small N for smoke tests")
     parser.add_argument("--verbose", action="store_true")

@@ -592,3 +592,59 @@ provenance:
   tail_start: 2016
   reference_start: 1950
 
+# ---------------------------------------------------------------------------
+# Step 15 -- starting valuation
+# ---------------------------------------------------------------------------
+# The bootstrap draws calendar windows without regard to how expensive markets
+# were when the window opened, so a lifetime beginning at a peak is
+# statistically identical to one beginning at a trough.  This step supplies the
+# missing state variable -- the trailing dividend yield an investor could
+# actually observe -- and reports the headline conditional on it.
+valuation:
+  enabled: true
+  # Share of the blended yield taken from the domestic market, matching the
+  # 50/50 split of the headline portfolio.
+  domestic_share: 0.5
+  # Quantile edges of the drawn starting-yield distribution.  Terciles keep
+  # enough paths per bucket for the certainty equivalent to be precise;
+  # quintiles thin the extremes into noise.
+  quantile_edges: [0.0, 0.3333333333333333, 0.6666666666666666, 1.0]
+  bucket_labels: ["Expensive", "Middling", "Cheap"]
+  # Horizons over which the predictive power of the yield is reported.
+  horizons: [1, 10, 20, 30]
+  # The market a reader is most likely to be starting from, used to locate
+  # today's valuation in the panel's own distribution.
+  reference_country: USA
+
+
+# ---------------------------------------------------------------------------
+# Step 16 -- housing as a fifth asset
+# ---------------------------------------------------------------------------
+# The fourth asset class the source project measures and the rest of this
+# pipeline does not invest in. Two things have to be settled before it can be
+# compared with a traded asset: the appraisal smoothing in the index, which is
+# inverted, and the annual cost of holding a building, which is swept rather
+# than guessed.
+housing:
+  enabled: true
+  n_paths: 20000
+
+  # Annual cost of holding the asset, as a share of its value, charged every
+  # year regardless of return. This is *additional* to whatever the source
+  # series already nets out, so the sweep asks how much extra cost it takes to
+  # make housing not worth holding.
+  holding_costs: [0.0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06]
+
+  # Constant-mix search: a coarse lattice over the 4-simplex, then
+  # pairwise-exchange refinement inside it.
+  coarse_step: 0.10          # 1,001 candidate allocations over five assets
+  fine_step: 0.025
+
+  # The costs at which the constant-mix restriction is removed and the full
+  # age-by-asset schedule is solved instead, as a check on it.
+  age_varying_costs: [0.0, 0.03]
+
+  # Whether to re-run the whole sweep on the raw, still-smoothed series. This
+  # is the naive treatment; running it shows which way the smoothing biases
+  # the answer instead of asserting a direction.
+  compare_raw_series: true

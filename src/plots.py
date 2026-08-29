@@ -78,15 +78,19 @@ def plot_coverage(coverage: pd.DataFrame, directory: str | Path,
         height = max(4.0, 0.22 * coverage.shape[0] + 1.5)
         fig, ax = plt.subplots(figsize=(11, height))
         data = coverage.to_numpy(dtype=float)
-        im = ax.imshow(data, aspect="auto", cmap="YlGnBu", vmin=0, vmax=10)
+        im = ax.imshow(data, aspect="auto", cmap="YlGnBu", vmin=0.0, vmax=1.0)
         ax.set_yticks(range(coverage.shape[0]))
         ax.set_yticklabels(coverage.index)
         ax.set_xticks(range(coverage.shape[1]))
         ax.set_xticklabels([str(c) for c in coverage.columns], rotation=90)
-        ax.set_title("Usable country-years by decade")
+        ax.set_title("Share of each decade with a complete return record")
         ax.set_xlabel("Decade")
         ax.grid(False)
-        fig.colorbar(im, ax=ax, shrink=0.7, label="years with complete data")
+        bar = fig.colorbar(im, ax=ax, shrink=0.7,
+                           label="share of the decade with complete data")
+        bar.set_ticks([0.0, 0.25, 0.5, 0.75, 1.0])
+        bar.set_ticklabels(["0%", "25%", "50%", "75%", "100%"])
+        fig.tight_layout()
     return _save(fig, directory, name)
 
 
@@ -103,9 +107,12 @@ def plot_country_returns(summary: pd.DataFrame, directory: str | Path,
     meta = summary.drop_duplicates("iso").set_index("iso")[["tier", "n_years"]]
     wide = wide.join(meta)
 
-    panels = [("A", "Tier A - observed returns (JST / JKKST)"),
-              ("B", "Tier B - rates observed, equity simulated"),
-              ("C", "Tier C - simulated returns")]
+    # Only Tier A should ever be present. The other two stay in the list as a
+    # tripwire: if a generated block returns to the panel, it gets its own
+    # labelled sub-plot here rather than being averaged in silently.
+    panels = [("A", "Observed returns (JST / JKKST)"),
+              ("B", "Rates observed, equity simulated"),
+              ("C", "Simulated returns")]
     present = [(tier, title) for tier, title in panels
                if (wide["tier"] == tier).any()]
 
@@ -866,30 +873,55 @@ def plot_hedging(frame: pd.DataFrame, break_even: pd.DataFrame,
         ax.axhline(0, color="black", linewidth=1.2)
         ax.set_xlabel("Share of the international sleeve hedged (%)")
         ax.set_ylabel("CEC gain over unhedged (%)")
-        ax.set_title("Hedging is worth little, and only in small doses",
+        # Titled from the data: whether any ratio pays at zero cost is the
+        # whole question the panel answers.
+        free = block[(block["hedge_cost"] == 0.0) & (block["hedge_ratio"] > 0)]
+        pays = bool((free[metric].to_numpy() > baseline).any())
+        ax.set_title("Hedging is worth little, and only in small doses" if pays
+                     else "Every hedge ratio loses, even when hedging is free",
                      fontsize=10)
         ax.legend(fontsize=8)
 
         ax = axes[1]
-        ordered = break_even.sort_values("hedge_ratio")
-        ticks = (ordered["hedge_ratio"] * 100).to_numpy()
-        heights = (ordered["break_even_annual_cost"] * 1e4).to_numpy()
-        positions = np.arange(len(ordered))
-        ax.bar(positions, np.nan_to_num(heights), width=0.55, color=_colour(0))
-        top = np.nanmax(heights) if np.isfinite(heights).any() else 1.0
-        for x, height in zip(positions, heights):
-            if np.isfinite(height):
-                ax.text(x, height + top * 0.03, f"{height:.0f}bp",
-                        ha="center", fontsize=9)
-            else:
-                ax.text(x, top * 0.04, "never\nworth it", ha="center",
-                        fontsize=9, color=_colour(1))
-        ax.set_xticks(positions)
-        ax.set_xticklabels([f"{t:.0f}%" for t in ticks])
-        ax.set_ylim(0, top * 1.22)
-        ax.set_xlabel("Share of the international sleeve hedged")
-        ax.set_ylabel("Break-even annual hedging cost (bp)")
-        ax.set_title("What you could afford to pay", fontsize=10)
+        if pays:
+            ordered = break_even.sort_values("hedge_ratio")
+            ticks = (ordered["hedge_ratio"] * 100).to_numpy()
+            heights = (ordered["break_even_annual_cost"] * 1e4).to_numpy()
+            positions = np.arange(len(ordered))
+            ax.bar(positions, np.nan_to_num(heights), width=0.55,
+                   color=_colour(0))
+            top = np.nanmax(heights) if np.isfinite(heights).any() else 1.0
+            for x, height in zip(positions, heights):
+                if np.isfinite(height):
+                    ax.text(x, height + top * 0.03, f"{height:.0f}bp",
+                            ha="center", fontsize=9)
+                else:
+                    ax.text(x, top * 0.04, "never\nworth it", ha="center",
+                            fontsize=9, color=_colour(1))
+            ax.set_xticks(positions)
+            ax.set_xticklabels([f"{t:.0f}%" for t in ticks])
+            ax.set_ylim(0, top * 1.22)
+            ax.set_xlabel("Share of the international sleeve hedged")
+            ax.set_ylabel("Break-even annual hedging cost (bp)")
+            ax.set_title("What you could afford to pay", fontsize=10)
+        else:
+            # No ratio pays, so a break-even chart is an empty box. Show where
+            # the loss is actually incurred instead: the bottom of the
+            # distribution, which is what the certainty equivalent weighs.
+            tail = (block[block["hedge_cost"] == 0.0]
+                    .drop_duplicates("hedge_ratio").sort_values("hedge_ratio"))
+            x = tail["hedge_ratio"].to_numpy() * 100
+            ax.plot(x, tail["p5_retirement_consumption"], "-o", markersize=5,
+                    color=_colour(0))
+            ax.axhline(float(tail["p5_retirement_consumption"].iloc[0]),
+                       color="black", linewidth=1.1, linestyle="--")
+            ax.annotate("unhedged", (x[-1], tail["p5_retirement_consumption"]
+                                     .iloc[0]), textcoords="offset points",
+                        xytext=(-4, 5), ha="right", fontsize=8)
+            ax.set_xlabel("Share of the international sleeve hedged (%)")
+            ax.set_ylabel("5th-percentile retirement consumption")
+            ax.set_title("The loss lands in the left tail,\nwhich is what the "
+                         "certainty equivalent weighs", fontsize=10)
 
         ax = axes[2]
         moments = (block[block["hedge_cost"] == 0.0]
@@ -1672,76 +1704,72 @@ def plot_provenance(era: pd.DataFrame, contamination: pd.DataFrame,
                     tail: pd.DataFrame, countries: pd.DataFrame,
                     directory: str | Path,
                     name: str = "fig38_data_provenance") -> Path:
-    """How much of the panel is observed, and how much is generated."""
+    """Does the last stretch of every equity series look like the rest of it?
+
+    The same test read two ways. Left: each country's tail standard deviation
+    as a ratio of its own long-run standard deviation, so one bar per country
+    and a line at parity. Right: the two standard deviations against each
+    other with the 45-degree line, which turns "every country is smoother"
+    from a claim into something the eye checks in one pass.
+
+    ``era`` and ``contamination`` are accepted for interface stability and are
+    not drawn: both describe the mix of recorded and generated data, and the
+    panel they describe contains nothing generated.
+    """
+    block = tail.dropna(subset=["ratio"]).copy()
     with plt.rc_context(STYLE):
-        fig, axes = plt.subplots(1, 3, figsize=(16.5, 5.0))
+        fig, axes = plt.subplots(1, 2, figsize=(13.5, 5.4),
+                                 gridspec_kw={"width_ratios": [1.15, 1.0]})
 
         ax = axes[0]
-        block = era.copy()
-        x = np.arange(len(block))
-        # Cells, not country-years: one country, one year, one return series.
-        # Mixing the two units here would understate the observed bar.
-        total = block.get("return_cells", block["country_years"]).to_numpy(float)
-        simulated = block["simulated"].to_numpy(float)
-        empirical = total - simulated
-        ax.bar(x, empirical, color=_colour(0), width=0.62,
-               label="observed (Jordà–Schularick–Taylor)")
-        ax.bar(x, simulated, bottom=empirical, color=_colour(1), width=0.62,
-               label="simulated (factor model)")
-        for i, row in enumerate(block.itertuples()):
-            ax.text(i, total[i] * 1.02,
-                    f"{row.share_simulated:.0%}", ha="center", fontsize=8,
-                    color=_colour(1))
-        ax.set_xticks(x)
-        ax.set_xticklabels(block["era"], fontsize=8)
-        ax.set_ylabel("Return cells in the panel (country x year x series)")
-        ax.set_title("The simulated share grows over time\n"
-                     "(label = share simulated)", fontsize=10)
-        ax.legend(fontsize=8, loc="upper left")
-        ax.grid(axis="x", alpha=0.0)
-
-        ax = axes[1]
-        block = contamination[contamination["era"] != "whole panel"]
-        x = np.arange(len(block))
-        values = block["mean_synthetic_share_of_intl_leg"].to_numpy(float) * 100
-        ax.bar(x, values, color=_colour(1), width=0.62)
-        for i, v in enumerate(values):
-            ax.text(i, v + 1.2, f"{v:.0f}%", ha="center", fontsize=8)
-        whole = contamination[contamination["era"] == "whole panel"]
-        if len(whole):
-            level = float(whole["mean_synthetic_share_of_intl_leg"].iloc[0]) * 100
-            ax.axhline(level, color="black", linestyle="--", linewidth=1.3)
-            ax.annotate(f"whole panel: {level:.0f}%", (len(block) - 0.5, level),
-                        textcoords="offset points", xytext=(-4, 5),
-                        ha="right", fontsize=8)
-        ax.set_xticks(x)
-        ax.set_xticklabels(block["era"], fontsize=8)
-        ax.set_ylim(0, max(values.max() * 1.25, 10))
-        ax.set_ylabel("Share of the international leg that is simulated (%)")
-        ax.set_title("Even an observed country's international leg\n"
-                     "is mostly simulated by 2000", fontsize=10)
-        ax.grid(axis="x", alpha=0.0)
-
-        ax = axes[2]
-        block = tail.sort_values("ratio")
-        y = np.arange(len(block))
-        ax.barh(y, block["ratio"], color=_colour(2), height=0.62)
+        ordered = block.sort_values("ratio")
+        y = np.arange(len(ordered))
+        ax.barh(y, ordered["ratio"], color=_colour(1), height=0.66)
         ax.axvline(1.0, color="black", linewidth=1.3)
-        ax.annotate("equal variance", (1.0, len(block) - 0.4),
+        ax.annotate("equal variance", (1.0, len(ordered) - 0.4),
                     textcoords="offset points", xytext=(5, 0), fontsize=8)
         ax.set_yticks(y)
-        ax.set_yticklabels(block["iso"], fontsize=7.5)
-        ax.set_xlabel("Tail s.d. ÷ reference s.d. (equity returns)")
-        ax.set_title("Every country's last five years are\n"
-                     "smoother than its history", fontsize=10)
+        ax.set_yticklabels(ordered["iso"], fontsize=7.5)
+        ax.set_xlabel("Tail s.d. \u00f7 long-run s.d. (real equity returns)")
+        ax.set_title("Every country's final years are smoother\n"
+                     "than its own history", fontsize=10)
         ax.grid(axis="y", alpha=0.0)
+
+        ax = axes[1]
+        ref = block["sd_reference"] * 100
+        late = block["sd_tail"] * 100
+        top = float(max(ref.max(), late.max())) * 1.08
+        ax.plot([0, top], [0, top], color="black", linewidth=1.2,
+                label="equal variance")
+        ax.scatter(ref, late, s=52, color=_colour(1), edgecolor="white",
+                   linewidth=0.6, zorder=3)
+        for _, row in block.iterrows():
+            x = float(row["sd_reference"]) * 100
+            # Labels flip to the left near the right edge so none is clipped.
+            flip = x > top * 0.82
+            ax.annotate(str(row["iso"]), (x, float(row["sd_tail"]) * 100),
+                        textcoords="offset points",
+                        xytext=(-6 if flip else 5, -3),
+                        ha="right" if flip else "left",
+                        fontsize=7, color="0.35")
+        ax.set_xlim(0, top)
+        ax.set_ylim(0, top)
+        ax.set_xlabel("Long-run standard deviation (%)")
+        ax.set_ylabel("Standard deviation over the final years (%)")
+        ax.set_title("Every point sits below the line,\n"
+                     "which one country alone would not do", fontsize=10)
+        ax.legend(fontsize=8, loc="upper left")
         fig.tight_layout()
     return _save(fig, directory, name)
 
 
 def plot_housing(audit: pd.DataFrame, directory: str | Path,
                  name: str = "fig39_housing_smoothing") -> Path:
-    """Why the observed housing series stays out of the investable set.
+    """How much of the housing series' apparent free lunch is measurement.
+
+    The audit behind the four-asset headline: how far the published index
+    understates the risk an owner bears, which is what has to be corrected
+    before housing can be compared with a traded asset at all.
 
     Left: risk and return by country, housing as published and again with its
     own smoothing undone, against that country's equity. Right: the lag-one
@@ -1795,3 +1823,241 @@ def plot_housing(audit: pd.DataFrame, directory: str | Path,
         ax.grid(axis="y", alpha=0.0)
         fig.tight_layout()
     return _save(fig, directory, name)
+
+
+def plot_valuation(predictive: pd.DataFrame, buckets: pd.DataFrame,
+                   advantage: pd.DataFrame, domestic: np.ndarray,
+                   blended: np.ndarray, position: Mapping[str, Any],
+                   directory: str | Path,
+                   name: str = "fig40_starting_valuation",
+                   boundaries: pd.DataFrame | None = None) -> Path:
+    """What the starting yield predicts, and what it does to a lifetime.
+
+    Three readings of one variable: that it forecasts returns at all, where
+    the present sits in its distribution, and whether the headline ranking
+    survives conditioning on it.
+    """
+    panels = 4 if boundaries is not None and len(boundaries) else 3
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(1, panels, figsize=(5.5 * panels, 5.0))
+
+        ax = axes[0]
+        block = predictive.sort_values("horizon_years")
+        x = np.arange(len(block))
+        width = 0.38
+        ax.bar(x - width / 2, block["forward_return_expensive"] * 100, width,
+               color=_colour(1), label="started expensive (low yield)")
+        ax.bar(x + width / 2, block["forward_return_cheap"] * 100, width,
+               color=_colour(0), label="started cheap (high yield)")
+        for i, row in enumerate(block.itertuples()):
+            ax.text(i, max(row.forward_return_cheap,
+                           row.forward_return_expensive) * 100 + 0.15,
+                    f"{row.correlation:+.2f}", ha="center", fontsize=8,
+                    color="0.35")
+        ax.set_xticks(x)
+        ax.set_xticklabels([f"{int(h)}y" for h in block["horizon_years"]])
+        ax.set_xlabel("Horizon over which the return is measured")
+        ax.set_ylabel("Annualised real equity return (%)")
+        pays = bool((block["gap"] > 0).all())
+        ax.set_title(
+            ("A cheap start pays at every horizon\n"
+             "(label = correlation of yield with return)") if pays else
+            ("A cheap start does not pay at every horizon\n"
+             "(label = correlation of yield with return)"), fontsize=10)
+        ax.legend(fontsize=8)
+        ax.grid(axis="x", alpha=0.0)
+
+        ax = axes[1]
+        values = blended[np.isfinite(blended)] * 100
+        ax.hist(values, bins=40, color=_colour(2), alpha=0.85)
+        here = float(position.get("blended_yield", np.nan)) * 100
+        if np.isfinite(here):
+            ax.axvline(here, color=_colour(1), linewidth=2.0)
+            # On a white plate: the marker line sits at the left edge of the
+            # distribution, so the label unavoidably runs over the bars.
+            ax.annotate(f"{position.get('iso', '')} "
+                        f"{int(position.get('year', 0))}: {here:.1f}%\n"
+                        f"{position.get('blended_percentile', float('nan')):.0f}th "
+                        f"percentile",
+                        (here, ax.get_ylim()[1] * 0.90),
+                        textcoords="offset points", xytext=(9, 0),
+                        fontsize=8.5, color=_colour(1), va="top",
+                        bbox=dict(boxstyle="round,pad=0.32", facecolor="white",
+                                  edgecolor=_colour(1), linewidth=0.7,
+                                  alpha=0.92))
+        ax.set_xlabel("Blended starting dividend yield (%)")
+        ax.set_ylabel("Country-years in the panel")
+        ax.set_title("Where a reader starting today sits in\n"
+                     "the panel's own distribution", fontsize=10)
+        ax.grid(axis="x", alpha=0.0)
+
+        # The advantage as bars, the level it is an advantage *over* as a
+        # line. Showing only the bars invites the reading that valuation does
+        # not matter; it is the line that moves.
+        ax = axes[2]
+        block = advantage.copy()
+        x = np.arange(len(block))
+        ax.bar(x, block["advantage_pct"], width=0.55, color=_colour(0),
+               label="all-equity lead over the glide path (left)")
+        for i, row in enumerate(block.itertuples()):
+            offset = 0.25 if row.advantage_pct >= 0 else -0.55
+            ax.text(i, row.advantage_pct + offset,
+                    f"{row.advantage_pct:.1f}%", ha="center", fontsize=9)
+        ax.axhline(0.0, color="black", linewidth=1.2)
+        ax.set_xticks(x)
+        ax.set_xticklabels(block["bucket"], fontsize=9)
+        ax.set_xlabel("Valuation the lifetime started at")
+        ax.set_ylabel("Certainty-equivalent advantage (%)")
+        # Never clip a negative bar out of the frame: an exception to the
+        # ranking is exactly what this panel exists to make visible.
+        low = min(float(block["advantage_pct"].min()), 0.0)
+        high = max(float(block["advantage_pct"].max()), 1.0)
+        pad = max((high - low) * 0.25, 0.5)
+        ax.set_ylim(low - pad, high + pad)
+
+        twin = ax.twinx()
+        twin.plot(x, block["challenger_cec"], color=_colour(1),
+                  marker=_marker(1), linewidth=1.8,
+                  label="all-equity CEC level (right)")
+        twin.set_ylabel("Certainty-equivalent consumption")
+        twin.grid(False)
+
+        holds = bool((block["advantage_pct"] > 0).all())
+        spread = float(block["advantage_pct"].max()
+                       - block["advantage_pct"].min())
+        cec_move = (float(block["challenger_cec"].max())
+                    / float(block["challenger_cec"].min()) - 1.0) * 100.0
+        ax.set_title(
+            (f"The ranking holds everywhere (spread {spread:.1f}pp);\n"
+             f"the level it wins at moves {cec_move:.1f}%") if holds else
+            ("The ranking does NOT hold at every\n"
+             "starting valuation"), fontsize=10)
+        handles, labels_ = ax.get_legend_handles_labels()
+        h2, l2 = twin.get_legend_handles_labels()
+        ax.legend(handles + h2, labels_ + l2, fontsize=8, loc="lower center",
+                  bbox_to_anchor=(0.5, -0.34), ncol=1)
+        ax.grid(axis="x", alpha=0.0)
+
+        if panels == 4:
+            # The boundaries an investor could have drawn, as they drift. A
+            # fixed pair of cut-points is what the pooled split assumes, and
+            # the distance between the lines and it is the look-ahead.
+            ax = axes[3]
+            year = boundaries["year"].to_numpy(dtype=float)
+            lo = boundaries["cut_expensive_middling"].to_numpy() * 100
+            hi = boundaries["cut_middling_cheap"].to_numpy() * 100
+            ax.plot(year, lo, color=_colour(1), linewidth=1.8,
+                    label="expensive / middling")
+            ax.plot(year, hi, color=_colour(0), linewidth=1.8,
+                    label="middling / cheap")
+            ax.fill_between(year, lo, hi, color=_colour(2), alpha=0.18,
+                            label="the middling third")
+            ax.set_xlabel("Year the lifetime begins")
+            ax.set_ylabel("Blended dividend yield (%)")
+            ax.set_title("The boundaries an investor could\n"
+                         "actually have drawn, as they drift", fontsize=10)
+            ax.legend(fontsize=8, loc="lower left")
+
+        fig.tight_layout()
+    return _save(fig, directory, name)
+
+
+def plot_housing_sweep(sweep: pd.DataFrame, audit: pd.DataFrame,
+                       raw_sweep: pd.DataFrame | None,
+                       break_even: float, directory: str | Path,
+                       name: str = "fig41_housing_cost_sweep") -> Path:
+    """What housing is worth, and what it costs to make it worth nothing.
+
+    Four readings: how much volatility the de-smoothing restores, how the
+    optimal allocation rearranges itself as the holding cost rises, what the
+    fifth asset adds to lifetime welfare at each cost, and how much of that
+    conclusion is an artefact of leaving the index smoothed.
+    """
+    five = sweep[sweep["investable_set"] == "five assets"].sort_values(
+        "holding_cost")
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(1, 4, figsize=(21.0, 5.0))
+
+        # -- 1. the smoothing the index carries ---------------------------
+        ax = axes[0]
+        block = audit.sort_values("autocorrelation")
+        y = np.arange(len(block))
+        ax.barh(y - 0.2, block["sd_raw"] * 100, 0.4, color=_colour(5),
+                label="as published")
+        ax.barh(y + 0.2, block["sd_desmoothed"] * 100, 0.4, color=_colour(1),
+                label="de-smoothed")
+        ax.plot(block["equity_sd"] * 100, y, linestyle="none",
+                marker=_marker(2), color="0.2", markersize=5,
+                label="domestic equity")
+        ax.set_yticks(y)
+        ax.set_yticklabels(block["iso"], fontsize=8)
+        ax.set_xlabel("Standard deviation of real returns (%)")
+        ax.set_title("Undoing the appraisal smoothing")
+        # Above the plot rather than inside it: the shortest bars sit at the
+        # bottom, which is the only space an inset legend could use.
+        ax.legend(fontsize=8, loc="lower center", ncol=3,
+                  bbox_to_anchor=(0.5, -0.30))
+        ax.grid(axis="y", visible=False)
+
+        # -- 2. the allocation, cost by cost ------------------------------
+        ax = axes[1]
+        assets = ("mean_housing", "mean_dom_eq", "mean_intl_eq", "mean_bond",
+                  "mean_bill")
+        labels = ("Housing", "Domestic equity", "International equity",
+                  "Bonds", "Bills")
+        x = five["holding_cost"].to_numpy(dtype=float) * 100
+        bottom = np.zeros(len(five))
+        for i, (column, label) in enumerate(zip(assets, labels)):
+            if column not in five.columns:
+                continue
+            height = five[column].to_numpy(dtype=float) * 100
+            ax.bar(x, height, width=0.7, bottom=bottom, label=label,
+                   color=_colour(i))
+            bottom += height
+        ax.set_xlabel("Annual holding cost on housing (%)")
+        ax.set_ylabel("Weight in the optimal portfolio (%)")
+        ax.set_title("What the optimum holds")
+        ax.legend(fontsize=8, ncol=2, loc="upper center")
+        ax.set_ylim(0, 128)
+
+        # -- 3. what the fifth asset is worth -----------------------------
+        ax = axes[2]
+        ax.plot(x, five["advantage_pct"], marker=_marker(0),
+                color=_colour(0), label="de-smoothed")
+        if raw_sweep is not None and len(raw_sweep):
+            other = raw_sweep[
+                raw_sweep["investable_set"] == "five assets"].sort_values(
+                "holding_cost")
+            ax.plot(other["holding_cost"] * 100, other["advantage_pct"],
+                    marker=_marker(1), linestyle="--", color=_colour(4),
+                    label="raw (still smoothed)")
+        ax.axhline(0.0, color="0.3", linewidth=1.0)
+        if np.isfinite(break_even):
+            ax.axvline(break_even * 100, color=_colour(1), linestyle=":",
+                       linewidth=1.4)
+            ax.text(break_even * 100, ax.get_ylim()[1] * 0.92,
+                    f"  housing drops out\n  at {break_even:.1%}", fontsize=8,
+                    color=_colour(1), va="top")
+        ax.set_xlabel("Annual holding cost on housing (%)")
+        ax.set_ylabel("Gain over the four-asset optimum (%)")
+        ax.set_title("What adding housing is worth")
+        ax.legend(fontsize=8)
+
+        # -- 4. where the weight comes from -------------------------------
+        ax = axes[3]
+        if "mean_housing" in five.columns:
+            ax.plot(x, five["mean_housing"] * 100, marker=_marker(0),
+                    color=_colour(0), label="Housing")
+            for i, (column, label) in enumerate(
+                    (("equity", "Equity (both legs)"),
+                     ("fixed_income", "Bonds and bills")), start=1):
+                if column in five.columns:
+                    ax.plot(x, five[column] * 100, marker=_marker(i),
+                            color=_colour(i), label=label)
+        ax.set_xlabel("Annual holding cost on housing (%)")
+        ax.set_ylabel("Weight in the optimal portfolio (%)")
+        ax.set_title("What housing displaces")
+        ax.legend(fontsize=8)
+
+        fig.tight_layout()
+        return _save(fig, directory, name)
