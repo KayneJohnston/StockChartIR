@@ -163,17 +163,10 @@ def front_matter(ctx: Any) -> List[Flowable]:
         f"explains {pc(float(lottery['r2_retirement_window']), 0)} of the "
         f"variation in retirement outcomes, a lottery no allocation rule can "
         f"diversify away. "
-f"Throughout, the panel is restricted to the "
-        f"{pr['n_countries']} developed markets whose equity, bond and bill "
-        f"returns were actually recorded. The developed-market universe runs "
-        f"to 38, and the missing {pr['n_removed']} could be filled with draws "
-        f"from a model fitted to the countries that remain; we do not do this, "
-        f"because it would widen the cross-section without adding evidence a "
-        f"reader can check. Every one of the panel's {pr['cells']:,} return "
-        f"cells is an observation, and we audit that claim rather than assert "
-        f"it. The cost — an international leg spanning "
-        f"{pr['n_countries'] - 1} foreign markets rather than 37 — is the "
-        f"paper's principal limitation and is stated as such."
+f"The panel's principal limitation is its breadth: "
+        f"{pr['n_countries']} developed markets, so the international leg "
+        f"spans {pr['n_countries'] - 1} foreign markets, all advanced "
+        f"economies with long recorded histories."
     )
     out.append(Paragraph(abstract, s["abstract"]))
     out.append(Paragraph(
@@ -452,11 +445,10 @@ def section_background(ctx: Any) -> List[Flowable]:
         "international asset-return work and it is what makes an exercise of "
         "this kind possible at all."))
     out.append(ctx.p(
-        f"It is also the binding constraint on this study. "
-        f"{f.panel['n_tier_a']} countries carry complete recorded equity, bond "
-        f"and bill returns; the developed-market universe runs to 38. We work "
-        f"with the {f.panel['n_tier_a']}, and Sections 3.2 and 16.1 set out "
-        f"what that costs and why we prefer it to the alternative."))
+        f"It is also the binding constraint on this study: it carries complete "
+        f"equity, bond and bill total returns for {f.panel['n_tier_a']} "
+        f"countries, and that set is our panel. Section 3.2 describes it and "
+        f"Section 16.1 sets out what its breadth costs."))
 
     out.append(ctx.h2("2.4 Adjacent literatures this paper touches"))
     out.extend(ctx.bullets([
@@ -543,56 +535,29 @@ def section_data(ctx: Any) -> List[Flowable]:
         "is precisely the period a survivorship-prone sample would drop.",
         max_height=11.5 * cm))
 
-    out.append(ctx.h2("3.2 Sixteen countries, and why not thirty-eight"))
+    out.append(ctx.h2("3.2 The country set"))
     out.append(ctx.p(
         f"The Jordà–Schularick–Taylor database carries complete, independently "
         f"sourced equity, bond and bill total returns for {p['n_tier_a']} "
-        f"countries. Those {p['n_tier_a']} are our panel. Every country-year "
-        f"of every return series in it is a number somebody recorded."))
+        f"countries: {', '.join(sorted(tier_a['country']))}. That set is the "
+        f"panel, and every country-year of every return series in it is a "
+        f"recorded observation."))
     out.append(ctx.p(
-        f"The developed-market universe is wider than that. Counting IMF "
-        f"advanced economies with an investable domestic equity market, plus "
-        f"Poland, gives 38 — the cross-section the study we are replicating "
-        f"uses, drawing on a proprietary database we cannot obtain. For the "
-        f"remaining {pr['n_removed']} markets, no openly licensed source we "
-        f"can reach carries an equity, bond or bill return series at all."))
+        f"The wider developed-market universe — IMF advanced economies with an "
+        f"investable domestic equity market, plus Poland — numbers 38. The "
+        f"histories of the other {pr['n_removed']} exist in commercial "
+        f"databases such as Global Financial Data and Dimson–Marsh–Staunton, "
+        f"which are proprietary and not redistributable. Working from openly "
+        f"licensed sources, {p['n_tier_a']} is the extent of the recorded "
+        f"evidence, and Section 3.6.1 reports what the excluded countries do "
+        f"carry."))
     out.append(ctx.p(
-        "There is a standard way to close that gap. Fit a single-factor model "
-        "to the countries you do have, assign each missing country a donor, "
-        "and draw its returns from the donor's loadings plus noise carrying "
-        "the donor's residual covariance. The result looks like a 38-country "
-        "panel, reproduces the target cross-section exactly, and is defensible "
-        "in the sense that every parameter is estimated from real data."))
-    out.append(ctx.p(
-        "<b>We do not do this, and the reason is worth stating plainly.</b> A "
-        "reader cannot check a number that came out of a random number "
-        "generator. Worse, the exercise is self-defeating in a specific way: "
-        "the generated countries carry the fitted cross-section's average "
-        "behaviour and none of its idiosyncrasy, so averaging them into the "
-        "international leg makes that leg smoother and more correlated with "
-        "the domestic leg than a genuine cross-section of national markets is. "
-        "They would dilute the diversification benefit this paper measures "
-        "while making the evidence base look more than twice as broad. A "
-        "cross-section of thirty-eight reads as stronger evidence than one of "
-        "sixteen precisely when it is weaker."))
-    out.append(ctx.p(
-        f"So we take the narrower panel and pay for it openly: the "
-        f"international leg is an average over {p['n_tier_a'] - 1} foreign "
-        f"markets rather than 37, and every statement in this paper about "
-        f"international diversification is a statement about that set. Section "
-        f"16.1 develops the limitation; Section 3.6 audits the data we do use, "
-        f"reports what the excluded countries have that is real, and describes "
-        f"two further bodies of recorded data we hold and deliberately leave "
-        f"out of the model."))
-    out.append(ctx.p(
-        "One piece of bookkeeping supports all of this. Provenance is tracked "
-        "for every cell of the panel — one country, one year, one return "
-        "series — and each country's tier label is <i>derived</i> from those "
-        "records rather than assigned alongside them: a country is Tier A only "
-        "when every available cell of every return series is an observation. "
-        "Every country here is Tier A, and a separate check reports any cell "
-        "that is available but not observed. It is empty. Nothing about the "
-        "panel's provenance needs to be taken on trust."))
+        f"That breadth is the paper's principal limitation and Section 16.1 "
+        f"develops it. Its most direct consequence is on the international "
+        f"leg, which is a leave-one-out average and therefore spans "
+        f"{p['n_tier_a'] - 1} foreign markets, all advanced economies with "
+        f"long histories. Every statement here about international "
+        f"diversification is a statement about that set."))
 
     out.append(ctx.h2("3.3 Constructing the international leg"))
     out.append(ctx.p(
@@ -694,36 +659,25 @@ def section_data(ctx: Any) -> List[Flowable]:
         "is <i>less</i> able to draw from countries with disrupted histories "
         "at long block lengths, which we quantify rather than assume: the "
         "run-length admissibility statistics are reported in Section 4.1."))
-    out.append(ctx.h2("3.6 A provenance audit"))
+    out.append(ctx.h2("3.6 Auditing the data"))
     out.append(ctx.p(
-        "A panel assembled from a redistributed copy of someone else's "
-        "database deserves more scepticism than a citation. This section "
-        "establishes four things: that every number in the panel is an "
-        "observation, that the file those observations came from is genuine, "
-        "that one stretch of it does not pass a basic consistency test, and "
-        "what recorded data we hold that the model deliberately does not use."))
-    out.append(ctx.p(
-        f"The first is measured rather than asserted. The panel's "
-        f"{pr['country_years']:,} usable country-years carry three return "
-        f"series each, so it holds {pr['cells']:,} return cells; "
-        f"{pr['cells_simulated']:,} of them are generated. Provenance is "
-        f"recorded per cell, tier labels are derived from those records, and a "
-        f"separate check reports any cell that is available but not observed. "
-        f"That check is empty. If a generated block ever entered the panel, "
-        f"the tier label would change and the check would fill up — the claim "
-        f"is falsifiable by construction rather than maintained by care."))
+        "The database is used here through a redistributed copy rather than "
+        "obtained from its compilers, which deserves more scepticism than a "
+        "citation. This section asks whether the file is genuine, reports one "
+        "test it does not pass, and describes three bodies of recorded data "
+        "that sit in the sources and stay out of the model."))
 
-    out.append(ctx.h3("3.6.1 What the excluded countries do have"))
+    out.append(ctx.h3("3.6.1 Why the panel stops at sixteen"))
     out.append(ctx.p(
-        "Four of the excluded countries are not blank. Austria, Canada, "
-        "Ireland and New Zealand carry recorded interest-rate histories: "
-        "long-term yields and short rates in the macro file for Canada and "
-        "Ireland, Clio-Infra long yields for Austria and New Zealand. A bond "
-        "total return follows from a yield and a duration, "
-        "<i>r<sub>t</sub> = y<sub>t−1</sub> + D(y<sub>t−1</sub> − "
+        "The boundary is set by equity. Four countries outside the panel do "
+        "carry recorded interest-rate histories: long-term yields and short "
+        "rates in the macro file for Canada and Ireland, Clio-Infra long "
+        "yields for Austria and New Zealand. Those are enough to build real "
+        "bond and bill returns — a bond total return follows from a yield and "
+        "a duration, <i>r<sub>t</sub> = y<sub>t−1</sub> + D(y<sub>t−1</sub> − "
         "y<sub>t</sub>)</i>; a bill return is a lagged short rate; and "
-        "deflating both by that country's own price index gives a real return "
-        "that was measured rather than drawn. We built those series."))
+        "deflating both by that country\u2019s own price index gives a real "
+        "return that was measured rather than modelled."))
     if len(unusable):
         out.extend(ctx.table(
             rows_from(unusable,
@@ -744,22 +698,12 @@ def section_data(ctx: Any) -> List[Flowable]:
                         ctx.width * 0.10, ctx.width * 0.10,
                         ctx.width * 0.14]))
     out.append(ctx.p(
-        "They still cannot enter the panel. A lifecycle investor needs a "
-        "domestic <i>equity</i> return; the macro file carries none for these "
-        "countries, not even the interpolated variants it supplies elsewhere; "
-        "and no accessible source provides one. Adding them would mean "
-        "generating the single most important series in the model. We report "
-        "the exercise because it is the reason the answer is sixteen countries "
-        "and not twenty — the gap was checked, not assumed."))
-    out.append(ctx.p(
-        "Nor could the gap be closed from outside. The remaining developed "
-        "markets have equity histories in commercial databases — Global "
-        "Financial Data and Dimson–Marsh–Staunton among them — but those are "
-        "proprietary and not redistributable, which is the same constraint "
-        "that prevents a direct replication of the original study. Working "
-        "from openly licensed sources, sixteen countries is the ceiling on "
-        "recorded equity, and we treat it as a limit rather than something to "
-        "engineer around."))
+        "None of it gets them into the panel. A lifecycle investor needs a "
+        "domestic <i>equity</i> return, and the macro file carries none for "
+        "these four — not even the interpolated variants it supplies "
+        "elsewhere. Rates alone cannot support a portfolio choice. That is why "
+        "the panel is sixteen countries and not twenty."))
+
 
     hs = pr.get("housing", {})
     if hs.get("countries"):
@@ -977,54 +921,14 @@ def section_data(ctx: Any) -> List[Flowable]:
         "percent of the panel's country-years and cannot move a 68-year "
         "lifecycle result materially, but the finding is recorded rather than "
         "left for a reader to discover."))
-
-    out.append(ctx.h3("3.6.6 What the international leg is made of"))
-    out.append(ctx.p(
-        "Section 5 attributes the headline result to international "
-        "diversification rather than to equity exposure as such, which puts "
-        "unusual weight on the composition of the cross-section. The "
-        "international leg is a leave-one-out average across every country "
-        "with data in a given year, so whatever is in the panel is what the "
-        "investor is diversifying into."))
-    out.extend(ctx.table(
-        rows_from(contamination, ["era", "observations",
-                                  "mean_synthetic_share_of_intl_leg"],
-                  ["Era", "Country-years",
-                   "Mean simulated share of the international leg"],
-                  {"era": str, "observations": lambda v: f"{int(v):,}",
-                   "mean_synthetic_share_of_intl_leg": lambda v: pc(v, 1)}),
-        "How much of an investor's international leg is simulated",
-        note="Zero throughout, by construction: the panel contains no "
-             "generated market to average in."))
-    out.append(ctx.p(
-        f"The table is a row of zeros, which is the point of Section 3.2 "
-        f"arriving as a number. Had we filled the {pr['n_removed']} missing "
-        f"markets with model draws, the same calculation would read 38% across "
-        f"the whole sample and 59% after 2000: the average investor's "
-        f"international diversification would have been, in substantial part, "
-        f"diversification into markets that never existed. That is the "
-        f"specific failure the narrower panel avoids, and it is why the "
-        f"trade-off in Section 3.2 goes the way it does."))
-    out.append(ctx.p(
-        f"What the panel gives up is breadth. The leg averages over "
-        f"{p['n_tier_a'] - 1} foreign markets, all of them advanced economies "
-        f"with long recorded histories, so the diversification measured here "
-        f"is diversification across rich-country equity markets and nothing "
-        f"wider. Section 16.1 takes that limitation seriously; on the panel we "
-        f"have, the all-equity portfolio leads the target-date fund by "
-        f"<b>{adv['observed']:.1f}%</b> in certainty-equivalent consumption, "
-        f"and every input to that number is a recorded observation."))
-
     out.extend(ctx.figure(
         "fig38_data_provenance",
-        "Left: the panel's return cells by era, split observed against "
-        "generated; the generated series is absent because there is none, and "
-        "the label gives the mean size of the cross-section since bar height "
-        "also tracks era length. Centre: usable years per country, which is "
-        "what the history-weighted country draw acts on — the histories are "
-        "even enough that the weighting barely bites. Right: the ratio of each "
-        "country's 2016–2020 equity-return standard deviation to its 1950–2015 "
-        "standard deviation, every country below one.",
+        "The variance test, read two ways. Left: each country's standard "
+        "deviation over the final five years as a ratio of its own 1950–2015 "
+        "standard deviation. Right: the two standard deviations plotted "
+        "against each other, with the 45-degree line. One country below the "
+        "line would be unremarkable; every country below it is a property of "
+        "the file rather than of the markets.",
         max_height=8.0 * cm))
 
     out.extend(ctx.figure(

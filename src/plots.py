@@ -1704,72 +1704,61 @@ def plot_provenance(era: pd.DataFrame, contamination: pd.DataFrame,
                     tail: pd.DataFrame, countries: pd.DataFrame,
                     directory: str | Path,
                     name: str = "fig38_data_provenance") -> Path:
-    """What the panel is made of, and the one test its source fails.
+    """Does the last stretch of every equity series look like the rest of it?
 
-    The middle panel used to show how much of an investor's international leg
-    was simulated. That is zero now, and a bar chart of zeros says nothing, so
-    it shows the panel's actual shape instead: how many years each country
-    contributes, which is what the history-weighted country draw acts on.
+    The same test read two ways. Left: each country's tail standard deviation
+    as a ratio of its own long-run standard deviation, so one bar per country
+    and a line at parity. Right: the two standard deviations against each
+    other with the 45-degree line, which turns "every country is smoother"
+    from a claim into something the eye checks in one pass.
+
+    ``era`` and ``contamination`` are accepted for interface stability and are
+    not drawn: both describe the mix of recorded and generated data, and the
+    panel they describe contains nothing generated.
     """
+    block = tail.dropna(subset=["ratio"]).copy()
     with plt.rc_context(STYLE):
-        fig, axes = plt.subplots(1, 3, figsize=(16.5, 5.0))
+        fig, axes = plt.subplots(1, 2, figsize=(13.5, 5.4),
+                                 gridspec_kw={"width_ratios": [1.15, 1.0]})
 
         ax = axes[0]
-        block = era.copy()
-        x = np.arange(len(block))
-        # Cells, not country-years: one country, one year, one return series.
-        total = block.get("return_cells", block["country_years"]).to_numpy(float)
-        simulated = block["simulated"].to_numpy(float)
-        observed = total - simulated
-        ax.bar(x, observed, color=_colour(0), width=0.62, label="observed")
-        if simulated.any():
-            ax.bar(x, simulated, bottom=observed, color=_colour(1), width=0.62,
-                   label="generated")
-        # Bar height tracks era length as much as coverage, so the label
-        # carries the number that does not: how many countries were actually
-        # in the cross-section.
-        if "mean_countries_available" in block:
-            for i, value in enumerate(block["mean_countries_available"]):
-                ax.text(i, total[i] * 1.02, f"{value:.0f} countries",
-                        ha="center", fontsize=8, color="0.35")
-            ax.set_ylim(0, total.max() * 1.16)
-        ax.set_xticks(x)
-        ax.set_xticklabels(block["era"], fontsize=8)
-        ax.set_ylabel("Return cells (country x year x series)")
-        title = ("Every return cell in the panel is an observation"
-                 if not simulated.any() else
-                 "A generated block has returned to the panel")
-        ax.set_title(f"{title}\n(bar height also reflects era length)",
-                     fontsize=10)
-        ax.legend(fontsize=8, loc="upper right")
-        ax.grid(axis="x", alpha=0.0)
-
-        ax = axes[1]
-        block = countries.sort_values("usable_years")
-        y = np.arange(len(block))
-        ax.barh(y, block["usable_years"], color=_colour(2), height=0.68)
-        ax.set_yticks(y)
-        ax.set_yticklabels(block["iso"], fontsize=7.5)
-        ax.set_xlabel("Usable country-years in the panel")
-        span = block["usable_years"]
-        ax.set_title(f"Histories run {int(span.min())}-{int(span.max())} years, "
-                     f"so weighting the country\ndraw by history barely "
-                     f"differs from weighting it evenly", fontsize=10)
-        ax.grid(axis="y", alpha=0.0)
-
-        ax = axes[2]
-        block = tail.sort_values("ratio")
-        y = np.arange(len(block))
-        ax.barh(y, block["ratio"], color=_colour(1), height=0.62)
+        ordered = block.sort_values("ratio")
+        y = np.arange(len(ordered))
+        ax.barh(y, ordered["ratio"], color=_colour(1), height=0.66)
         ax.axvline(1.0, color="black", linewidth=1.3)
-        ax.annotate("equal variance", (1.0, len(block) - 0.4),
+        ax.annotate("equal variance", (1.0, len(ordered) - 0.4),
                     textcoords="offset points", xytext=(5, 0), fontsize=8)
         ax.set_yticks(y)
-        ax.set_yticklabels(block["iso"], fontsize=7.5)
-        ax.set_xlabel("Tail s.d. \u00f7 reference s.d. (equity returns)")
-        ax.set_title("Every country's last five years are\n"
-                     "smoother than its history", fontsize=10)
+        ax.set_yticklabels(ordered["iso"], fontsize=7.5)
+        ax.set_xlabel("Tail s.d. \u00f7 long-run s.d. (real equity returns)")
+        ax.set_title("Every country's final years are smoother\n"
+                     "than its own history", fontsize=10)
         ax.grid(axis="y", alpha=0.0)
+
+        ax = axes[1]
+        ref = block["sd_reference"] * 100
+        late = block["sd_tail"] * 100
+        top = float(max(ref.max(), late.max())) * 1.08
+        ax.plot([0, top], [0, top], color="black", linewidth=1.2,
+                label="equal variance")
+        ax.scatter(ref, late, s=52, color=_colour(1), edgecolor="white",
+                   linewidth=0.6, zorder=3)
+        for _, row in block.iterrows():
+            x = float(row["sd_reference"]) * 100
+            # Labels flip to the left near the right edge so none is clipped.
+            flip = x > top * 0.82
+            ax.annotate(str(row["iso"]), (x, float(row["sd_tail"]) * 100),
+                        textcoords="offset points",
+                        xytext=(-6 if flip else 5, -3),
+                        ha="right" if flip else "left",
+                        fontsize=7, color="0.35")
+        ax.set_xlim(0, top)
+        ax.set_ylim(0, top)
+        ax.set_xlabel("Long-run standard deviation (%)")
+        ax.set_ylabel("Standard deviation over the final years (%)")
+        ax.set_title("Every point sits below the line,\n"
+                     "which one country alone would not do", fontsize=10)
+        ax.legend(fontsize=8, loc="upper left")
         fig.tight_layout()
     return _save(fig, directory, name)
 
