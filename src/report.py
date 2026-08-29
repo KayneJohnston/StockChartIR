@@ -68,6 +68,16 @@ def _write(path: str | Path, sections: Sequence[str]) -> Path:
     return path
 
 
+def _and_list(items: Sequence[str]) -> str:
+    """``"a"``, ``"a and b"``, ``"a, b and c"`` -- prose, not a Python repr."""
+    items = list(items)
+    if not items:
+        return ""
+    if len(items) == 1:
+        return items[0]
+    return f"{', '.join(items[:-1])} and {items[-1]}"
+
+
 def _header(title: str, subtitle: str) -> str:
     stamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     return textwrap.dedent(f"""
@@ -5376,17 +5386,19 @@ def write_doc_16(
         if moves[loser] < -0.01:
             untouched = [name for name, move in moves.items()
                          if abs(move) < 0.01]
+            givers = [name for name, move in moves.items() if move < -0.01]
             displaced = (
                 f"The weight comes out of **{loser}**, which falls "
                 f"{abs(moves[loser]):.0%} of the portfolio between the dearest "
                 f"and the free case -- more than any other asset gives up."
-                + (f" {', '.join(untouched).capitalize()} "
+                + (f" {_and_list(untouched).capitalize()} "
                    f"{'is' if len(untouched) == 1 else 'are'} untouched at "
-                   "every cost, so housing is not substituting for the "
-                   "portfolio at large: it is competing with the one holding "
-                   "that already does this job."
+                   "every cost. Housing is therefore not substituting for the "
+                   "portfolio at large but for its "
+                   + ("growth sleeve" if len(givers) > 1 else "single largest "
+                      "holding") + ".")
                    if untouched else
-                   " The rest of the portfolio absorbs the remainder."))
+                   " The rest of the portfolio absorbs the remainder.")
 
     # Does the smoothing bias the answer, and in which direction?
     raw_note = "_The comparison against the raw series was not run._"
@@ -5447,6 +5459,37 @@ def write_doc_16(
                     f"buys up to {best_gain:.2f}% more certainty-equivalent "
                     "consumption -- large enough that the constant-mix reading "
                     "above should be treated as indicative only.")
+
+            working = age_varying.get("housing_working")
+            retired = age_varying.get("housing_retired")
+            if working is not None and retired is not None:
+                rises = bool((retired.to_numpy() > working.to_numpy()).all())
+                falls = bool((retired.to_numpy() < working.to_numpy()).all())
+                widest = int(np.argmax(np.abs(retired.to_numpy()
+                                              - working.to_numpy())))
+                if rises:
+                    age_note += (
+                        f"\n\nThe shape is worth naming whatever its size. "
+                        f"Housing is the one asset in this project whose "
+                        f"optimal weight **rises** with age: at a "
+                        f"{float(age_varying['holding_cost'].iloc[widest]):.0%} "
+                        f"holding cost the solved schedule holds "
+                        f"{float(working.iloc[widest]):.0%} of it while working "
+                        f"and {float(retired.iloc[widest]):.0%} in retirement. "
+                        "That is the opposite of the glide path this project "
+                        "spends most of its length arguing against, and it has "
+                        "a reading: a retiree drawing on the portfolio wants "
+                        "the asset whose volatility is lowest relative to its "
+                        "return, and once the smoothing is undone housing is "
+                        "still that asset.")
+                elif falls:
+                    age_note += (
+                        f"\n\nThe solved schedule holds **less** housing in "
+                        f"retirement than while working -- "
+                        f"{float(retired.iloc[widest]):.0%} against "
+                        f"{float(working.iloc[widest]):.0%} at the widest "
+                        "point -- which is a conventional glide-path shape, in "
+                        "an asset the rest of this project does not hold.")
 
     age_tbl = md_table(_compact(
         _pct(age_varying, ["holding_cost", "mean_housing",

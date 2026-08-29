@@ -3968,6 +3968,34 @@ def section_housing(ctx: Any) -> List[Flowable]:
                "That is large enough that the constant-mix figures above "
                "should be read as indicative of the level rather than as the "
                "optimum itself.")))
+        working = age["housing_working"].to_numpy()
+        retired = age["housing_retired"].to_numpy()
+        widest = int(np.argmax(np.abs(retired - working)))
+        if bool((retired > working).all()):
+            out.append(ctx.p(
+                f"The <i>shape</i> of that schedule is worth naming whatever "
+                f"its size. Housing is the one asset in this paper whose "
+                f"optimal weight <b>rises</b> with age: at a "
+                f"{pc(float(age['holding_cost'].iloc[widest]), 0)} holding "
+                f"cost the solved schedule holds "
+                f"{pc(float(working[widest]), 0)} of it while working and "
+                f"{pc(float(retired[widest]), 0)} in retirement. That is the "
+                f"opposite of the declining glide path Sections 8 and 9 "
+                f"searched for and did not find in equities, and it has a "
+                f"reading: a retiree drawing on the portfolio wants the asset "
+                f"with the best return per unit of volatility, and once the "
+                f"appraisal smoothing is undone housing is still that asset. "
+                f"It is also the sharpest illustration of this section's "
+                f"caveat — the schedule is only implementable by someone who "
+                f"can rebalance into and out of property annually, which is "
+                f"nobody."))
+        elif bool((retired < working).all()):
+            out.append(ctx.p(
+                f"The solved schedule holds <b>less</b> housing in retirement "
+                f"than while working — {pc(float(retired[widest]), 0)} against "
+                f"{pc(float(working[widest]), 0)} at the widest point — a "
+                f"conventional glide-path shape, in an asset the rest of this "
+                f"paper does not hold."))
     except FileNotFoundError:
         pass
 
