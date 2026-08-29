@@ -873,30 +873,55 @@ def plot_hedging(frame: pd.DataFrame, break_even: pd.DataFrame,
         ax.axhline(0, color="black", linewidth=1.2)
         ax.set_xlabel("Share of the international sleeve hedged (%)")
         ax.set_ylabel("CEC gain over unhedged (%)")
-        ax.set_title("Hedging is worth little, and only in small doses",
+        # Titled from the data: whether any ratio pays at zero cost is the
+        # whole question the panel answers.
+        free = block[(block["hedge_cost"] == 0.0) & (block["hedge_ratio"] > 0)]
+        pays = bool((free[metric].to_numpy() > baseline).any())
+        ax.set_title("Hedging is worth little, and only in small doses" if pays
+                     else "Every hedge ratio loses, even when hedging is free",
                      fontsize=10)
         ax.legend(fontsize=8)
 
         ax = axes[1]
-        ordered = break_even.sort_values("hedge_ratio")
-        ticks = (ordered["hedge_ratio"] * 100).to_numpy()
-        heights = (ordered["break_even_annual_cost"] * 1e4).to_numpy()
-        positions = np.arange(len(ordered))
-        ax.bar(positions, np.nan_to_num(heights), width=0.55, color=_colour(0))
-        top = np.nanmax(heights) if np.isfinite(heights).any() else 1.0
-        for x, height in zip(positions, heights):
-            if np.isfinite(height):
-                ax.text(x, height + top * 0.03, f"{height:.0f}bp",
-                        ha="center", fontsize=9)
-            else:
-                ax.text(x, top * 0.04, "never\nworth it", ha="center",
-                        fontsize=9, color=_colour(1))
-        ax.set_xticks(positions)
-        ax.set_xticklabels([f"{t:.0f}%" for t in ticks])
-        ax.set_ylim(0, top * 1.22)
-        ax.set_xlabel("Share of the international sleeve hedged")
-        ax.set_ylabel("Break-even annual hedging cost (bp)")
-        ax.set_title("What you could afford to pay", fontsize=10)
+        if pays:
+            ordered = break_even.sort_values("hedge_ratio")
+            ticks = (ordered["hedge_ratio"] * 100).to_numpy()
+            heights = (ordered["break_even_annual_cost"] * 1e4).to_numpy()
+            positions = np.arange(len(ordered))
+            ax.bar(positions, np.nan_to_num(heights), width=0.55,
+                   color=_colour(0))
+            top = np.nanmax(heights) if np.isfinite(heights).any() else 1.0
+            for x, height in zip(positions, heights):
+                if np.isfinite(height):
+                    ax.text(x, height + top * 0.03, f"{height:.0f}bp",
+                            ha="center", fontsize=9)
+                else:
+                    ax.text(x, top * 0.04, "never\nworth it", ha="center",
+                            fontsize=9, color=_colour(1))
+            ax.set_xticks(positions)
+            ax.set_xticklabels([f"{t:.0f}%" for t in ticks])
+            ax.set_ylim(0, top * 1.22)
+            ax.set_xlabel("Share of the international sleeve hedged")
+            ax.set_ylabel("Break-even annual hedging cost (bp)")
+            ax.set_title("What you could afford to pay", fontsize=10)
+        else:
+            # No ratio pays, so a break-even chart is an empty box. Show where
+            # the loss is actually incurred instead: the bottom of the
+            # distribution, which is what the certainty equivalent weighs.
+            tail = (block[block["hedge_cost"] == 0.0]
+                    .drop_duplicates("hedge_ratio").sort_values("hedge_ratio"))
+            x = tail["hedge_ratio"].to_numpy() * 100
+            ax.plot(x, tail["p5_retirement_consumption"], "-o", markersize=5,
+                    color=_colour(0))
+            ax.axhline(float(tail["p5_retirement_consumption"].iloc[0]),
+                       color="black", linewidth=1.1, linestyle="--")
+            ax.annotate("unhedged", (x[-1], tail["p5_retirement_consumption"]
+                                     .iloc[0]), textcoords="offset points",
+                        xytext=(-4, 5), ha="right", fontsize=8)
+            ax.set_xlabel("Share of the international sleeve hedged (%)")
+            ax.set_ylabel("5th-percentile retirement consumption")
+            ax.set_title("The loss lands in the left tail,\nwhich is what the "
+                         "certainty equivalent weighs", fontsize=10)
 
         ax = axes[2]
         moments = (block[block["hedge_cost"] == 0.0]

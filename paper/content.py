@@ -133,13 +133,12 @@ def front_matter(ctx: Any) -> List[Flowable]:
         f"parameters on the simplex — adds {alloc_lead:.2f}% over the best "
         f"fixed benchmark while still producing no glide path. Relaxing the "
         f"long-only constraint, borrowing to invest is worth "
-        f"{lev_free:+.2f}% at a zero spread over the real bill rate, breaks "
-        f"even at a spread of {break_even:.2%}, and is worth under a tenth of "
-        f"a percent from {lev['negligible_spread']:.2%} upward — and what the "
-        f"optimiser levers is a diversified portfolio rather than a "
-        f"concentrated one. Currency hedging the international leg is worth "
-        f"less than "
-        f"its own cost beyond a modest hedge ratio. Making the retirement date a "
+        f"{lev_free:+.2f}% at a zero borrowing spread over the real bill rate "
+        f"but decays quickly in that spread, breaking even by "
+        f"{break_even:.2%} — and what the optimiser levers is a diversified "
+        f"portfolio rather than a concentrated one. Currency hedging the "
+        f"international leg loses certainty-equivalent consumption at every "
+        f"ratio tested, even when the hedge is free. Making the retirement date a "
         f"wealth-triggered decision rather than a birthday is worth about 3% "
         f"of certainty-equivalent consumption against a date matched on the "
         f"same mean retirement age. Conditioning the savings rate on the "
@@ -2659,7 +2658,8 @@ def section_hedging(ctx: Any) -> List[Flowable]:
         "parameter of interest. Hedging is not free — it consumes bid-offer, "
         "collateral and roll — and the question a practitioner faces is not "
         "\"is hedging good?\" but \"is hedging good at the price I can get it "
-        "for?\""))
+        "for?\" Setting the cost to zero therefore gives the decision its "
+        "most favourable possible reading, which is where we start."))
 
     out.extend(ctx.table(
         rows_from(breakeven, ["hedge_ratio", "unhedged_cec",
@@ -2677,39 +2677,50 @@ def section_hedging(ctx: Any) -> List[Flowable]:
              "exactly offsets its benefit. \"Never\" means the hedged "
              "position loses even at zero cost, so no price makes it "
              "worthwhile."))
-    out.append(ctx.p(
-        f"At a {pc(float(be25['hedge_ratio']), 0)} hedge ratio and zero cost "
-        f"the gain is {f2(float(be25['gain_at_zero_cost_pct']), 2)}% of "
-        f"certainty-equivalent consumption, and the break-even annual cost is "
-        f"{pc(float(be25['break_even_annual_cost']), 2)}. That is a thin "
-        f"margin. A fully hedged position "
-        f"({pc(float(full['hedge_ratio']), 0)}) is worse than unhedged even "
-        f"before any cost is charged — it gives up "
-        f"{f2(abs(float(full['gain_at_zero_cost_pct'])), 2)}% at zero cost — "
-        f"so there is no price at which it makes sense."))
-    out.append(ctx.p(
-        f"Tracing the optimal hedge ratio as a function of cost makes the "
-        f"practical conclusion sharp: the optimum is "
-        f"{pc(float(free['optimal_hedge_ratio']), 0)} when hedging is free, "
-        f"and it collapses to zero once the annual cost exceeds roughly "
-        f"{pc(float(optimal[optimal['optimal_hedge_ratio'] == 0.0]['hedge_cost'].min()), 2)}. "
-        f"Since realistic all-in hedging costs for a retail investor sit above "
-        f"that threshold, the model's answer is that a lifecycle investor "
-        f"should not hedge the international leg at all."))
-    out.append(ctx.p(
-        "The mechanism is worth stating because it is not the usual one. "
-        "Currency exposure does add volatility, and over a single year hedging "
-        "reduces it. But over a 68-year horizon the real exchange rate is "
-        "mean-reverting and partially offsets the equity shock — a domestic "
-        "crisis tends to come with a weaker home currency, which raises the "
-        "home-currency value of foreign assets exactly when they are needed. "
-        "Hedging removes that offset. The cost is paid in the left tail, "
-        "which is where the certainty equivalent is most sensitive."))
+    # Classified from the table: whether any ratio pays at zero cost is the
+    # whole question, and it must not be written down in advance of the answer.
+    payers = breakeven[breakeven["gain_at_zero_cost_pct"] > 0.0]
+    best_free = float(free["optimal_hedge_ratio"])
+    if payers.empty:
+        worst = breakeven.loc[breakeven["gain_at_zero_cost_pct"].idxmin()]
+        least = breakeven.loc[breakeven["gain_at_zero_cost_pct"].idxmax()]
+        out.append(ctx.p(
+            f"<b>The answer here is that no price is low enough.</b> Every "
+            f"hedge ratio tested loses certainty-equivalent consumption "
+            f"before a single basis point of cost is charged. The mildest is "
+            f"a {pc(float(least['hedge_ratio']), 0)} hedge, which gives up "
+            f"{f2(abs(float(least['gain_at_zero_cost_pct'])), 2)}%; the "
+            f"fully hedged position gives up "
+            f"{f2(abs(float(worst['gain_at_zero_cost_pct'])), 2)}%. The loss "
+            f"grows monotonically in the ratio, so there is no break-even cost "
+            f"to report: the decision is settled at zero, and adding a "
+            f"realistic charge only widens the gap."))
+        out.append(ctx.p(
+            f"Tracing the optimal ratio as a function of cost adds nothing, "
+            f"because it is {pc(best_free, 0)} at every cost including free. "
+            f"For a lifecycle investor holding this international leg, the "
+            f"model's answer is not \u201chedge if you can get it cheaply\u201d "
+            f"but \u201cdo not hedge.\u201d"))
+    else:
+        out.append(ctx.p(
+            f"At a {pc(float(be25['hedge_ratio']), 0)} hedge ratio and zero "
+            f"cost the gain is "
+            f"{f2(float(be25['gain_at_zero_cost_pct']), 2)}% of "
+            f"certainty-equivalent consumption, with a break-even annual cost "
+            f"of {pc(float(be25['break_even_annual_cost']), 2)}. A fully "
+            f"hedged position ({pc(float(full['hedge_ratio']), 0)}) gives up "
+            f"{f2(abs(float(full['gain_at_zero_cost_pct'])), 2)}% even before "
+            f"cost, so there is no price at which it makes sense."))
+
     out.extend(ctx.figure(
         "fig23_currency_hedging",
-        "Currency hedging by ratio and by annual cost. The advantage of "
-        "hedging is small and positive at low ratios and zero cost, and turns "
-        "negative quickly in both dimensions.",
+        "Left: the certainty-equivalent cost of hedging by ratio, at five "
+        "annual hedging costs; every line is below zero, so hedging loses even "
+        "when free. Centre: where the loss lands — fifth-percentile retirement "
+        "consumption falls monotonically in the hedge ratio, and the certainty "
+        "equivalent weighs that tail heavily. Right: why — hedging lowers the "
+        "standalone volatility of the foreign sleeve up to a half hedge, but "
+        "raises its correlation with the home market over the same range.",
         max_height=8.5 * cm))
     return out
 
