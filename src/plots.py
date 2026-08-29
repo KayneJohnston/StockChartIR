@@ -1829,15 +1829,17 @@ def plot_valuation(predictive: pd.DataFrame, buckets: pd.DataFrame,
                    advantage: pd.DataFrame, domestic: np.ndarray,
                    blended: np.ndarray, position: Mapping[str, Any],
                    directory: str | Path,
-                   name: str = "fig40_starting_valuation") -> Path:
+                   name: str = "fig40_starting_valuation",
+                   boundaries: pd.DataFrame | None = None) -> Path:
     """What the starting yield predicts, and what it does to a lifetime.
 
     Three readings of one variable: that it forecasts returns at all, where
     the present sits in its distribution, and whether the headline ranking
     survives conditioning on it.
     """
+    panels = 4 if boundaries is not None and len(boundaries) else 3
     with plt.rc_context(STYLE):
-        fig, axes = plt.subplots(1, 3, figsize=(16.5, 5.0))
+        fig, axes = plt.subplots(1, panels, figsize=(5.5 * panels, 5.0))
 
         ax = axes[0]
         block = predictive.sort_values("horizon_years")
@@ -1935,6 +1937,27 @@ def plot_valuation(predictive: pd.DataFrame, buckets: pd.DataFrame,
         ax.legend(handles + h2, labels_ + l2, fontsize=8, loc="lower center",
                   bbox_to_anchor=(0.5, -0.34), ncol=1)
         ax.grid(axis="x", alpha=0.0)
+
+        if panels == 4:
+            # The boundaries an investor could have drawn, as they drift. A
+            # fixed pair of cut-points is what the pooled split assumes, and
+            # the distance between the lines and it is the look-ahead.
+            ax = axes[3]
+            year = boundaries["year"].to_numpy(dtype=float)
+            lo = boundaries["cut_expensive_middling"].to_numpy() * 100
+            hi = boundaries["cut_middling_cheap"].to_numpy() * 100
+            ax.plot(year, lo, color=_colour(1), linewidth=1.8,
+                    label="expensive / middling")
+            ax.plot(year, hi, color=_colour(0), linewidth=1.8,
+                    label="middling / cheap")
+            ax.fill_between(year, lo, hi, color=_colour(2), alpha=0.18,
+                            label="the middling third")
+            ax.set_xlabel("Year the lifetime begins")
+            ax.set_ylabel("Blended dividend yield (%)")
+            ax.set_title("The boundaries an investor could\n"
+                         "actually have drawn, as they drift", fontsize=10)
+            ax.legend(fontsize=8, loc="lower left")
+
         fig.tight_layout()
     return _save(fig, directory, name)
 

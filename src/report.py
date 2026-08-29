@@ -4171,11 +4171,11 @@ the obvious failure and it did not fire.
   result of `docs/08`: real, measurable, and far too small to be where an
   investor's attention should go.
 
-## 7. Figures
+## 8. Figures
 
 {figure_list}
 
-## 8. Reproduction
+## 9. Reproduction
 
 ```bash
 python main.py --steps 12
@@ -5011,7 +5011,116 @@ def write_doc_15(
          "median_retirement_consumption": "Median retirement consumption",
          "p5_retirement_consumption": "5th percentile"}),
         floatfmt="{:.3f}")
-    cuts = ", ".join(f"{c:.2%}" for c in meta["cuts"])
+
+    boundaries = frames.get("boundaries")
+    leak = notes.get("leak", {})
+    hind = notes.get("hindsight_meta", {})
+    if boundaries is not None and len(boundaries):
+        decades = boundaries[boundaries["year"] % 10 == 0]
+        if decades.empty:
+            decades = boundaries
+        boundaries_tbl = md_table(_compact(
+            _pct(decades, ["cut_expensive_middling", "cut_middling_cheap"]),
+            ["year", "prior_country_years", "cut_expensive_middling",
+             "cut_middling_cheap"],
+            {"year": "Lifetime begins",
+             "prior_country_years": "Country-years of history",
+             "cut_expensive_middling": "Expensive / middling (%)",
+             "cut_middling_cheap": "Middling / cheap (%)"}),
+            floatfmt="{:.2f}")
+        pooled = ", ".join(f"{c:.2%}" for c in hind.get("cuts", []))
+        agreement = float(leak.get("agreement_pct", float("nan")))
+        if agreement > 95.0:
+            leak_verdict = (
+                f"and it turns out to have been worth little: the two "
+                f"labellings agree on {agreement:.1f}% of the lifetimes both "
+                f"can classify, so only "
+                f"{int(leak.get('reassigned', 0)):,} change bucket.")
+        elif agreement > 80.0:
+            leak_verdict = (
+                f"and it was worth something: the two labellings agree on "
+                f"{agreement:.1f}% of the lifetimes both can classify, so "
+                f"{int(leak.get('reassigned', 0)):,} of "
+                f"{int(leak.get('compared', 0)):,} were in the wrong bucket "
+                "under the pooled boundaries.")
+        else:
+            leak_verdict = (
+                f"**and it was worth a great deal.** The two labellings agree "
+                f"on only {agreement:.1f}% of the lifetimes both can "
+                f"classify: {int(leak.get('reassigned', 0)):,} of "
+                f"{int(leak.get('compared', 0)):,} sat in the wrong bucket "
+                "under the pooled boundaries, which is enough to have changed "
+                "what the conditioning appeared to show.")
+        # The buckets will not come out balanced, and the reason is a result
+        # rather than a defect. Classify it from the counts.
+        counts = list(meta.get("counts", []))
+        total_classified = max(sum(counts), 1)
+        shares = [c / total_classified for c in counts]
+        skewed = max(shares) > 0.40 if shares else False
+        biggest = list(meta.get("labels", []))[int(np.argmax(shares))] \
+            if shares else ""
+        if skewed:
+            balance_note = (
+                f"One consequence is worth stating plainly, because it looks "
+                f"like a bug and is not. The buckets do **not** come out "
+                f"balanced: {shares[0]:.0%} of classified lifetimes land in "
+                f"*{list(meta['labels'])[0].lower()}* against "
+                f"{shares[-1]:.0%} in *{list(meta['labels'])[-1].lower()}*. "
+                "Terciles of a fixed sample are balanced by construction; "
+                "terciles of an expanding one are not. Yields fell across "
+                "this panel, so a lifetime drawn in year `t` typically starts "
+                "at a yield below the average of everything before `t`, and "
+                "is therefore expensive *relative to its own history*. An "
+                "investor applying this rule in real time would have "
+                "concluded 'dear versus history' most of the time, for over "
+                "a century, while yields went on falling. That is the "
+                "difference between a signal fitted to a sample and one a "
+                "person could have run, and it is the reason the correction "
+                "was worth making.")
+        else:
+            balance_note = (
+                f"The buckets come out close to balanced -- "
+                f"{shares[0]:.0%} / {shares[len(shares)//2]:.0%} / "
+                f"{shares[-1]:.0%} -- which is not guaranteed once the "
+                "boundaries move, and means the drift in yields over the "
+                "panel was mild enough not to tip the classification.")
+
+        first_year = notes.get("first_usable_year")
+        boundaries_section = f"""## 5. Which bucket, on what an investor could know
+
+The yield above uses no future data. The *boundaries* are a second and
+separate question, and the obvious way to draw them gets it wrong: taking
+terciles of the whole panel at once puts the cut-points at {pooled}, so a
+lifetime beginning in 1910 is called cheap or dear against a threshold that
+already knows what happened in 2020. Nobody in 1910 could have known which
+tercile they were in.
+
+So the boundaries are computed recursively instead. A lifetime beginning in
+year `t` is ranked against every country-year strictly before `t` -- the
+distribution its own investor could have seen. The boundaries therefore move
+as history accumulates:
+
+{boundaries_tbl}
+
+They move a long way. Early cohorts faced higher yields, so ranking them
+against the whole sample -- dragged down by the low-yield modern era -- makes
+them look cheaper than they could possibly have known themselves to be.
+
+This costs coverage. Lifetimes beginning before enough history had
+accumulated cannot be classified at all, and are excluded rather than
+assigned to the nearest bucket: the study can label
+{float(meta.get('classified_pct', float('nan'))):.1f}% of lifetimes, those
+beginning in {first_year} or later. That is the price of a statistic a reader
+could actually have computed at the time.
+
+The difference between the two labellings is the size of the error,
+{leak_verdict}
+
+{balance_note}
+
+"""
+    else:
+        boundaries_section = ""
 
     sleeve = frames.get("sleeve")
     sleeve_notes = notes.get("sleeve", {})
@@ -5072,6 +5181,9 @@ not a measurement. So here is the measurement.
         ["bucket", "n_paths", "yield_floor", "yield_ceiling"],
         {"bucket": "Started", "n_paths": "Paths",
          "yield_floor": "Yield from", "yield_ceiling": "Yield to"}))
+    distribution_tbl = (
+        "Counts and boundaries below are the whole-panel (hindsight) split, "
+        "shown for orientation only:\n\n" + distribution_tbl)
 
     # Every verdict below is classified from the table it describes; none of
     # them is asserted, because any of them could come out the other way on a
@@ -5215,9 +5327,9 @@ difference.
 
 {distribution_tbl}
 
-Paths are split at the {cuts} cut-points of the drawn starting-yield
-distribution, so the buckets stay balanced however the sampler weights
-countries.
+Those boundaries are the ones a reader with the whole panel in front of them
+would draw. Section 5 replaces them with the ones an investor could actually
+have drawn at the time, which is not the same thing.
 
 **{position['iso']} in {int(position['year'])} carries a blended starting yield
 of {float(position['blended_yield']):.2%}, which is the
@@ -5230,7 +5342,7 @@ study draws from -- which is precisely why the unconditional average is the
 wrong number for them.
 
 {sleeve_section}
-## 5. What it does to the result
+{boundaries_section}## 6. What it does to the result
 
 {advantage_tbl}
 
@@ -5248,7 +5360,7 @@ changes much with valuation -- the spread above is
 {float(lead.mean()):.1f}% -- but what happens to the level.
 {verdict_5}
 
-## 6. What this does not do
+## 7. What this does not do
 
 The conditioning applies to the **first** drawn block only. A lifetime is a
 chain of calendar windows and only the first is a starting condition; the rest
@@ -5256,6 +5368,15 @@ are the future, which no investor chooses. So the effect measured here is the
 effect of the opening decade's valuation on a 68-year outcome, diluted by
 everything that follows. A design that made the whole chain valuation-dependent
 would report a larger effect and would be assuming a great deal more.
+
+Nor is the expanding window the only real-time normalisation available. A
+rolling window would forget the distant past rather than accumulate it, and
+ranking a country against its own history rather than the panel's would drop
+the assumption that an investor watches every market. Both are defensible and
+both would produce a different split; the expanding panel-wide window is
+chosen because it uses the most information that was genuinely available, and
+because it is the one whose failure mode -- persistent drift in the boundaries
+-- is visible in the table above rather than hidden.
 
 Nor does this speak to timing. The result is conditional on where you start,
 not a claim that anyone should wait for a better entry point: the sampler

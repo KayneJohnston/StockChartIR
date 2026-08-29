@@ -361,3 +361,107 @@ def sleeve_comparison(domestic: np.ndarray, starting_mean: np.ndarray,
         "reassigned": int((~(mean_index == median_index) & both).sum()),
         "n_compared": int(both.sum()),
     }
+
+
+# ---------------------------------------------------------------------------
+# Implementable buckets
+# ---------------------------------------------------------------------------
+#: Country-years of history required before a lifetime can be classified at
+#: all. Below this the tercile boundaries are estimated from too little data to
+#: mean anything, and a bucket label would be noise wearing a name.
+MIN_HISTORY = 150
+
+
+def expanding_cuts(blended: np.ndarray, edges: Sequence[float] = DEFAULT_EDGES,
+                   min_obs: int = MIN_HISTORY
+                   ) -> Tuple[np.ndarray, np.ndarray]:
+    """``(T, k)`` tercile boundaries using only data from *before* each year.
+
+    The pooled quantiles of :func:`bucket_paths` are computed over the whole
+    panel at once, which means a lifetime beginning in 1910 is labelled cheap
+    or expensive against a boundary that already knows what happened in 2020.
+    The yield itself is look-ahead-free; the *classification* is not, and an
+    investor standing in 1910 could not have known which bucket they were in.
+
+    This computes the boundaries recursively instead. Row ``t`` holds the
+    quantiles of every country-year strictly before ``t``, so the bucket a
+    lifetime is assigned to depends only on history that had already happened
+    when it started. Rows with fewer than ``min_obs`` observations behind them
+    are left as NaN: the earliest cohorts are unclassifiable rather than
+    classified badly.
+
+    Returns the boundaries and the number of observations behind each row.
+    """
+    blended = np.asarray(blended, dtype=float)
+    n_years = blended.shape[0]
+    inner = list(edges)[1:-1]
+    cuts = np.full((n_years, len(inner)), np.nan)
+    counts = np.zeros(n_years, dtype=int)
+    for t in range(n_years):
+        pool = blended[:t, :]
+        finite = pool[np.isfinite(pool)]
+        counts[t] = int(finite.size)
+        if finite.size >= int(min_obs):
+            cuts[t] = np.quantile(finite, inner)
+    return cuts, counts
+
+
+def path_start_cells(paths: Any) -> Tuple[np.ndarray, np.ndarray]:
+    """``(year_index, country_index)`` of the first window of every path."""
+    return (np.asarray(paths.calendar_index)[:, 0],
+            np.asarray(paths.domestic_country)[:, 0])
+
+
+def expanding_bucket_paths(starting: np.ndarray, start_year: np.ndarray,
+                           cuts: np.ndarray,
+                           labels: Sequence[str] = BUCKET_LABELS
+                           ) -> Tuple[np.ndarray, Dict[str, Any]]:
+    """Bucket each lifetime against the boundaries in force when it began.
+
+    Paths starting before enough history had accumulated are returned as
+    ``-1`` -- unclassified, and excluded from every comparison rather than
+    quietly pooled into the nearest bucket.
+    """
+    starting = np.asarray(starting, dtype=float)
+    start_year = np.asarray(start_year, dtype=int)
+    index = np.full(starting.size, -1, dtype=int)
+    for t in np.unique(start_year):
+        row = cuts[int(t)]
+        if not np.isfinite(row).all():
+            continue
+        sel = start_year == t
+        values = starting[sel]
+        assigned = np.digitize(values, row)
+        index[sel] = np.where(np.isfinite(values), assigned, -1)
+    counts = [int((index == i).sum()) for i in range(len(labels))]
+    classified = int((index >= 0).sum())
+    return index, {
+        "labels": list(labels),
+        "counts": counts,
+        "unassigned": int((index < 0).sum()),
+        "classified": classified,
+        "classified_pct": 100.0 * classified / max(starting.size, 1),
+        "first_usable_year_index": int(
+            np.flatnonzero(np.isfinite(cuts).all(axis=1))[0])
+        if np.isfinite(cuts).all(axis=1).any() else -1,
+    }
+
+
+def bucket_agreement(hindsight: np.ndarray, implementable: np.ndarray
+                     ) -> Dict[str, Any]:
+    """How much the look-ahead in the pooled boundaries was actually worth.
+
+    Comparing the two labellings on the lifetimes both can classify measures
+    the size of the error directly, rather than leaving the correction as an
+    assertion that it mattered.
+    """
+    both = (hindsight >= 0) & (implementable >= 0)
+    if not both.any():
+        return {"compared": 0, "agreement_pct": float("nan"),
+                "reassigned": 0}
+    agree = float((hindsight[both] == implementable[both]).mean() * 100.0)
+    return {
+        "compared": int(both.sum()),
+        "agreement_pct": agree,
+        "reassigned": int((hindsight[both] != implementable[both]).sum()),
+    }

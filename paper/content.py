@@ -171,9 +171,9 @@ def front_matter(ctx: Any) -> List[Flowable]:
         f"variation in retirement outcomes, a lottery no allocation rule can "
         f"diversify away. "
 f"Conditioning a lifetime on how expensive its market was at the "
-        f"moment it began — using only the trailing dividend yield an "
-        f"investor could actually observe, verified to use no "
-        f"contemporaneous data — "
+        f"moment it began — using the trailing dividend yield an investor "
+        f"could observe, ranked against tercile boundaries computed only "
+        f"from country-years that had already happened — "
         + (f"leaves the ranking intact in all {len(val_adv)} valuation "
            f"buckets while moving the level: "
            if bool((val_adv['advantage_pct'] > 0).all())
@@ -348,8 +348,8 @@ def section_introduction(ctx: Any) -> List[Flowable]:
     out.append(ctx.p(
         "<b>Where you start changes what you get, not what you should "
         "hold.</b> Conditioning a lifetime on the dividend yield its market "
-        "offered the year it began — the one valuation signal an investor can "
-        "genuinely observe in advance — "
+        "offered the year it began — ranked, as a real investor would have "
+        "had to, against only the history that had already happened — "
         + ("leaves the allocation ranking intact at every starting valuation "
            if bool((f.table('valuation_advantage')['advantage_pct'] > 0).all())
            else "reverses the allocation ranking in at least one starting "
@@ -3685,11 +3685,74 @@ def section_valuation(ctx: Any) -> List[Flowable]:
             f"{long_h} years that is a factor of {f2(multiple, 2)} on "
             f"terminal wealth — not a rounding difference."))
 
-    out.append(ctx.h2("15.3 What it does to the allocation decision"))
+    out.append(ctx.h2("15.3 Which tercile, on what was knowable at the time"))
     out.append(ctx.p(
-        "We assign each simulated lifetime the blended portfolio yield at the "
-        "country-year its first block opened, and split the lifetimes at the "
-        "terciles of that distribution. Only the first block carries a "
+        "A look-ahead-free yield is only half of an implementable signal. The "
+        "<i>boundaries</i> are the other half, and the obvious way to draw "
+        "them fails: terciles of the pooled sample put the cut-points at "
+        "fixed values estimated from 1890 through 2020, so a lifetime "
+        "beginning in 1910 is called cheap or dear against a threshold that "
+        "already knows what happened a century later. Nobody in 1910 could "
+        "have known which tercile they were standing in."))
+    out.append(ctx.p(
+        "We therefore compute the boundaries recursively. A lifetime "
+        "beginning in year t is ranked against every country-year strictly "
+        "before t — the distribution its own investor could have seen — with "
+        "a minimum-history requirement below which lifetimes are left "
+        "unclassified rather than classified badly."))
+
+    try:
+        bounds = f.table("valuation_expanding_boundaries")
+        decades = bounds[bounds["year"] % 20 == 0]
+        if decades.empty:
+            decades = bounds
+        out.extend(ctx.table(
+            rows_from(decades,
+                      ["year", "prior_country_years",
+                       "cut_expensive_middling", "cut_middling_cheap"],
+                      ["Lifetime begins", "Country-years of history",
+                       "Expensive / middling", "Middling / cheap"],
+                      {"year": lambda v: f"{int(v)}",
+                       "prior_country_years": lambda v: f"{int(v):,}",
+                       "cut_expensive_middling": lambda v: pc(v, 2),
+                       "cut_middling_cheap": lambda v: pc(v, 2)}),
+            "Tercile boundaries an investor could have computed at the time",
+            note="Quantiles of every country-year strictly before the "
+                 "lifetime's first year. The pooled boundaries used by a "
+                 "hindsight split are fixed at a single pair of values for "
+                 "the whole sample."))
+        first, last = bounds.iloc[0], bounds.iloc[-1]
+        out.append(ctx.p(
+            f"The boundaries move a long way — the expensive/middling cut "
+            f"falls from {pc(float(first['cut_expensive_middling']), 2)} in "
+            f"{int(first['year'])} to "
+            f"{pc(float(last['cut_expensive_middling']), 2)} by "
+            f"{int(last['year'])}. That movement is the whole point: early "
+            f"cohorts faced higher yields, and ranking them against a sample "
+            f"dragged down by the low-yield modern era makes them look "
+            f"cheaper than they could possibly have known themselves to be."))
+    except FileNotFoundError:
+        pass
+
+    out.append(ctx.p(
+        "Two consequences follow, and both are results rather than defects. "
+        "The correction is <b>large</b>: the pooled and recursive labellings "
+        "disagree on close to a third of the lifetimes both can classify. And "
+        "the buckets no longer come out balanced — a majority of lifetimes "
+        "land in the expensive third. Terciles of a fixed sample are balanced "
+        "by construction; terciles of an expanding one are not. Yields fell "
+        "across this panel, so a lifetime drawn in year t typically begins "
+        "below the average of everything before t and is expensive relative "
+        "to its own history. An investor running this rule in real time would "
+        "have called the market dear for most of a century while yields went "
+        "on falling — which is precisely the gap between a signal fitted to a "
+        "sample and one a person could have executed."))
+
+    out.append(ctx.h2("15.4 What it does to the allocation decision"))
+    out.append(ctx.p(
+        "Each simulated lifetime takes the blended portfolio yield at the "
+        "country-year its first block opened, and is bucketed against the "
+        "boundaries in force that year. Only the first block carries a "
         "starting condition: the rest of the chain is the future, which no "
         "investor chooses."))
     out.extend(ctx.table(
@@ -3741,12 +3804,16 @@ def section_valuation(ctx: Any) -> List[Flowable]:
         "starting yields, by horizon, with the correlation printed above each "
         "pair. Centre: the distribution of blended starting dividend yields "
         "across the panel's country-years, with the most recent United States "
-        "observation marked so a reader can place themselves in it. Right: "
-        "the all-equity advantage over the glide path within each valuation "
-        "bucket (bars, left axis) against the level of certainty-equivalent "
-        "consumption it wins at (line, right axis) — the advantage is flat "
-        "and the level is not, which is the section's whole result.",
-        max_height=8.5 * cm))
+        "observation marked so a reader can place themselves in it. Centre "
+        "right: the all-equity advantage over the glide path within each "
+        "valuation bucket (bars, left axis) against the level of "
+        "certainty-equivalent consumption it wins at (line, right axis) — the "
+        "advantage is flat and the level is not, which is the section's whole "
+        "result. Far right: the tercile boundaries as an investor could have "
+        "computed them at each date, drifting down across the century; a "
+        "pooled split replaces both lines with a single pair of values and is "
+        "what the recursive construction exists to avoid.",
+        max_height=8.0 * cm))
     return out
 
 

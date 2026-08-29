@@ -316,3 +316,96 @@ class TestSleeveComparison:
             np.zeros((1, 1)), starting, starting * 3.0 + 0.01,
             vln.DEFAULT_EDGES, vln.BUCKET_LABELS)
         assert notes["reassigned"] == 0
+
+
+class TestExpandingBoundaries:
+    """The buckets themselves must be computable at the time, not just the yield.
+
+    A look-ahead-free yield ranked against boundaries drawn from the whole
+    sample is still un-implementable: nobody in 1910 could know which tercile
+    of the 1890-2020 distribution they were standing in.
+    """
+
+    def test_boundaries_use_only_prior_years(self) -> None:
+        blended = np.arange(200, dtype=float).reshape(50, 4)
+        cuts, counts = vln.expanding_cuts(blended, min_obs=8)
+        # Row t must equal the quantiles of everything strictly before t.
+        for t in range(3, 50):
+            pool = blended[:t, :].ravel()
+            if pool.size >= 8:
+                expected = np.quantile(pool, [1 / 3, 2 / 3])
+                np.testing.assert_allclose(cuts[t], expected)
+
+    def test_row_zero_has_no_history(self) -> None:
+        blended = np.arange(200, dtype=float).reshape(50, 4)
+        cuts, counts = vln.expanding_cuts(blended, min_obs=1)
+        assert counts[0] == 0
+        assert not np.isfinite(cuts[0]).any()
+
+    def test_future_data_cannot_move_an_earlier_boundary(self) -> None:
+        """The decisive test, and the one the pooled version fails."""
+        rng = np.random.default_rng(0)
+        blended = rng.uniform(0.01, 0.09, (60, 5))
+        before, _ = vln.expanding_cuts(blended, min_obs=20)
+        tampered = blended.copy()
+        tampered[40:, :] = 99.0            # rewrite the future
+        after, _ = vln.expanding_cuts(tampered, min_obs=20)
+        np.testing.assert_allclose(before[:41], after[:41], equal_nan=True)
+        assert not np.allclose(before[41:], after[41:], equal_nan=True), (
+            "later boundaries must move, or the test proves nothing"
+        )
+
+    def test_the_pooled_version_does_not_have_that_property(self) -> None:
+        """Positive control: show the thing the correction fixes."""
+        rng = np.random.default_rng(1)
+        starting = rng.uniform(0.01, 0.09, 600)
+        _, before = vln.bucket_paths(starting)
+        tampered = starting.copy()
+        tampered[300:] = 99.0              # rewrite the late cohorts
+        _, after = vln.bucket_paths(tampered)
+        assert before["cuts"] != after["cuts"], (
+            "pooled cut-points are moved by later data -- which is exactly "
+            "the leak the expanding boundaries remove"
+        )
+
+    def test_burn_in_leaves_early_paths_unclassified(self) -> None:
+        blended = np.full((40, 4), 0.05)
+        cuts, _ = vln.expanding_cuts(blended, min_obs=40)
+        starting = np.full(100, 0.05)
+        start_year = np.repeat(np.arange(10), 10)
+        index, meta = vln.expanding_bucket_paths(starting, start_year, cuts)
+        assert (index == -1).all(), "10 years x 4 countries is under the floor"
+        assert meta["classified"] == 0
+
+    def test_classifies_against_its_own_years_boundary(self) -> None:
+        # Two eras: a high-yield past, then a low-yield present.
+        blended = np.vstack([np.full((30, 4), 0.08), np.full((30, 4), 0.02)])
+        cuts, _ = vln.expanding_cuts(blended, min_obs=40)
+        # A 0.05 yield is below the all-0.08 history, so "expensive" (index 0).
+        index, _ = vln.expanding_bucket_paths(
+            np.array([0.05]), np.array([35]), cuts)
+        assert index[0] == 0
+
+    def test_agreement_counts_only_paths_both_can_classify(self) -> None:
+        hindsight = np.array([0, 1, 2, 0, 1])
+        implementable = np.array([0, 2, 2, -1, 1])
+        out = vln.bucket_agreement(hindsight, implementable)
+        assert out["compared"] == 4        # the -1 is excluded
+        assert out["reassigned"] == 1
+        assert out["agreement_pct"] == pytest.approx(75.0)
+
+    def test_agreement_is_total_when_the_labels_match(self) -> None:
+        same = np.array([0, 1, 2, 1])
+        out = vln.bucket_agreement(same, same.copy())
+        assert out["agreement_pct"] == pytest.approx(100.0)
+        assert out["reassigned"] == 0
+
+    def test_start_cells_read_the_first_window_only(self, toy_panel,
+                                                    toy_config) -> None:
+        sampler = bs.from_config(toy_panel, toy_config)
+        paths = sampler.sample(200, chunk_size=100)
+        years, countries = vln.path_start_cells(paths)
+        np.testing.assert_array_equal(
+            years, np.asarray(paths.calendar_index)[:, 0])
+        np.testing.assert_array_equal(
+            countries, np.asarray(paths.domestic_country)[:, 0])

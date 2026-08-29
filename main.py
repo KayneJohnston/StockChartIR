@@ -1953,17 +1953,44 @@ def step15_valuation(cfg: Dict[str, Any],
         results = state["results"]
 
     starts: List[np.ndarray] = []
+    start_years: List[np.ndarray] = []
     for chunk in sampler.chunks(n_paths, chunk_size):
         starts.append(vln.path_starting_yield(chunk, blended))
+        start_years.append(vln.path_start_cells(chunk)[0])
     starting = np.concatenate(starts)
+    start_year = np.concatenate(start_years)
 
     labels = list(val_cfg.get("bucket_labels", vln.BUCKET_LABELS))
-    index, meta = vln.bucket_paths(
-        starting, [float(e) for e in val_cfg.get("quantile_edges",
-                                                 vln.DEFAULT_EDGES)], labels)
-    LOGGER.info("valuation buckets: %s at cuts %s",
-                dict(zip(labels, meta["counts"])),
-                [f"{c:.2%}" for c in meta["cuts"]])
+    edges = [float(e) for e in val_cfg.get("quantile_edges",
+                                           vln.DEFAULT_EDGES)]
+
+    # Two labellings of the same lifetimes. The pooled one takes its
+    # boundaries from the whole panel at once, so a lifetime beginning in 1910
+    # is called cheap or dear against a threshold that already knows about
+    # 2020 -- the yield is look-ahead-free but the *classification* is not.
+    # The expanding one takes its boundaries from country-years strictly
+    # before each lifetime started, which is what its investor could have
+    # known. The expanding one is used for every result; the pooled one is
+    # kept only to measure what the look-ahead was worth.
+    hindsight_index, hindsight_meta = vln.bucket_paths(starting, edges, labels)
+    cuts, prior_counts = vln.expanding_cuts(
+        blended, edges, int(val_cfg.get("min_history", vln.MIN_HISTORY)))
+    index, meta = vln.expanding_bucket_paths(starting, start_year, cuts,
+                                             labels)
+    leak = vln.bucket_agreement(hindsight_index, index)
+    first_usable = int(meta.get("first_usable_year_index", -1))
+    LOGGER.info("implementable buckets: %s (%.1f%% of lifetimes classified; "
+                "history begins %s)",
+                dict(zip(labels, meta["counts"])), meta["classified_pct"],
+                int(panel.years[first_usable]) if first_usable >= 0 else "never")
+    LOGGER.info("pooled boundaries would have reclassified %d of %d "
+                "lifetimes (%.1f%% agreement)", leak["reassigned"],
+                leak["compared"], leak["agreement_pct"])
+    if meta["classified"] < 1000:
+        raise RuntimeError(
+            "fewer than 1,000 lifetimes have enough prior history to be "
+            "classified against boundaries their own investor could have "
+            "known; the conditioning below would be estimated on noise")
 
     # The sleeve is a mean on construction grounds; measure what the median
     # would have done rather than leaving that as an argument.
@@ -2005,8 +2032,17 @@ def step15_valuation(cfg: Dict[str, Any],
     distribution = pd.DataFrame({
         "bucket": labels,
         "n_paths": meta["counts"],
-        "yield_floor": [-np.inf] + list(meta["cuts"]),
-        "yield_ceiling": list(meta["cuts"]) + [np.inf],
+        "yield_floor": [-np.inf] + list(hindsight_meta["cuts"]),
+        "yield_ceiling": list(hindsight_meta["cuts"]) + [np.inf],
+    })
+
+    # The boundaries an investor would actually have faced, decade by decade.
+    usable = np.isfinite(cuts).all(axis=1)
+    boundaries = pd.DataFrame({
+        "year": panel.years[usable],
+        "prior_country_years": prior_counts[usable],
+        "cut_expensive_middling": cuts[usable, 0],
+        "cut_middling_cheap": cuts[usable, 1],
     })
 
     tables = cfg["run"]["table_dir"]
@@ -2014,23 +2050,28 @@ def step15_valuation(cfg: Dict[str, Any],
                         (buckets, "valuation_by_bucket"),
                         (advantage, "valuation_advantage"),
                         (sleeve, "valuation_sleeve_check"),
+                        (boundaries, "valuation_expanding_boundaries"),
                         (distribution, "valuation_buckets")):
         _save_table(frame, tables, name)
 
     figures = [str(plots.plot_valuation(predictive, buckets, advantage,
                                         domestic, blended, position,
-                                        cfg["run"]["figure_dir"]))]
+                                        cfg["run"]["figure_dir"],
+                                        boundaries=boundaries))]
 
     elapsed = time.perf_counter() - started
     rp.write_doc_15(
         Path("docs") / "15_starting_valuation.md", cfg,
         {"predictive": predictive, "buckets": buckets,
          "advantage": advantage, "distribution": distribution,
-         "sleeve": sleeve},
+         "sleeve": sleeve, "boundaries": boundaries},
         figures,
         {"elapsed_seconds": elapsed, "position": position, "meta": meta,
          "probe_years": probes, "leak_free": leak_free,
-         "sleeve": sleeve_notes})
+         "sleeve": sleeve_notes, "leak": leak,
+         "hindsight_meta": hindsight_meta,
+         "first_usable_year": int(panel.years[first_usable])
+         if first_usable >= 0 else None})
     LOGGER.info("docs/15 written (%.0fs); %s sits at the %.0fth percentile",
                 elapsed, position["iso"], position["blended_percentile"])
     state.update({"valuation_buckets": buckets,
