@@ -592,13 +592,12 @@ def section_data(ctx: Any) -> List[Flowable]:
              "mean": lambda v: pc(v), "geometric_mean": lambda v: pc(v),
              "std": lambda v: pc(v), "skew": lambda v: f2(v),
              "ar1": lambda v: f2(v)},
-            limit=20),
-        "Real domestic equity returns by country (first twenty by ISO code)",
-        note="Every country's equity is observed; there is no other kind in "
-             "this panel. The full "
-             "full table is Appendix B. Arithmetic and geometric means "
-             "are annual real returns; AR(1) is the first-order "
-             "autocorrelation of the annual series.",
+            ),
+        "Real domestic equity returns by country",
+        note="Arithmetic and geometric means are annual real returns "
+             "deflated by each country's own consumer price index; AR(1) is "
+             "the first-order autocorrelation of the annual series. Appendix "
+             "B repeats this with excess kurtosis.",
         font_size=7.0))
 
     out.append(ctx.h2("3.4 Cross-asset structure"))
