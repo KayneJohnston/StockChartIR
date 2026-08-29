@@ -24,10 +24,18 @@ from reportlab.platypus.tableofcontents import TableOfContents
 # Formatting helpers
 # ---------------------------------------------------------------------------
 def f2(x: Any, d: int = 2) -> str:
+    """A fixed-point number, or an em-dash where the value is undefined.
+
+    Some table cells have no defined value rather than a missing one -- the
+    improvement over the previous sweep, on the sweep that has no previous.
+    Printing "nan" there reads as a defect; a dash reads as "not applicable",
+    which is what it is.
+    """
     try:
-        return f"{float(x):.{d}f}"
+        value = float(x)
     except (TypeError, ValueError):
         return str(x)
+    return "\u2014" if not np.isfinite(value) else f"{value:.{d}f}"
 
 
 def sgn(x: Any, d: int = 2) -> str:
@@ -35,8 +43,12 @@ def sgn(x: Any, d: int = 2) -> str:
 
 
 def pc(x: Any, d: int = 1) -> str:
-    """A fraction rendered as a percentage."""
-    return f"{float(x) * 100.0:.{d}f}%"
+    """A fraction rendered as a percentage, or an em-dash where undefined."""
+    try:
+        value = float(x)
+    except (TypeError, ValueError):
+        return str(x)
+    return "\u2014" if not np.isfinite(value) else f"{value * 100.0:.{d}f}%"
 
 
 def rows_from(frame: pd.DataFrame, columns: Sequence[str],
@@ -2670,7 +2682,7 @@ def section_hedging(ctx: Any) -> List[Flowable]:
                   {"hedge_ratio": lambda v: pc(v, 0),
                    "gain_at_zero_cost_pct": lambda v: f2(v, 3),
                    "break_even_annual_cost": lambda v: (
-                       "never" if not np.isfinite(v) or pd.isna(v)
+                       "never" if pd.isna(v) or not np.isfinite(float(v))
                        else pc(v, 2))}),
         "Break-even annual hedging cost by hedge ratio",
         note="The break-even cost is the annual charge at which hedging "
