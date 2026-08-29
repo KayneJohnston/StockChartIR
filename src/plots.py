@@ -1819,3 +1819,79 @@ def plot_housing(audit: pd.DataFrame, directory: str | Path,
         ax.grid(axis="y", alpha=0.0)
         fig.tight_layout()
     return _save(fig, directory, name)
+
+
+def plot_valuation(predictive: pd.DataFrame, buckets: pd.DataFrame,
+                   advantage: pd.DataFrame, domestic: np.ndarray,
+                   blended: np.ndarray, position: Mapping[str, Any],
+                   directory: str | Path,
+                   name: str = "fig40_starting_valuation") -> Path:
+    """What the starting yield predicts, and what it does to a lifetime.
+
+    Three readings of one variable: that it forecasts returns at all, where
+    the present sits in its distribution, and whether the headline ranking
+    survives conditioning on it.
+    """
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(1, 3, figsize=(16.5, 5.0))
+
+        ax = axes[0]
+        block = predictive.sort_values("horizon_years")
+        x = np.arange(len(block))
+        width = 0.38
+        ax.bar(x - width / 2, block["forward_return_expensive"] * 100, width,
+               color=_colour(1), label="started expensive (low yield)")
+        ax.bar(x + width / 2, block["forward_return_cheap"] * 100, width,
+               color=_colour(0), label="started cheap (high yield)")
+        for i, row in enumerate(block.itertuples()):
+            ax.text(i, max(row.forward_return_cheap,
+                           row.forward_return_expensive) * 100 + 0.15,
+                    f"{row.correlation:+.2f}", ha="center", fontsize=8,
+                    color="0.35")
+        ax.set_xticks(x)
+        ax.set_xticklabels([f"{int(h)}y" for h in block["horizon_years"]])
+        ax.set_xlabel("Horizon over which the return is measured")
+        ax.set_ylabel("Annualised real equity return (%)")
+        ax.set_title("A cheap start pays for decades\n"
+                     "(label = correlation of yield with return)", fontsize=10)
+        ax.legend(fontsize=8)
+        ax.grid(axis="x", alpha=0.0)
+
+        ax = axes[1]
+        values = blended[np.isfinite(blended)] * 100
+        ax.hist(values, bins=40, color=_colour(2), alpha=0.85)
+        here = float(position.get("blended_yield", np.nan)) * 100
+        if np.isfinite(here):
+            ax.axvline(here, color=_colour(1), linewidth=2.0)
+            ax.annotate(f"{position.get('iso', '')} "
+                        f"{int(position.get('year', 0))}: {here:.1f}%\\n"
+                        f"{position.get('blended_percentile', float('nan')):.0f}th "
+                        f"percentile",
+                        (here, ax.get_ylim()[1] * 0.86),
+                        textcoords="offset points", xytext=(9, 0),
+                        fontsize=8.5, color=_colour(1))
+        ax.set_xlabel("Blended starting dividend yield (%)")
+        ax.set_ylabel("Country-years in the panel")
+        ax.set_title("Where a reader starting today sits in\n"
+                     "the panel's own distribution", fontsize=10)
+        ax.grid(axis="x", alpha=0.0)
+
+        ax = axes[2]
+        block = advantage.copy()
+        x = np.arange(len(block))
+        ax.bar(x, block["advantage_pct"], width=0.55, color=_colour(0),
+               label="all-equity lead over the glide path")
+        for i, row in enumerate(block.itertuples()):
+            ax.text(i, row.advantage_pct + 0.25, f"{row.advantage_pct:.1f}%",
+                    ha="center", fontsize=9)
+        ax.axhline(0.0, color="black", linewidth=1.2)
+        ax.set_xticks(x)
+        ax.set_xticklabels(block["bucket"], fontsize=9)
+        ax.set_xlabel("Valuation the lifetime started at")
+        ax.set_ylabel("Certainty-equivalent advantage (%)")
+        ax.set_ylim(0, max(block["advantage_pct"].max() * 1.25, 1.0))
+        ax.set_title("The ranking holds at every starting valuation,\n"
+                     "and the level does not", fontsize=10)
+        ax.grid(axis="x", alpha=0.0)
+        fig.tight_layout()
+    return _save(fig, directory, name)

@@ -122,3 +122,23 @@ def persistent_panel() -> Panel:
         name="persistent",
         provenance=("test", "test"),
     )
+
+
+@pytest.fixture(scope="session")
+def real_panel_or_skip():
+    """The real 16-country panel and its source workbook, or a skip.
+
+    A handful of properties -- the no-look-ahead guarantee above all -- are
+    claims about the actual data, not about the code, and a toy fixture cannot
+    stand in for them. Skips rather than fails when the raw files are absent,
+    so the suite still runs on a fresh clone.
+    """
+    from src import data_loader as dl
+
+    try:
+        cfg = dl.load_config("config.yaml")
+        panel = dl.build_panel(cfg)
+        jst = dl.load_jst(cfg)
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        pytest.skip(f"raw data unavailable: {exc}")
+    return panel, jst

@@ -32,6 +32,7 @@ from src import leverage as lev
 from src import lifecycle as lc
 from src import plots
 from src import provenance as pvn
+from src import valuation as vln
 from src import report as rp
 from src import retirement as rt
 from src import saving as sav
@@ -1899,6 +1900,105 @@ def step14_provenance(cfg: Dict[str, Any],
     return state
 
 
+def step15_valuation(cfg: Dict[str, Any],
+                     state: Dict[str, Any]) -> Dict[str, Any]:
+    """Condition the headline on the valuation a lifetime started at."""
+    val_cfg = cfg.get("valuation", {})
+    if not val_cfg.get("enabled", False):
+        LOGGER.info("valuation study disabled; skipping step 15")
+        return state
+    LOGGER.info("=== STEP 15: starting valuation ===")
+    started = time.perf_counter()
+
+    panel = state["panel"]
+    jst = dl.load_jst(cfg)
+    spec = lc.spec_from_config(cfg)
+    sampler = state.get("sampler") or bs.from_config(panel, cfg)
+    n_paths = int(cfg["bootstrap"]["n_paths"])
+    chunk_size = int(cfg["bootstrap"]["chunk_size"])
+
+    domestic = vln.trailing_yield(jst, panel.countries, panel.years)
+    international = vln.international_yield(domestic)
+    blended = vln.blended_yield(domestic, international,
+                                float(val_cfg.get("domestic_share", 0.5)))
+
+    # The property the whole step rests on, checked rather than claimed. Probe
+    # years are spread across the panel so a leak confined to one era would
+    # still be caught.
+    probes = [int(y) for y in np.linspace(int(panel.years[5]),
+                                          int(panel.years[-2]), 6)]
+    leak_free = all(vln.depends_only_on_past(jst, panel.countries, panel.years, y)
+                    for y in probes)
+    if not leak_free:
+        raise RuntimeError(
+            "the valuation state uses contemporaneous data; conditioning on it "
+            "would build look-ahead into every result in this step")
+    LOGGER.info("no-look-ahead check passed at %d probe years", len(probes))
+
+    predictive = vln.predictive_power(
+        domestic, panel.dom_eq,
+        [int(h) for h in val_cfg.get("horizons", (1, 10, 20, 30))])
+
+    results = state.get("results")
+    if results is None:
+        state = step3_lifecycle(cfg, state)
+        results = state["results"]
+
+    starts: List[np.ndarray] = []
+    for chunk in sampler.chunks(n_paths, chunk_size):
+        starts.append(vln.path_starting_yield(chunk, blended))
+    starting = np.concatenate(starts)
+
+    labels = list(val_cfg.get("bucket_labels", vln.BUCKET_LABELS))
+    index, meta = vln.bucket_paths(
+        starting, [float(e) for e in val_cfg.get("quantile_edges",
+                                                 vln.DEFAULT_EDGES)], labels)
+    LOGGER.info("valuation buckets: %s at cuts %s",
+                dict(zip(labels, meta["counts"])),
+                [f"{c:.2%}" for c in meta["cuts"]])
+
+    buckets = vln.by_bucket(results, index, labels, cfg, spec)
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    column = f"cec_crra_gamma{gamma:g}"
+    advantage = vln.advantage_by_bucket(
+        buckets, "balanced_all_equity", "target_date_fund", column)
+    position = vln.current_position(
+        blended, domestic, panel.years, panel.countries,
+        str(val_cfg.get("reference_country", "USA")))
+
+    distribution = pd.DataFrame({
+        "bucket": labels,
+        "n_paths": meta["counts"],
+        "yield_floor": [-np.inf] + list(meta["cuts"]),
+        "yield_ceiling": list(meta["cuts"]) + [np.inf],
+    })
+
+    tables = cfg["run"]["table_dir"]
+    for frame, name in ((predictive, "valuation_predictive_power"),
+                        (buckets, "valuation_by_bucket"),
+                        (advantage, "valuation_advantage"),
+                        (distribution, "valuation_buckets")):
+        _save_table(frame, tables, name)
+
+    figures = [str(plots.plot_valuation(predictive, buckets, advantage,
+                                        domestic, blended, position,
+                                        cfg["run"]["figure_dir"]))]
+
+    elapsed = time.perf_counter() - started
+    rp.write_doc_15(
+        Path("docs") / "15_starting_valuation.md", cfg,
+        {"predictive": predictive, "buckets": buckets,
+         "advantage": advantage, "distribution": distribution},
+        figures,
+        {"elapsed_seconds": elapsed, "position": position, "meta": meta,
+         "probe_years": probes, "leak_free": leak_free})
+    LOGGER.info("docs/15 written (%.0fs); %s sits at the %.0fth percentile",
+                elapsed, position["iso"], position["blended_percentile"])
+    state.update({"valuation_buckets": buckets,
+                  "valuation_position": position})
+    return state
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -1907,11 +2007,11 @@ STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
          7: step7_glide_path, 8: step8_hedging, 9: step9_retirement_timing,
          10: step10_saving, 11: step11_accumulation,
          12: step12_allocation, 13: step13_leverage,
-         14: step14_provenance}
+         14: step14_provenance, 15: step15_valuation}
 
 
 def run(config_path: str = "config.yaml",
-        steps: Sequence[int] = tuple(range(1, 15)),
+        steps: Sequence[int] = tuple(range(1, 16)),
         quick: bool = False) -> Dict[str, Any]:
     """Execute the pipeline and return the accumulated state."""
     cfg = dl.load_config(config_path)
@@ -1941,8 +2041,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--steps", nargs="+", type=int,
-                        default=list(range(1, 15)),
-                        choices=list(range(1, 15)))
+                        default=list(range(1, 16)),
+                        choices=list(range(1, 16)))
     parser.add_argument("--quick", action="store_true",
                         help="small N for smoke tests")
     parser.add_argument("--verbose", action="store_true")

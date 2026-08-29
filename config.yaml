@@ -592,3 +592,27 @@ provenance:
   tail_start: 2016
   reference_start: 1950
 
+# ---------------------------------------------------------------------------
+# Step 15 -- starting valuation
+# ---------------------------------------------------------------------------
+# The bootstrap draws calendar windows without regard to how expensive markets
+# were when the window opened, so a lifetime beginning at a peak is
+# statistically identical to one beginning at a trough.  This step supplies the
+# missing state variable -- the trailing dividend yield an investor could
+# actually observe -- and reports the headline conditional on it.
+valuation:
+  enabled: true
+  # Share of the blended yield taken from the domestic market, matching the
+  # 50/50 split of the headline portfolio.
+  domestic_share: 0.5
+  # Quantile edges of the drawn starting-yield distribution.  Terciles keep
+  # enough paths per bucket for the certainty equivalent to be precise;
+  # quintiles thin the extremes into noise.
+  quantile_edges: [0.0, 0.3333333333333333, 0.6666666666666666, 1.0]
+  bucket_labels: ["Expensive", "Middling", "Cheap"]
+  # Horizons over which the predictive power of the yield is reported.
+  horizons: [1, 10, 20, 30]
+  # The market a reader is most likely to be starting from, used to locate
+  # today's valuation in the panel's own distribution.
+  reference_country: USA
+

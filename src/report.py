@@ -4952,3 +4952,265 @@ Runtime {float(notes['elapsed_seconds']):.0f}s. Tables in
 `{cfg['run']['table_dir']}/provenance_*.csv`.
 """
     return _write(path, [intro, body])
+
+def write_doc_15(
+    path: str | Path,
+    cfg: Mapping[str, Any],
+    frames: Mapping[str, pd.DataFrame],
+    figures: Sequence[str],
+    notes: Mapping[str, Any],
+) -> Path:
+    """What the starting valuation predicts, and what it does to a lifetime."""
+    predictive = frames["predictive"]
+    buckets = frames["buckets"]
+    advantage = frames["advantage"]
+    distribution = frames["distribution"]
+    position = notes["position"]
+    meta = notes["meta"]
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    column = f"cec_crra_gamma{gamma:g}"
+
+    predictive_tbl = md_table(_compact(
+        _pct(predictive, ["forward_return_expensive", "forward_return_cheap",
+                          "gap"]),
+        ["horizon_years", "observations", "correlation",
+         "forward_return_expensive", "forward_return_cheap", "gap"],
+        {"horizon_years": "Horizon (years)", "observations": "Observations",
+         "correlation": "Correlation", "forward_return_expensive":
+             "Started expensive (%)", "forward_return_cheap":
+             "Started cheap (%)", "gap": "Gap (pp)"}),
+        floatfmt="{:.2f}")
+    advantage_tbl = md_table(_compact(
+        _pct(advantage, ["challenger_ruin", "incumbent_ruin"]),
+        ["bucket", "n_paths", "challenger_cec", "incumbent_cec",
+         "advantage_pct", "challenger_ruin", "incumbent_ruin"],
+        {"bucket": "Started", "n_paths": "Paths",
+         "challenger_cec": "All-equity CEC", "incumbent_cec": "Glide-path CEC",
+         "advantage_pct": "Advantage (%)",
+         "challenger_ruin": "All-equity ruin (%)",
+         "incumbent_ruin": "Glide-path ruin (%)"}),
+        floatfmt="{:.3f}")
+    bucket_tbl = md_table(_compact(
+        _pct(buckets, ["prob_ruin"]),
+        ["bucket", "label", "n_paths", column, "prob_ruin",
+         "median_retirement_consumption", "p5_retirement_consumption"],
+        {"bucket": "Started", "label": "Strategy", "n_paths": "Paths",
+         column: f"CEC (gamma={gamma:g})", "prob_ruin": "P(ruin) (%)",
+         "median_retirement_consumption": "Median retirement consumption",
+         "p5_retirement_consumption": "5th percentile"}),
+        floatfmt="{:.3f}")
+    cuts = ", ".join(f"{c:.2%}" for c in meta["cuts"])
+
+    def _edge(v: float) -> str:
+        return "-" if not np.isfinite(v) else f"{v:.2%}"
+
+    distribution_tbl = md_table(_compact(
+        distribution.assign(
+            yield_floor=distribution["yield_floor"].map(_edge),
+            yield_ceiling=distribution["yield_ceiling"].map(_edge)),
+        ["bucket", "n_paths", "yield_floor", "yield_ceiling"],
+        {"bucket": "Started", "n_paths": "Paths",
+         "yield_floor": "Yield from", "yield_ceiling": "Yield to"}))
+
+    # Every verdict below is classified from the table it describes; none of
+    # them is asserted, because any of them could come out the other way on a
+    # rebuild and the prose has to survive that.
+    by_horizon = predictive.sort_values("horizon_years")
+    short_corr = float(by_horizon["correlation"].iloc[0])
+    long_corr = float(by_horizon["correlation"].iloc[-1])
+    long_horizon = int(by_horizon["horizon_years"].iloc[-1])
+    long_gap = float(by_horizon["gap"].iloc[-1])
+    strengthens = long_corr > short_corr
+    monotone = bool(by_horizon["correlation"].is_monotonic_increasing)
+    predicts = bool((by_horizon["gap"] > 0).all())
+    multiple = float((1.0 + long_gap) ** long_horizon)
+
+    if not predicts:
+        verdict_3 = (
+            "No -- the cheap third does not out-return the dear third at "
+            "every horizon, so the conditioning below separates lifetimes "
+            "that are not actually different in expectation.")
+    elif strengthens and monotone:
+        verdict_3 = (
+            "Yes, and monotonically more strongly the longer the horizon -- "
+            "the signature of valuation mean reversion rather than of noise.")
+    elif strengthens:
+        verdict_3 = (
+            "Yes, and more strongly over long horizons than short ones, "
+            "though not monotonically -- the signature of valuation mean "
+            "reversion rather than of noise.")
+    else:
+        verdict_3 = (
+            "Yes at every horizon, but the relationship does not strengthen "
+            "with horizon here, so read it as a level effect rather than as "
+            "mean reversion.")
+
+    lead = advantage.set_index("bucket")["advantage_pct"] if len(advantage) \
+        else pd.Series(dtype=float)
+    holds = bool((lead > 0).all()) if len(lead) else False
+    spread = float(lead.max() - lead.min()) if len(lead) else float("nan")
+    dearest, cheapest = (lead.index[0], lead.index[-1]) if len(lead) else ("", "")
+
+    # Does starting expensive actually cost the investor anything? Read the
+    # headline strategy's own numbers in the dearest and cheapest buckets
+    # rather than assuming the sign.
+    headline = buckets[buckets["strategy"] == "balanced_all_equity"]
+    headline = headline.set_index("bucket") if len(headline) else headline
+    have_ends = bool(len(headline)) and dearest in headline.index \
+        and cheapest in headline.index
+    if have_ends:
+        wealth_dear = float(headline.loc[dearest, "median_wealth_at_retirement"])
+        wealth_cheap = float(headline.loc[cheapest, "median_wealth_at_retirement"])
+        ruin_dear = float(headline.loc[dearest, "prob_ruin"])
+        ruin_cheap = float(headline.loc[cheapest, "prob_ruin"])
+        wealth_gap = (wealth_dear / wealth_cheap - 1.0) * 100.0
+        ruin_gap = (ruin_dear - ruin_cheap) * 100.0
+        costly = wealth_dear < wealth_cheap and ruin_dear > ruin_cheap
+        if costly:
+            verdict_5 = (
+                f"A lifetime begun in the {dearest.lower()} bucket reaches "
+                f"retirement with {abs(wealth_gap):.0f}% less median wealth "
+                f"than one begun in the {cheapest.lower()} bucket and runs out "
+                f"of money {abs(ruin_gap):.1f} percentage points more often "
+                "under the same withdrawal rule, so it has less room for the "
+                "four-percent convention than the unconditional averages "
+                "elsewhere in this project suggest.")
+        elif wealth_dear < wealth_cheap:
+            verdict_5 = (
+                f"A lifetime begun in the {dearest.lower()} bucket reaches "
+                f"retirement with {abs(wealth_gap):.0f}% less median wealth "
+                f"than one begun in the {cheapest.lower()} bucket, though its "
+                "ruin probability is not correspondingly higher -- the "
+                "spending rule absorbs part of the shortfall.")
+        else:
+            verdict_5 = (
+                "Starting expensive does not measurably cost this investor: "
+                f"median wealth at retirement is {abs(wealth_gap):.0f}% "
+                f"{'higher' if wealth_gap > 0 else 'lower'} in the "
+                f"{dearest.lower()} bucket than in the {cheapest.lower()} one. "
+                "The first block is one decade of a sixty-eight-year chain, "
+                "and at this sample size that is what the dilution looks "
+                "like.")
+    else:
+        verdict_5 = (
+            "The buckets do not carry the headline strategy, so the effect on "
+            "wealth and ruin is not reported here.")
+
+    intro = _header(
+        "15 - Starting Valuation",
+        "What the market costs when a lifetime begins, and how much of the "
+        "answer depends on it.",
+    )
+
+    body = f"""
+## 1. The assumption this relaxes
+
+The bootstrap of `02_multicountry_block_bootstrap.md` draws calendar windows
+without regard to how expensive equities were when the window opened. A
+lifetime that begins at a market peak is therefore statistically identical to
+one that begins at a trough.
+
+That is a strong assumption and an unrealistic one. It is also the assumption a
+reader is least able to accept, because they know what today's market costs and
+the model does not.
+
+## 2. The observable, and why it is not the obvious one
+
+The workbook records `eq_dp`, a dividend *return*: the dividend paid during
+year `t` over the price at the start of it. Conditioning on that would leak,
+because the numerator is unknown until the year is over. What an investor
+standing at the start of year `t` can actually see is the trailing yield on the
+current price:
+
+```
+y_(t-1) = D_(t-1) / P_(t-1) = eq_dp_(t-1) / (1 + eq_capgain_(t-1))
+```
+
+Both terms are last year's, so the value is fully formed before the year being
+predicted begins.
+
+**This is checked structurally rather than argued.** Correlations cannot
+establish it: a yield built from the current year's dividend would still
+predict the current year's return, and a correctly lagged one still correlates
+with the *previous* year's return, because a bad year lowers the price in the
+denominator. Both are expected and neither separates a leak from a signal. So
+the test overwrites everything the workbook records for a probe year, rebuilds
+the series, and confirms the row for that year did not move --
+{"which it does not, at all " + str(len(notes["probe_years"])) + " probe years spread across the panel" if notes["leak_free"] else "**which it does, and the results below cannot be trusted**"}.
+
+## 3. Does it predict anything?
+
+{predictive_tbl}
+
+{verdict_3} Over {long_horizon} years the
+correlation is {long_corr:.2f}, against {short_corr:.2f} at
+{int(by_horizon['horizon_years'].iloc[0])} year(s), and the third of history
+that began cheapest returned {long_gap:.1%} a year more than the third that
+began dearest. Compounded over those {long_horizon} years that gap is a
+factor of {multiple:.2f} on terminal wealth, which is not a rounding
+difference.
+
+## 4. Where a reader starts
+
+{distribution_tbl}
+
+Paths are split at the {cuts} cut-points of the drawn starting-yield
+distribution, so the buckets stay balanced however the sampler weights
+countries.
+
+**{position['iso']} in {int(position['year'])} carries a blended starting yield
+of {float(position['blended_yield']):.2%}, which is the
+{float(position['blended_percentile']):.0f}th percentile of this panel.** The
+domestic leg alone is {float(position['domestic_yield']):.2%}, against a panel
+median of {float(position['panel_median_yield']):.2%}. A reader starting from
+that market today is starting more expensively than roughly
+{100 - float(position['blended_percentile']):.0f}% of the country-years this
+study draws from -- which is precisely why the unconditional average is the
+wrong number for them.
+
+## 5. What it does to the result
+
+{advantage_tbl}
+
+{"**The ranking survives at every starting valuation.**" if holds else "**The ranking does not survive at every starting valuation, and the exception is reported here rather than buried.**"}
+The all-equity portfolio leads the glide path in
+{int((lead > 0).sum())} of {len(lead)} buckets. What moves is the *level*: the
+advantage spans {spread:.1f} percentage points between the
+{dearest.lower()} and {cheapest.lower()} buckets.
+
+{bucket_tbl}
+
+The reading a practitioner should take is not that the allocation question
+changes much with valuation -- the spread above is
+{spread:.1f} percentage points on an advantage of
+{float(lead.mean()):.1f}% -- but what happens to the level.
+{verdict_5}
+
+## 6. What this does not do
+
+The conditioning applies to the **first** drawn block only. A lifetime is a
+chain of calendar windows and only the first is a starting condition; the rest
+are the future, which no investor chooses. So the effect measured here is the
+effect of the opening decade's valuation on a 68-year outcome, diluted by
+everything that follows. A design that made the whole chain valuation-dependent
+would report a larger effect and would be assuming a great deal more.
+
+Nor does this speak to timing. The result is conditional on where you start,
+not a claim that anyone should wait for a better entry point: the sampler
+contains no mechanism for choosing when to begin, and the retirement-timing
+study of `09_retirement_timing.md` is the closest this project comes to that
+question.
+
+## 7. Figures
+
+{chr(10).join(f"* `{f}`" for f in figures)}
+
+## 8. Reproduction
+
+```bash
+python main.py --steps 15
+```
+
+Runtime {float(notes['elapsed_seconds']):.0f}s.
+"""
+    return _write(path, [intro, body])

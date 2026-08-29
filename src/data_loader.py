@@ -328,8 +328,8 @@ def load_jst(cfg: Mapping[str, Any]) -> pd.DataFrame:
         _WORKBOOK_CACHE[key] = pd.read_excel(key[0], sheet_name=key[1])
     frame = _WORKBOOK_CACHE[key].copy()
     keep = ["year", "country", "iso", "cpi", "xrusd", "eq_tr", "bond_tr",
-            "bill_rate", "eq_dp", "bond_rate", "stir", "ltrate", "housing_tr",
-            "wage"]
+            "bill_rate", "eq_dp", "eq_capgain", "bond_rate", "stir", "ltrate",
+            "housing_tr", "wage"]
     missing = [c for c in keep if c not in frame.columns]
     if missing:
         raise ValueError(f"JST workbook is missing expected columns: {missing}")
