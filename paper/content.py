@@ -3972,7 +3972,9 @@ def section_conclusion(ctx: Any) -> List[Flowable]:
         f"— {f.allocation['free_parameters']} parameters on the simplex, with "
         f"nothing held fixed — reaches the same shape again and adds "
         f"{f.allocation['lead_pct']:.2f}%; relaxing the long-only constraint "
-        f"adds nothing at any price of credit a household can obtain."))
+        f"pays well only when credit is nearly free, and breaks even by a "
+        f"{f.leverage['break_even_spread']:.2%} spread over the real bill "
+        f"rate."))
     out.append(ctx.p(
         f"But the extensions matter more than the replication. The single "
         f"decade around a person's retirement date explains "
