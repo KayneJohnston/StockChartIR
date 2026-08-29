@@ -75,6 +75,8 @@ the paper cannot drift away from the pipeline that produced it. See
 | [`docs/12_full_allocation.md`](docs/12_full_allocation.md) | The full four-asset weight simplex -- domestic equity, international equity, bonds and bills -- solved at every year of the lifecycle |
 | [`docs/13_leverage.md`](docs/13_leverage.md) | Borrowing to invest: the optimal leverage ratio and allocation at each price of credit, and the break-even spread |
 | [`docs/14_data_provenance.md`](docs/14_data_provenance.md) | **Which numbers were observed and which were generated** -- source fingerprints, authenticity checks on the primary file, and whether the headline survives on observed data alone |
+| [`docs/15_starting_valuation.md`](docs/15_starting_valuation.md) | Conditioning the result on how expensive the market was when a lifetime began, using only the dividend yield an investor could actually observe |
+| [`docs/16_housing.md`](docs/16_housing.md) | Housing as a fifth asset: undoing the appraisal smoothing in the index, then sweeping the annual holding cost to find the price at which it stops being worth holding |
 
 All fourteen are **generated** by `main.py` from live pipeline objects -- edit
 `src/report.py`, not the Markdown.
@@ -499,7 +501,7 @@ pip install numpy pandas scipy matplotlib pyyaml openpyxl pytest
 
 python main.py --quick      # ~20 s smoke run at reduced N
 python main.py              # ~30 min full run: N = 100,000 plus sweeps and searches
-python -m pytest tests/ -q  # 312 tests
+python -m pytest tests/ -q  # 580 tests
 ```
 
 Selected steps and alternative configurations:
@@ -515,13 +517,15 @@ python main.py --steps 1 10         # panel + savings-rate analysis only
 python main.py --steps 11           # the accumulation-signal deep dive
 python main.py --steps 12 13        # the full allocation solve and leverage
 python main.py --steps 14           # the data provenance audit
+python main.py --steps 15           # the starting-valuation study
+python main.py --steps 16           # housing as a fifth asset
 python main.py --config other.yaml  # a different parameterisation
 ```
 
 ## Layout
 
 ```
-├── docs/                 # generated analysis documents (10 files)
+├── docs/                 # generated analysis documents (16 files)
 ├── data/
 │   ├── raw/              # primary source files, unmodified
 │   ├── processed/        # standardised real return panels (.csv and .npz)
@@ -542,11 +546,13 @@ python main.py --config other.yaml  # a different parameterisation
 │   ├── leverage.py       # levered evaluator and the cost-of-credit sweep
 │   ├── observed.py       # series recovered from published rates, not generated
 │   ├── provenance.py     # what is observed, what is simulated, and does it matter
+│   ├── valuation.py      # the starting dividend yield, with no look-ahead
+│   ├── housing.py        # housing de-smoothed, and priced by its holding cost
 │   ├── plots.py          # publication-quality figures
 │   └── report.py         # Markdown report generation
-├── tests/                # 510 unit + integration tests
+├── tests/                # 580 unit + integration tests
 ├── results/
-│   ├── figures/          # 39 PNGs
+│   ├── figures/          # 41 PNGs
 │   └── tables/           # 110+ CSVs
 ├── config.yaml           # every tunable parameter
 └── main.py               # entry point

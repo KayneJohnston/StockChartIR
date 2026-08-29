@@ -53,29 +53,51 @@ class BatchEvaluator:
     """Evaluates many candidate weight schedules against one set of paths.
 
     The coordinate search calls this tens of thousands of times, so the
-    layout is chosen for it. Returns are cached once as ``(H, N, 4)`` and the
+    layout is chosen for it. Returns are cached once as ``(H, N, A)`` and the
     portfolio return for ``K`` candidates is a single batched matmul
-    ``(H, N, 4) @ (H, 4, K)`` -- BLAS work rather than a strided ``einsum``,
+    ``(H, N, A) @ (H, A, K)`` -- BLAS work rather than a strided ``einsum``,
     which profiling showed was most of the runtime. The whole recursion then
     runs in ``(N, K)`` layout so nothing needs transposing mid-loop.
     """
 
     def __init__(self, paths: BootstrapPaths, spec: lc.LifecycleSpec,
                  income: np.ndarray, cfg: Mapping[str, Any],
-                 spending: spg.SpendingRule | None = None) -> None:
+                 spending: spg.SpendingRule | None = None,
+                 assets: Sequence[str] | None = None,
+                 extra: Mapping[str, np.ndarray] | None = None) -> None:
         if paths.horizon < spec.horizon:
             raise ValueError("bootstrap horizon is shorter than the lifecycle")
         self.spec = spec
+        # The investable set is a parameter so that a study can add an asset
+        # the panel does not carry. `extra` supplies its (N, H) returns for
+        # exactly these paths -- the housing study of `src.housing` gathers
+        # them with the sampler's own calendar and country indices, so the
+        # extra asset is drawn on the same block structure as the rest.
+        self.assets: Tuple[str, ...] = tuple(assets) if assets else lc.ASSETS
+        self.n_assets = len(self.assets)
         self.cfg = cfg
         self.income = income
         self.n_paths = paths.n_paths
         self.rule = spending or spg.from_spec(spec.retirement_rule,
                                               spec.rule_rate)
         horizon = spec.horizon
-        # (H, N, 4), contiguous: the batched matmul reads it in this order.
+        # (H, N, A), contiguous: the batched matmul reads it in this order.
+        extra = dict(extra or {})
+        columns = []
+        for name in self.assets:
+            block = extra[name] if name in extra else paths.series(name)
+            block = np.asarray(block, dtype=float)[:, :horizon]
+            if block.shape != (paths.n_paths, horizon):
+                raise ValueError(
+                    f"returns for {name!r} are {block.shape}, expected "
+                    f"{(paths.n_paths, horizon)}")
+            if not np.isfinite(block).all():
+                raise ValueError(
+                    f"returns for {name!r} contain non-finite values; an "
+                    "asset must be defined on every drawn path-year")
+            columns.append(block)
         self._returns = np.ascontiguousarray(
-            np.stack([paths.series(a)[:, :horizon] for a in lc.ASSETS], axis=-1)
-            .transpose(1, 0, 2))
+            np.stack(columns, axis=-1).transpose(1, 0, 2))
         self._inflation = np.ascontiguousarray(
             paths.inflation[:, :horizon].T)                     # (H, N)
         self._benefit = spec.social_security_benefit(income.mean(axis=1))
@@ -102,8 +124,8 @@ class BatchEvaluator:
         implementations from drifting apart in substance.
         """
         spec = self.spec
-        if weights.ndim != 3 or weights.shape[2] != len(lc.ASSETS):
-            raise ValueError(f"weights must be (K, horizon, {len(lc.ASSETS)})")
+        if weights.ndim != 3 or weights.shape[2] != self.n_assets:
+            raise ValueError(f"weights must be (K, horizon, {self.n_assets})")
         if weights.shape[1] != spec.horizon:
             raise ValueError(
                 f"weights horizon {weights.shape[1]} != {spec.horizon}")
@@ -168,7 +190,7 @@ class BatchEvaluator:
         cost, but the wealth, withdrawal and utility arithmetic around it is
         identical.
         """
-        # (H, N, 4) @ (H, 4, K) -> (H, N, K)
+        # (H, N, A) @ (H, A, K) -> (H, N, K)
         return np.matmul(self._returns,
                          np.ascontiguousarray(weights.transpose(1, 2, 0)))
 

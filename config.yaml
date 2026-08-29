@@ -616,3 +616,35 @@ valuation:
   # today's valuation in the panel's own distribution.
   reference_country: USA
 
+
+# ---------------------------------------------------------------------------
+# Step 16 -- housing as a fifth asset
+# ---------------------------------------------------------------------------
+# The fourth asset class the source project measures and the rest of this
+# pipeline does not invest in. Two things have to be settled before it can be
+# compared with a traded asset: the appraisal smoothing in the index, which is
+# inverted, and the annual cost of holding a building, which is swept rather
+# than guessed.
+housing:
+  enabled: true
+  n_paths: 20000
+
+  # Annual cost of holding the asset, as a share of its value, charged every
+  # year regardless of return. This is *additional* to whatever the source
+  # series already nets out, so the sweep asks how much extra cost it takes to
+  # make housing not worth holding.
+  holding_costs: [0.0, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06]
+
+  # Constant-mix search: a coarse lattice over the 4-simplex, then
+  # pairwise-exchange refinement inside it.
+  coarse_step: 0.10          # 1,001 candidate allocations over five assets
+  fine_step: 0.025
+
+  # The costs at which the constant-mix restriction is removed and the full
+  # age-by-asset schedule is solved instead, as a check on it.
+  age_varying_costs: [0.0, 0.03]
+
+  # Whether to re-run the whole sweep on the raw, still-smoothed series. This
+  # is the naive treatment; running it shows which way the smoothing biases
+  # the answer instead of asserting a direction.
+  compare_raw_series: true

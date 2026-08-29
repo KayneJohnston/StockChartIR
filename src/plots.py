@@ -1895,3 +1895,101 @@ def plot_valuation(predictive: pd.DataFrame, buckets: pd.DataFrame,
         ax.grid(axis="x", alpha=0.0)
         fig.tight_layout()
     return _save(fig, directory, name)
+
+
+def plot_housing_sweep(sweep: pd.DataFrame, audit: pd.DataFrame,
+                       raw_sweep: pd.DataFrame | None,
+                       break_even: float, directory: str | Path,
+                       name: str = "fig41_housing_cost_sweep") -> Path:
+    """What housing is worth, and what it costs to make it worth nothing.
+
+    Four readings: how much volatility the de-smoothing restores, how the
+    optimal allocation rearranges itself as the holding cost rises, what the
+    fifth asset adds to lifetime welfare at each cost, and how much of that
+    conclusion is an artefact of leaving the index smoothed.
+    """
+    five = sweep[sweep["investable_set"] == "five assets"].sort_values(
+        "holding_cost")
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(1, 4, figsize=(21.0, 5.0))
+
+        # -- 1. the smoothing the index carries ---------------------------
+        ax = axes[0]
+        block = audit.sort_values("autocorrelation")
+        y = np.arange(len(block))
+        ax.barh(y - 0.2, block["sd_raw"] * 100, 0.4, color=_colour(5),
+                label="as published")
+        ax.barh(y + 0.2, block["sd_desmoothed"] * 100, 0.4, color=_colour(1),
+                label="de-smoothed")
+        ax.plot(block["equity_sd"] * 100, y, linestyle="none",
+                marker=_marker(2), color="0.2", markersize=5,
+                label="domestic equity")
+        ax.set_yticks(y)
+        ax.set_yticklabels(block["iso"], fontsize=8)
+        ax.set_xlabel("Standard deviation of real returns (%)")
+        ax.set_title("Undoing the appraisal smoothing")
+        ax.legend(fontsize=8, loc="lower right")
+        ax.grid(axis="y", visible=False)
+
+        # -- 2. the allocation, cost by cost ------------------------------
+        ax = axes[1]
+        assets = ("mean_housing", "mean_dom_eq", "mean_intl_eq", "mean_bond",
+                  "mean_bill")
+        labels = ("Housing", "Domestic equity", "International equity",
+                  "Bonds", "Bills")
+        x = five["holding_cost"].to_numpy(dtype=float) * 100
+        bottom = np.zeros(len(five))
+        for i, (column, label) in enumerate(zip(assets, labels)):
+            if column not in five.columns:
+                continue
+            height = five[column].to_numpy(dtype=float) * 100
+            ax.bar(x, height, width=0.7, bottom=bottom, label=label,
+                   color=_colour(i))
+            bottom += height
+        ax.set_xlabel("Annual holding cost on housing (%)")
+        ax.set_ylabel("Weight in the optimal portfolio (%)")
+        ax.set_title("What the optimum holds")
+        ax.legend(fontsize=8, ncol=2, loc="upper center")
+        ax.set_ylim(0, 128)
+
+        # -- 3. what the fifth asset is worth -----------------------------
+        ax = axes[2]
+        ax.plot(x, five["advantage_pct"], marker=_marker(0),
+                color=_colour(0), label="de-smoothed")
+        if raw_sweep is not None and len(raw_sweep):
+            other = raw_sweep[
+                raw_sweep["investable_set"] == "five assets"].sort_values(
+                "holding_cost")
+            ax.plot(other["holding_cost"] * 100, other["advantage_pct"],
+                    marker=_marker(1), linestyle="--", color=_colour(4),
+                    label="raw (still smoothed)")
+        ax.axhline(0.0, color="0.3", linewidth=1.0)
+        if np.isfinite(break_even):
+            ax.axvline(break_even * 100, color=_colour(1), linestyle=":",
+                       linewidth=1.4)
+            ax.text(break_even * 100, ax.get_ylim()[1] * 0.92,
+                    f"  housing drops out\n  at {break_even:.1%}", fontsize=8,
+                    color=_colour(1), va="top")
+        ax.set_xlabel("Annual holding cost on housing (%)")
+        ax.set_ylabel("Gain over the four-asset optimum (%)")
+        ax.set_title("What adding housing is worth")
+        ax.legend(fontsize=8)
+
+        # -- 4. where the weight comes from -------------------------------
+        ax = axes[3]
+        if "mean_housing" in five.columns:
+            ax.plot(x, five["mean_housing"] * 100, marker=_marker(0),
+                    color=_colour(0), label="Housing")
+            for i, (column, label) in enumerate(
+                    (("equity", "Equity (both legs)"),
+                     ("fixed_income", "Bonds and bills")), start=1):
+                if column in five.columns:
+                    ax.plot(x, five[column] * 100, marker=_marker(i),
+                            color=_colour(i), label=label)
+        ax.set_xlabel("Annual holding cost on housing (%)")
+        ax.set_ylabel("Weight in the optimal portfolio (%)")
+        ax.set_title("What housing displaces")
+        ax.legend(fontsize=8)
+
+        fig.tight_layout()
+        return _save(fig, directory, name)

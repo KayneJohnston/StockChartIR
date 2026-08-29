@@ -5214,3 +5214,292 @@ python main.py --steps 15
 Runtime {float(notes['elapsed_seconds']):.0f}s.
 """
     return _write(path, [intro, body])
+
+
+def write_doc_16(
+    path: str | Path,
+    cfg: Mapping[str, Any],
+    frames: Mapping[str, pd.DataFrame],
+    figures: Sequence[str],
+    notes: Mapping[str, Any],
+) -> Path:
+    """Housing as a fifth asset, priced by the cost of holding it."""
+    audit = frames["audit"]
+    sweep = frames["sweep"]
+    raw_sweep = frames.get("raw_sweep")
+    age_varying = frames.get("age_varying")
+    displacement = frames.get("displacement", pd.DataFrame())
+    break_even = float(notes["break_even"])
+    gamma = float(notes["gamma"])
+
+    five = sweep[sweep["investable_set"] == "five assets"].sort_values(
+        "holding_cost")
+    control = sweep[sweep["investable_set"] == "four assets"]
+
+    audit_tbl = md_table(_compact(
+        _pct(audit, ["mean_raw", "mean_desmoothed", "sd_raw", "sd_desmoothed",
+                     "equity_mean", "equity_sd"]),
+        ["iso", "years_raw", "autocorrelation", "mean_raw", "sd_raw",
+         "sd_desmoothed", "sd_ratio", "equity_mean", "equity_sd"],
+        {"iso": "Country", "years_raw": "Years",
+         "autocorrelation": "Lag-1 autocorr.", "mean_raw": "Mean (%)",
+         "sd_raw": "SD published (%)", "sd_desmoothed": "SD de-smoothed (%)",
+         "sd_ratio": "Ratio", "equity_mean": "Equity mean (%)",
+         "equity_sd": "Equity SD (%)"}),
+        floatfmt="{:.2f}")
+
+    sweep_tbl = md_table(_compact(
+        _pct(five, ["holding_cost", "mean_dom_eq", "mean_intl_eq", "mean_bond",
+                    "mean_bill", "mean_housing"]),
+        ["holding_cost", "mean_housing", "mean_dom_eq", "mean_intl_eq",
+         "mean_bond", "mean_bill", "cec", "advantage_pct"],
+        {"holding_cost": "Holding cost (%)", "mean_housing": "Housing (%)",
+         "mean_dom_eq": "Dom. equity (%)", "mean_intl_eq": "Intl. equity (%)",
+         "mean_bond": "Bonds (%)", "mean_bill": "Bills (%)",
+         "cec": "CEC", "advantage_pct": "Gain over four assets (%)"}),
+        floatfmt="{:.2f}")
+
+    # -- verdicts, every one classified from the table above ---------------
+    free = five.iloc[0] if len(five) else None
+    dearest = five.iloc[-1] if len(five) else None
+    wanted_free = bool(free is not None and float(free["mean_housing"]) > 0.01)
+    wanted_dearest = bool(dearest is not None
+                          and float(dearest["mean_housing"]) > 0.01)
+
+    if not wanted_free:
+        verdict = ("**Housing earns no place in the portfolio at any price, "
+                   "including free.** The de-smoothed series is dominated by "
+                   "what the investor can already hold.")
+    elif np.isfinite(break_even):
+        verdict = (
+            f"**Housing is worth holding below an annual cost of "
+            f"{break_even:.1%} and not above it.** At no cost the optimum puts "
+            f"{float(free['mean_housing']):.0%} of the portfolio in it, worth "
+            f"{float(free['advantage_pct']):.1f}% in certainty-equivalent "
+            f"consumption over the best four-asset portfolio on the same "
+            f"paths; that gain falls away as the cost rises and reaches zero "
+            f"at {break_even:.1%} a year.")
+    elif wanted_dearest:
+        verdict = (
+            f"**Housing survives every cost this sweep tried.** Even at "
+            f"{float(dearest['holding_cost']):.0%} a year the optimum still "
+            f"holds {float(dearest['mean_housing']):.0%} of it. The break-even "
+            "cost is above the top of the grid, so it is not reported: "
+            "extrapolating it would be inventing the number the sweep failed "
+            "to find.")
+    else:
+        verdict = ("**Housing enters at low cost and leaves at high cost, but "
+                   "the crossing falls between grid points in a way the "
+                   "interpolation could not resolve.**")
+
+    # Which asset does housing displace? Compare the free and dearest rows.
+    displaced = ""
+    if free is not None and dearest is not None:
+        moves = {
+            "domestic equity": float(free["mean_dom_eq"]) - float(dearest["mean_dom_eq"]),
+            "international equity": float(free["mean_intl_eq"]) - float(dearest["mean_intl_eq"]),
+            "bonds": float(free["mean_bond"]) - float(dearest["mean_bond"]),
+            "bills": float(free["mean_bill"]) - float(dearest["mean_bill"]),
+        }
+        loser = min(moves, key=moves.get)
+        if moves[loser] < -0.01:
+            untouched = [name for name, move in moves.items()
+                         if abs(move) < 0.01]
+            displaced = (
+                f"The weight comes out of **{loser}**, which falls "
+                f"{abs(moves[loser]):.0%} of the portfolio between the dearest "
+                f"and the free case -- more than any other asset gives up."
+                + (f" {', '.join(untouched).capitalize()} "
+                   f"{'is' if len(untouched) == 1 else 'are'} untouched at "
+                   "every cost, so housing is not substituting for the "
+                   "portfolio at large: it is competing with the one holding "
+                   "that already does this job."
+                   if untouched else
+                   " The rest of the portfolio absorbs the remainder."))
+
+    # Does the smoothing bias the answer, and in which direction?
+    raw_note = "_The comparison against the raw series was not run._"
+    if raw_sweep is not None and len(raw_sweep):
+        raw_five = raw_sweep[
+            raw_sweep["investable_set"] == "five assets"].sort_values(
+            "holding_cost")
+        raw_break = hs_break_even(raw_five)
+        raw_free = float(raw_five.iloc[0]["mean_housing"])
+        naive_higher = raw_free > float(free["mean_housing"])
+        raw_note = (
+            f"Left smoothed, the same search puts {raw_free:.0%} in housing at "
+            f"zero cost against {float(free['mean_housing']):.0%} once the "
+            f"smoothing is undone"
+            + (f", and its break-even cost is {raw_break:.2%} against "
+               f"{break_even:.2%}" if np.isfinite(raw_break)
+               and np.isfinite(break_even) else "")
+            + ". "
+            + ("The naive treatment therefore **overstates** the case for "
+               "housing, which is the direction the mechanism predicts: "
+               "smoothing hides volatility, and hidden volatility looks like "
+               "risk-adjusted return."
+               if naive_higher else
+               "The naive treatment does **not** overstate the case here, "
+               "which is worth noting because it is the opposite of what the "
+               "mechanism predicts."))
+
+    age_note = "_The constant-mix restriction was not tested._"
+    if age_varying is not None and len(age_varying):
+        gaps = age_varying.get("housing_difference")
+        gains = age_varying.get("cec_gain_pct")
+        if gaps is not None and gains is not None:
+            worst = float(np.abs(gaps).max())
+            best_gain = float(gains.max())
+            age_note = (
+                f"Letting the allocation vary with age moves the mean housing "
+                f"weight by at most {worst:.0%} of the portfolio and buys at "
+                f"most {best_gain:.2f}% more certainty-equivalent consumption "
+                + ("-- small enough that the constant-mix reading above stands."
+                   if worst < 0.10 and best_gain < 1.0 else
+                   "-- large enough that the constant-mix reading above should "
+                   "be treated as indicative only."))
+
+    age_tbl = md_table(_compact(
+        _pct(age_varying, ["holding_cost", "mean_housing",
+                           "housing_working", "housing_retired",
+                           "constant_mix_housing"]),
+        ["holding_cost", "mean_housing", "housing_working", "housing_retired",
+         "constant_mix_housing", "cec", "cec_gain_pct"],
+        {"holding_cost": "Holding cost (%)", "mean_housing": "Housing, mean (%)",
+         "housing_working": "While working (%)",
+         "housing_retired": "In retirement (%)",
+         "constant_mix_housing": "Constant-mix housing (%)",
+         "cec": "CEC", "cec_gain_pct": "Gain over constant mix (%)"}),
+        floatfmt="{:.2f}") if age_varying is not None and len(age_varying) \
+        else "_Not run._"
+
+    moments_d = notes.get("moments_desmoothed", {})
+    moments_r = notes.get("moments_raw", {})
+
+    intro = _header(
+        "16 - Housing",
+        "The fourth asset class the sources measure, priced by what it costs "
+        "to hold.",
+    )
+
+    body = f"""
+## 1. The asset that was left out
+
+The source project measures four asset classes. Three of them -- equity, bonds
+and bills -- are the investable set everywhere else in this study. The fourth,
+housing, is measured just as carefully across
+{int(len(audit))} countries and
+{int(audit['years_raw'].sum()):,} country-years, and nothing else here invests
+in it.
+
+There are two honest reasons for that, and this section confronts both rather
+than repeating them.
+
+**The index is smoothed.** House prices come from transactions and valuations,
+not from a continuous auction, so this year's index still carries part of last
+year's level. The published series therefore understates the volatility an
+owner actually bears, and comparing it with a traded series would flatter it.
+
+**A building costs money to hold.** A share certificate does not. Rates,
+insurance, maintenance and management fall on the owner every year whether the
+asset rose or fell, and the right number is investor- and
+jurisdiction-specific. Rather than pick one, this section sweeps it.
+
+## 2. Undoing the smoothing
+
+Each country is de-smoothed with its own estimated first-order coefficient --
+`r*_t = (r_t - a·r_(t-1)) / (1 - a)` -- because index construction differs by
+country, and a pooled coefficient would over-correct the cleanly measured
+series and under-correct the rest. A country whose returns are not positively
+autocorrelated is left alone: there is nothing to undo.
+
+{audit_tbl}
+
+Pooled across the panel this lifts the standard deviation of real housing
+returns from {float(moments_r.get('sd', float('nan'))):.1%} to
+{float(moments_d.get('sd', float('nan'))):.1%} while leaving the mean at
+{float(moments_d.get('mean', float('nan'))):.1%} -- which is what inverting a
+first-order filter should do, since the transformation preserves the mean in
+expectation and restores the variance the filter removed.
+
+That leaves housing with an equity-like average return and materially less
+volatility than equity, which is precisely why the holding cost has to be taken
+seriously rather than assumed away.
+
+## 3. Which country-years the study can use
+
+Housing is recorded for {int(notes['kept_cells']):,} of the
+{int(notes['total_cells']):,} country-years the panel otherwise has
+({100.0 * int(notes['kept_cells']) / max(int(notes['total_cells']), 1):.0f}%).
+The study runs on that intersection. The alternative -- filling the missing
+cells -- would mean inventing returns, so instead every asset is drawn from the
+same, smaller set of genuinely observed years.
+
+The four-asset control is re-solved on that same restricted panel and against
+the same {int(notes['n_paths']):,} lifetimes and the same income draws, so the
+restriction cancels out of every comparison below. Its own optimum is
+{float(control.iloc[0]['mean_dom_eq']):.0%} domestic equity,
+{float(control.iloc[0]['mean_intl_eq']):.0%} international,
+{float(control.iloc[0]['mean_bond']):.0%} bonds and
+{float(control.iloc[0]['mean_bill']):.0%} bills.
+
+## 4. The sweep
+
+One allocation, held for life, re-solved over the whole five-asset simplex at
+each annual holding cost. Common random numbers throughout: the paths, the
+income draws and the search are identical across rows, so a difference between
+two rows is the holding cost and nothing else.
+
+{sweep_tbl}
+
+{verdict}
+
+{displaced}
+
+## 5. Is the answer an artefact of the smoothing?
+
+{raw_note}
+
+## 6. Is the answer an artefact of holding one allocation for life?
+
+{age_tbl}
+
+{age_note}
+
+## 7. What this is not
+
+The asset priced here is a **liquid, continuously rebalanced, nationally
+diversified claim on the housing stock**, because that is what a national house
+price index measures. It is not a house.
+
+A single owner-occupied property is concentrated in one street rather than
+spread across a country, cannot be rebalanced, is bought with leverage, carries
+transaction costs measured in percent rather than basis points, and pays part of
+its return as accommodation rather than cash. Every one of those differences
+matters, and none of them is in the numbers above. Read this section as the
+price of the *asset class*, not as advice about a mortgage.
+
+Nor does the sweep model the cost as anything but a constant annual percentage
+of value. Real costs are lumpy, partly fixed, and correlated with the cycle;
+a constant charge is the tractable approximation, not the truth.
+
+## 8. Figures
+
+{chr(10).join(f"* `{f}`" for f in figures)}
+
+## 9. Reproduction
+
+```bash
+python main.py --steps 16
+```
+
+Runtime {float(notes['elapsed_seconds']):.0f}s at {int(notes['n_paths']):,}
+paths, risk aversion {gamma:g}.
+"""
+    return _write(path, [intro, body])
+
+
+def hs_break_even(frame: pd.DataFrame) -> float:
+    """:func:`src.housing.break_even_cost`, imported lazily for the report."""
+    from .housing import break_even_cost
+    return break_even_cost(frame)

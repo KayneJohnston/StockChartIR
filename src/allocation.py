@@ -51,14 +51,25 @@ ASSET_LABELS: Mapping[str, str] = {
     "intl_eq": "International equity",
     "bond": "Bonds",
     "bill": "Bills",
+    "housing": "Housing",
 }
 
 COARSE_STEP = 0.25
 FINE_STEP = 0.05
 
-#: The twelve ordered asset pairs a single-step exchange can move weight along.
-PAIRS: Tuple[Tuple[int, int], ...] = tuple(
-    (i, j) for i in range(N_ASSETS) for j in range(N_ASSETS) if i != j)
+
+def asset_pairs(n_assets: int = N_ASSETS) -> Tuple[Tuple[int, int], ...]:
+    """The ordered asset pairs a single-step exchange can move weight along.
+
+    ``n(n-1)`` of them: twelve for the four-asset problem, twenty once housing
+    joins it.
+    """
+    return tuple((i, j) for i in range(n_assets) for j in range(n_assets)
+                 if i != j)
+
+
+#: The twelve ordered pairs of the four-asset problem.
+PAIRS: Tuple[Tuple[int, int], ...] = asset_pairs(N_ASSETS)
 
 
 def simplex_lattice(step: float = COARSE_STEP,
@@ -99,7 +110,7 @@ def exchange_neighbourhood(weights: np.ndarray, step: float = FINE_STEP
     """
     weights = np.asarray(weights, dtype=float)
     out = [weights.copy()]
-    for i, j in PAIRS:
+    for i, j in asset_pairs(weights.size):
         if weights[i] < step - 1e-12:
             continue
         move = weights.copy()
@@ -111,7 +122,7 @@ def exchange_neighbourhood(weights: np.ndarray, step: float = FINE_STEP
 
 def _schedule_variants(schedule: np.ndarray, age: int,
                        candidates: np.ndarray) -> np.ndarray:
-    """``(K, H, 4)``: the schedule repeated with one age set to each candidate."""
+    """``(K, H, A)``: the schedule repeated with one age set to each candidate."""
     tiled = np.repeat(schedule[None, :, :], candidates.shape[0], axis=0)
     tiled[:, age, :] = candidates
     return tiled
@@ -135,16 +146,22 @@ def optimise_full_simplex(
     so that convergence can be shown rather than asserted.
     """
     horizon = evaluator.spec.horizon
-    lattice = simplex_lattice(coarse_step)
+    assets = tuple(getattr(evaluator, "assets", lc.ASSETS))
+    n_assets = len(assets)
+    lattice = simplex_lattice(coarse_step, n_assets)
     opening = np.asarray(start if start is not None
-                         else [0.25] * N_ASSETS, dtype=float)
+                         else [1.0 / n_assets] * n_assets, dtype=float)
+    if opening.size != n_assets:
+        raise ValueError(
+            f"start has {opening.size} weights but the evaluator holds "
+            f"{n_assets} assets ({', '.join(assets)})")
     opening = opening / opening.sum()
     schedule = np.repeat(opening[None, :], horizon, axis=0)
 
     best = float(evaluator.cec(schedule[None], gamma)[0])
     trace: List[Dict[str, Any]] = [
         {"stage": "start", "sweep": -1, "cec": best,
-         "evaluations": 1, **_mean_weights(schedule)}]
+         "evaluations": 1, **_mean_weights(schedule, assets)}]
     LOGGER.info("%sfull-simplex start (gamma=%.1f): CEC=%.6f",
                 label, gamma, best)
 
@@ -170,7 +187,7 @@ def optimise_full_simplex(
             gain = (best / start_cec - 1.0) * 100.0
             trace.append({"stage": stage, "sweep": sweep, "cec": best,
                           "gain_pct": gain, "evaluations": evaluations,
-                          **_mean_weights(schedule)})
+                          **_mean_weights(schedule, assets)})
             LOGGER.info("%s%s sweep %d (gamma=%.1f): CEC=%.6f (+%.4f%%)",
                         label, stage, sweep, gamma, best, gain)
             if gain <= 1e-9:
@@ -178,9 +195,10 @@ def optimise_full_simplex(
     return schedule, best, pd.DataFrame.from_records(trace)
 
 
-def _mean_weights(schedule: np.ndarray) -> Dict[str, float]:
+def _mean_weights(schedule: np.ndarray,
+                  assets: Sequence[str] = lc.ASSETS) -> Dict[str, float]:
     return {f"mean_{a}": float(schedule[:, i].mean())
-            for i, a in enumerate(lc.ASSETS)}
+            for i, a in enumerate(assets)}
 
 
 def schedule_frame(schedule: np.ndarray, spec: lc.LifecycleSpec, gamma: float,

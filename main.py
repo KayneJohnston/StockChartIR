@@ -28,8 +28,10 @@ from src import bootstrap as bs
 from src import data_loader as dl
 from src import glidepath as gp
 from src import hedging as hg
+from src import housing as hsg
 from src import leverage as lev
 from src import lifecycle as lc
+from src import observed as obs
 from src import plots
 from src import provenance as pvn
 from src import valuation as vln
@@ -88,6 +90,12 @@ def _apply_quick(cfg: Dict[str, Any]) -> Dict[str, Any]:
         cfg["leverage"]["schedule"]["spreads"] = [0.0]
         cfg["leverage"]["schedule"]["grid"] = [1.0, 1.5, 2.0]
         cfg["leverage"]["schedule"]["sweeps"] = 1
+    if "housing" in cfg:
+        cfg["housing"]["n_paths"] = 2000
+        cfg["housing"]["holding_costs"] = [0.0, 0.02, 0.04]
+        cfg["housing"]["coarse_step"] = 0.25
+        cfg["housing"]["fine_step"] = 0.05
+        cfg["housing"]["age_varying_costs"] = [0.0]
     if "accumulation" in cfg:
         cfg["accumulation"]["n_paths"] = 2000
         cfg["accumulation"]["response_grids"] = {
@@ -1999,6 +2007,102 @@ def step15_valuation(cfg: Dict[str, Any],
     return state
 
 
+def step16_housing(cfg: Dict[str, Any],
+                   state: Dict[str, Any]) -> Dict[str, Any]:
+    """Add housing to the investable set and price it by its holding cost."""
+    house_cfg = cfg.get("housing", {})
+    if not house_cfg.get("enabled", False):
+        LOGGER.info("housing study disabled; skipping step 16")
+        return state
+    LOGGER.info("=== STEP 16: housing as a fifth asset ===")
+    started = time.perf_counter()
+
+    panel = state["panel"]
+    jst = dl.load_jst(cfg)
+    spec = lc.spec_from_config(cfg)
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    n_paths = int(house_cfg.get("n_paths", 20000))
+    coarse = float(house_cfg.get("coarse_step", 0.10))
+    fine = float(house_cfg.get("fine_step", 0.025))
+
+    desmoothed, audit = hsg.desmoothed_panel(jst, panel)
+    raw = obs.housing_returns(jst, panel.countries, panel.years)
+
+    # Housing is recorded for fewer country-years than equity is, so the study
+    # runs on the intersection. The four-asset control is solved on the same
+    # restricted panel, which is what stops the restriction from being read as
+    # a housing effect.
+    restricted = hsg.restrict_to_housing(panel, desmoothed)
+    kept = int(restricted.available.sum())
+    LOGGER.info("housing restricts the panel to %d of %d country-years (%.0f%%)",
+                kept, int(panel.available.sum()),
+                100.0 * kept / max(int(panel.available.sum()), 1))
+
+    sampler = bs.from_config(restricted, cfg, horizon_years=spec.horizon)
+    paths = sampler.sample(n_paths,
+                           chunk_size=int(cfg["bootstrap"]["chunk_size"]))
+    income = lc.simulate_income(spec, paths.n_paths,
+                                np.random.default_rng(12345))
+
+    gross = hsg.gather(paths, desmoothed)
+    costs = [float(c) for c in house_cfg.get("holding_costs", hsg.cost_grid(cfg))]
+    sweep = hsg.solve_sweep(paths, spec, income, cfg, gross, costs, gamma,
+                            coarse, fine, variant="de-smoothed")
+
+    frames: Dict[str, pd.DataFrame] = {"audit": audit, "sweep": sweep}
+    if bool(house_cfg.get("compare_raw_series", True)):
+        raw_gross = hsg.gather(paths, np.where(np.isfinite(raw), raw, np.nan))
+        if np.isfinite(raw_gross).all():
+            frames["raw_sweep"] = hsg.solve_sweep(
+                paths, spec, income, cfg, raw_gross, costs, gamma, coarse,
+                fine, variant="raw (still smoothed)")
+        else:
+            LOGGER.warning("raw housing series has gaps on the drawn paths; "
+                           "the smoothed comparison is skipped")
+
+    five = sweep[sweep["investable_set"] == "five assets"]
+    break_even = hsg.break_even_cost(five)
+    moved = hsg.displacement(five)
+
+    age_costs = [float(c) for c in house_cfg.get("age_varying_costs", [])]
+    if age_costs:
+        frames["age_varying"] = hsg.age_varying_check(
+            paths, spec, income, cfg, gross, age_costs, gamma, five)
+
+    tables = cfg["run"]["table_dir"]
+    _save_table(audit, tables, "housing_desmoothing_audit")
+    _save_table(sweep, tables, "housing_cost_sweep")
+    _save_table(moved, tables, "housing_displacement")
+    if "raw_sweep" in frames:
+        _save_table(frames["raw_sweep"], tables, "housing_raw_sweep")
+    if "age_varying" in frames:
+        _save_table(frames["age_varying"], tables, "housing_age_varying")
+
+    figures = [str(plots.plot_housing_sweep(
+        sweep, audit, frames.get("raw_sweep"), break_even,
+        cfg["run"]["figure_dir"]))]
+
+    elapsed = time.perf_counter() - started
+    notes = {
+        "elapsed_seconds": elapsed,
+        "break_even": break_even,
+        "gamma": gamma,
+        "n_paths": int(paths.n_paths),
+        "kept_cells": kept,
+        "total_cells": int(panel.available.sum()),
+        "moments_desmoothed": hsg.moments(desmoothed),
+        "moments_raw": hsg.moments(raw),
+    }
+    frames["displacement"] = moved
+    rp.write_doc_16(Path("docs") / "16_housing.md", cfg, frames, figures, notes)
+    LOGGER.info("docs/16 written (%.0fs); housing break-even holding cost %s",
+                elapsed,
+                f"{break_even:.2%}" if np.isfinite(break_even) else "not reached")
+    state.update({"housing_sweep": sweep, "housing_break_even": break_even})
+    return state
+
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
@@ -2007,11 +2111,12 @@ STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
          7: step7_glide_path, 8: step8_hedging, 9: step9_retirement_timing,
          10: step10_saving, 11: step11_accumulation,
          12: step12_allocation, 13: step13_leverage,
-         14: step14_provenance, 15: step15_valuation}
+         14: step14_provenance, 15: step15_valuation,
+         16: step16_housing}
 
 
 def run(config_path: str = "config.yaml",
-        steps: Sequence[int] = tuple(range(1, 16)),
+        steps: Sequence[int] = tuple(range(1, 17)),
         quick: bool = False) -> Dict[str, Any]:
     """Execute the pipeline and return the accumulated state."""
     cfg = dl.load_config(config_path)
@@ -2041,8 +2146,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--steps", nargs="+", type=int,
-                        default=list(range(1, 16)),
-                        choices=list(range(1, 16)))
+                        default=list(range(1, 17)),
+                        choices=list(range(1, 17)))
     parser.add_argument("--quick", action="store_true",
                         help="small N for smoke tests")
     parser.add_argument("--verbose", action="store_true")

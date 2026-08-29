@@ -3521,6 +3521,352 @@ def _gamma_net(by_gamma: pd.DataFrame, gamma: float) -> float:
 
 
 # ---------------------------------------------------------------------------
+# 15. Starting valuation
+# ---------------------------------------------------------------------------
+def section_valuation(ctx: Any) -> List[Flowable]:
+    f = ctx.f
+    predictive = f.table("valuation_predictive_power").sort_values(
+        "horizon_years")
+    buckets = f.table("valuation_by_bucket")
+    advantage = f.table("valuation_advantage")
+    distribution = f.table("valuation_buckets")
+
+    short = predictive.iloc[0]
+    long = predictive.iloc[-1]
+    long_h = int(long["horizon_years"])
+    multiple = float((1.0 + float(long["gap"])) ** long_h)
+
+    out: List[Flowable] = [ctx.h1("15. What the Market Costs When You Start")]
+    out.append(ctx.p(
+        "Every result so far treats one starting point as interchangeable "
+        "with another. The bootstrap draws calendar windows without regard to "
+        "how expensive equities were when the window opened, so a lifetime "
+        "that begins at a market peak is statistically identical to one that "
+        "begins at a trough. That is a strong assumption, and it is the one a "
+        "reader is least able to accept: they know what today's market costs, "
+        "and the model does not."))
+    out.append(ctx.p(
+        "This section supplies the missing state variable. It is constrained "
+        "throughout by a single rule — nothing may condition on information "
+        "the investor could not have had at the moment they started."))
+
+    out.append(ctx.h2("15.1 The observable, and why it is not the obvious one"))
+    out.append(ctx.p(
+        "The natural candidate is the dividend-price ratio the source "
+        "workbook records. It cannot be used directly. That series is a "
+        "dividend <i>return</i> — the dividend paid during year t over the "
+        "price at the start of it — and its numerator is unknown until the "
+        "year is over. Conditioning on it would build look-ahead into every "
+        "number that followed."))
+    out.append(ctx.p(
+        "What an investor standing at the start of year t can actually see is "
+        "the trailing yield on the current price, D(t-1) / P(t-1), which we "
+        "recover as the previous year's dividend return divided by one plus "
+        "the previous year's capital gain. Both terms are last year's, so the "
+        "value is fully formed before the year being predicted begins."))
+    out.append(ctx.p(
+        "We verify this structurally rather than statistically, because a "
+        "correlation cannot tell the two cases apart: a yield built from the "
+        "current year's dividend would predict the current year's return, and "
+        "a correctly lagged one still correlates with the <i>previous</i> "
+        "year's return because a bad year lowers the price in the "
+        "denominator. Both are expected; neither distinguishes a leak from a "
+        "signal. Instead we overwrite everything the workbook records for a "
+        "probe year, rebuild the series, and confirm that the row for that "
+        "year does not move. It does not, at six probe years spread across "
+        "the panel, and the pipeline aborts rather than reporting anything if "
+        "that check ever fails."))
+    out.append(ctx.p(
+        "The international leg needs its own answer, since it holds many "
+        "markets at once. We use the equal-weighted leave-one-out mean of the "
+        "other countries' yields rather than the median, because the leg "
+        "holds equal money in each market and the dividend yield of an "
+        "equally weighted portfolio is the plain mean of its constituents'. "
+        "The median is retained as a robustness check on the pull of any one "
+        "distressed market."))
+
+    out.append(ctx.h2("15.2 The yield forecasts returns"))
+    out.extend(ctx.table(
+        rows_from(predictive,
+                  ["horizon_years", "observations", "correlation",
+                   "forward_return_expensive", "forward_return_cheap", "gap"],
+                  ["Horizon (years)", "Observations", "Correlation",
+                   "Started expensive (%)", "Started cheap (%)", "Gap (pp)"],
+                  {"horizon_years": lambda v: f"{int(v)}",
+                   "observations": lambda v: f"{int(v):,}",
+                   "correlation": lambda v: f2(v, 2),
+                   "forward_return_expensive": lambda v: f2(float(v) * 100, 2),
+                   "forward_return_cheap": lambda v: f2(float(v) * 100, 2),
+                   "gap": lambda v: f2(float(v) * 100, 2)}),
+        "Trailing dividend yield and subsequent real equity returns",
+        note="Annualised real return over the years following the "
+             "observation, split at the terciles of the yield distribution. "
+             "The conditioning in this section is only worth doing if these "
+             "gaps are positive."))
+
+    # Classified from the table, not asserted: the whole section rests on it.
+    predicts = bool((predictive["gap"] > 0).all())
+    strengthens = float(long["correlation"]) > float(short["correlation"])
+    if not predicts:
+        out.append(ctx.p(
+            "<b>The yield does not separate outcomes at every horizon.</b> "
+            "The buckets below therefore split lifetimes that are not "
+            "different in expectation, and the results should be read as a "
+            "null rather than as a valuation effect."))
+    else:
+        out.append(ctx.p(
+            f"The relationship is present at every horizon"
+            + (" and strengthens with it" if strengthens else "")
+            + f". Over {long_h} years the correlation is "
+            f"{f2(float(long['correlation']), 2)} against "
+            f"{f2(float(short['correlation']), 2)} at "
+            f"{int(short['horizon_years'])} year, and the third of history "
+            f"that began cheapest returned "
+            f"{f2(float(long['gap']) * 100, 2)} percentage points a year more "
+            f"than the third that began dearest. Compounded over "
+            f"{long_h} years that is a factor of {f2(multiple, 2)} on "
+            f"terminal wealth — not a rounding difference."))
+
+    out.append(ctx.h2("15.3 What it does to the allocation decision"))
+    out.append(ctx.p(
+        "We assign each simulated lifetime the blended portfolio yield at the "
+        "country-year its first block opened, and split the lifetimes at the "
+        "terciles of that distribution. Only the first block carries a "
+        "starting condition: the rest of the chain is the future, which no "
+        "investor chooses."))
+    out.extend(ctx.table(
+        rows_from(advantage,
+                  ["bucket", "n_paths", "challenger_cec", "incumbent_cec",
+                   "advantage_pct", "challenger_ruin", "incumbent_ruin"],
+                  ["Started", "Lifetimes", "All-equity CEC",
+                   "Glide-path CEC", "Advantage (%)", "All-equity ruin (%)",
+                   "Glide-path ruin (%)"],
+                  {"n_paths": lambda v: f"{int(v):,}",
+                   "challenger_cec": lambda v: f2(v, 3),
+                   "incumbent_cec": lambda v: f2(v, 3),
+                   "advantage_pct": lambda v: f2(v, 2),
+                   "challenger_ruin": lambda v: f2(float(v) * 100, 2),
+                   "incumbent_ruin": lambda v: f2(float(v) * 100, 2)}),
+        "The headline comparison, conditioned on starting valuation"))
+
+    lead = advantage["advantage_pct"]
+    holds = bool((lead > 0).all())
+    spread = float(lead.max() - lead.min())
+    if holds:
+        out.append(ctx.p(
+            f"<b>The ranking survives at every starting valuation.</b> The "
+            f"all-equity portfolio leads the glide path in all "
+            f"{len(lead)} buckets, and the advantage varies by only "
+            f"{f2(spread, 2)} percentage points across them. An investor "
+            f"starting at a market peak faces the same allocation answer as "
+            f"one starting at a trough."))
+    else:
+        losers = advantage[advantage["advantage_pct"] <= 0]
+        out.append(ctx.p(
+            f"<b>The ranking does not survive conditioning.</b> The all-equity "
+            f"portfolio loses in "
+            f"{', '.join(str(b) for b in losers['bucket'])}, which is the "
+            f"exception this section exists to look for and is reported here "
+            f"rather than buried."))
+
+    out.append(ctx.p(
+        "What does change is the level. The valuation an investor starts at "
+        "does not tell them what to hold; it tells them what to expect from "
+        "holding it. That distinction matters for planning — a withdrawal "
+        "rate calibrated on unconditional averages is calibrated on a mixture "
+        "of starting points, most of which are cheaper than the one a reader "
+        "in an expensive market actually faces."))
+
+    out.extend(ctx.figure(
+        "fig40_starting_valuation",
+        "Left: annualised real equity returns following cheap and expensive "
+        "starting yields, by horizon, with the correlation printed above each "
+        "pair. Centre: the distribution of starting yields the bootstrap "
+        "draws from, with the terciles that define the buckets. Right: the "
+        "all-equity advantage over the glide path within each bucket.",
+        max_height=8.5 * cm))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# 16. Housing
+# ---------------------------------------------------------------------------
+def section_housing(ctx: Any) -> List[Flowable]:
+    f = ctx.f
+    audit = f.table("housing_desmoothing_audit")
+    sweep = f.table("housing_cost_sweep")
+    five = sweep[sweep["investable_set"] == "five assets"].sort_values(
+        "holding_cost")
+    control = sweep[sweep["investable_set"] == "four assets"].iloc[0]
+    free = five.iloc[0]
+    dearest = five.iloc[-1]
+
+    from src.housing import break_even_cost
+    break_even = break_even_cost(five)
+
+    out: List[Flowable] = [ctx.h1("16. Housing as a Fifth Asset")]
+    out.append(ctx.p(
+        "The historical sources behind this study measure four asset classes. "
+        "Three of them — equity, bonds and bills — form the investable set "
+        "everywhere above. The fourth is housing, measured just as carefully "
+        f"across {int(len(audit))} countries and "
+        f"{int(audit['years_raw'].sum()):,} country-years, and excluded from "
+        "every result so far. This section asks what including it would do."))
+    out.append(ctx.p(
+        "Two obstacles stand in the way, and both are addressed rather than "
+        "assumed away."))
+
+    out.append(ctx.h2("16.1 The index is smoothed"))
+    out.append(ctx.p(
+        "House prices come from transactions and valuations rather than from "
+        "a continuous auction, so this year's index still carries part of "
+        "last year's level. The published series therefore understates the "
+        "volatility an owner actually bears, and comparing it with a traded "
+        "series would flatter it — the classic error in this literature. We "
+        "invert the smoothing country by country using each country's own "
+        "estimated first-order coefficient, since index construction differs "
+        "between them and a pooled coefficient would over-correct the cleanly "
+        "measured series and under-correct the rest. A country whose returns "
+        "are not positively autocorrelated is left alone: there is nothing to "
+        "undo."))
+    out.extend(ctx.table(
+        rows_from(audit.sort_values("autocorrelation", ascending=False),
+                  ["iso", "years_raw", "autocorrelation", "mean_raw",
+                   "sd_raw", "sd_desmoothed", "equity_sd"],
+                  ["Country", "Years", "Lag-1 autocorr.", "Mean (%)",
+                   "SD published (%)", "SD de-smoothed (%)",
+                   "Equity SD (%)"],
+                  {"years_raw": lambda v: f"{int(v)}",
+                   "autocorrelation": lambda v: f2(v, 2),
+                   "mean_raw": lambda v: f2(float(v) * 100, 2),
+                   "sd_raw": lambda v: f2(float(v) * 100, 2),
+                   "sd_desmoothed": lambda v: f2(float(v) * 100, 2),
+                   "equity_sd": lambda v: f2(float(v) * 100, 2)}),
+        "Appraisal smoothing in the housing series, by country",
+        note="De-smoothing preserves the mean in expectation and restores the "
+             "variance the filter removed. Countries with non-positive "
+             "autocorrelation are unchanged."))
+    out.append(ctx.p(
+        "This leaves housing with an equity-like average return and "
+        "materially less volatility than equity even after the correction — "
+        "which is exactly why the second obstacle cannot be waved through."))
+
+    out.append(ctx.h2("16.2 A building costs money to hold"))
+    out.append(ctx.p(
+        "A share certificate does not. Rates, insurance, maintenance and "
+        "management fall on a property owner every year whether the asset "
+        "rose or fell, and the right figure is specific to the investor and "
+        "the jurisdiction. Rather than choose one, we sweep it: the whole "
+        "allocation is re-solved over the five-asset simplex at each annual "
+        "holding cost, charged on value rather than on gains. The cost is "
+        "<i>additional</i> to whatever the source series already nets out, so "
+        "the sweep asks how much extra cost it takes to make housing not "
+        "worth holding."))
+    out.append(ctx.p(
+        "Housing is recorded for fewer country-years than equity is, so the "
+        "study runs on the intersection; filling the gaps would mean "
+        "inventing returns. The four-asset control is re-solved on that same "
+        "restricted panel, against the same lifetimes and the same income "
+        "draws, so the restriction cancels out of every comparison. Its own "
+        f"optimum is {pc(float(control['mean_dom_eq']), 0)} domestic equity "
+        f"and {pc(float(control['mean_intl_eq']), 0)} international."))
+
+    out.extend(ctx.table(
+        rows_from(five,
+                  ["holding_cost", "mean_housing", "mean_dom_eq",
+                   "mean_intl_eq", "mean_bond", "mean_bill", "advantage_pct"],
+                  ["Holding cost (%)", "Housing (%)", "Dom. equity (%)",
+                   "Intl. equity (%)", "Bonds (%)", "Bills (%)",
+                   "Gain over four assets (%)"],
+                  {"holding_cost": lambda v: f2(float(v) * 100, 1),
+                   "mean_housing": lambda v: f2(float(v) * 100, 1),
+                   "mean_dom_eq": lambda v: f2(float(v) * 100, 1),
+                   "mean_intl_eq": lambda v: f2(float(v) * 100, 1),
+                   "mean_bond": lambda v: f2(float(v) * 100, 1),
+                   "mean_bill": lambda v: f2(float(v) * 100, 1),
+                   "advantage_pct": lambda v: f2(v, 2)}),
+        "The optimal portfolio at each annual housing holding cost",
+        note="One allocation held for life, re-solved at each cost under "
+             "common random numbers, so a difference between rows is the cost "
+             "and nothing else."))
+
+    wanted_free = float(free["mean_housing"]) > 0.01
+    if not wanted_free:
+        out.append(ctx.p(
+            "<b>Housing earns no place in the portfolio at any price, "
+            "including free.</b> Once the smoothing is undone, the "
+            "de-smoothed series is dominated by assets the investor can "
+            "already hold."))
+    elif np.isfinite(break_even):
+        out.append(ctx.p(
+            f"<b>Housing is worth holding below an annual cost of "
+            f"{pc(break_even, 1)} and not above it.</b> Offered free it takes "
+            f"{pc(float(free['mean_housing']), 0)} of the portfolio and adds "
+            f"{f2(float(free['advantage_pct']), 1)}% to certainty-equivalent "
+            f"consumption over the best four-asset portfolio on the same "
+            f"paths. That gain erodes as the cost rises and vanishes at "
+            f"{pc(break_even, 1)} a year."))
+    else:
+        out.append(ctx.p(
+            f"<b>Housing survives every cost this sweep tried.</b> Even at "
+            f"{pc(float(dearest['holding_cost']), 0)} a year the optimum "
+            f"holds {pc(float(dearest['mean_housing']), 0)} of it. The "
+            f"break-even cost lies above the top of the grid and is not "
+            f"reported: extrapolating it would invent the number the sweep "
+            f"failed to find."))
+
+    moves = {
+        "domestic equity": float(free["mean_dom_eq"]) - float(dearest["mean_dom_eq"]),
+        "international equity": float(free["mean_intl_eq"]) - float(dearest["mean_intl_eq"]),
+        "bonds": float(free["mean_bond"]) - float(dearest["mean_bond"]),
+        "bills": float(free["mean_bill"]) - float(dearest["mean_bill"]),
+    }
+    loser = min(moves, key=moves.get)
+    if moves[loser] < -0.01:
+        untouched = [name for name, move in moves.items() if abs(move) < 0.01]
+        tail = (
+            f" {', '.join(untouched).capitalize()} "
+            f"{'is' if len(untouched) == 1 else 'are'} untouched at every "
+            f"cost, so housing is not substituting for the portfolio at "
+            f"large — it is competing with the single holding that already "
+            f"does this job."
+            if untouched else " The rest of the portfolio absorbs the "
+                              "remainder.")
+        out.append(ctx.p(
+            f"The weight comes out of <b>{loser}</b>, which gives up "
+            f"{pc(abs(moves[loser]), 0)} of the portfolio between the dearest "
+            f"case and the free one — more than any other asset." + tail))
+
+    out.append(ctx.h2("16.3 What this is not"))
+    out.append(ctx.p(
+        "The asset priced here is a liquid, continuously rebalanced, "
+        "nationally diversified claim on a country's housing stock, because "
+        "that is what a national house price index measures. <b>It is not a "
+        "house.</b> A single owner-occupied property is concentrated in one "
+        "street rather than spread across a country, cannot be rebalanced, is "
+        "bought with leverage, carries transaction costs measured in percent "
+        "rather than basis points, and pays part of its return as "
+        "accommodation rather than as cash. None of those differences is in "
+        "the numbers above. The section prices an asset class; it is not "
+        "advice about a mortgage."))
+    out.append(ctx.p(
+        "The cost is also modelled as a constant annual percentage of value. "
+        "Real holding costs are lumpy, partly fixed, and correlated with the "
+        "cycle. A flat charge is the tractable approximation, not the truth."))
+
+    out.extend(ctx.figure(
+        "fig41_housing_cost_sweep",
+        "Far left: the volatility the appraisal smoothing hides, by country, "
+        "against the same country's equity. Centre left: the optimal "
+        "portfolio at each holding cost. Centre right: what adding housing is "
+        "worth, with and without the de-smoothing correction. Far right: "
+        "which sleeve housing displaces as its cost falls.",
+        max_height=8.0 * cm))
+    return out
+
+
+
+# ---------------------------------------------------------------------------
 # 15. Discussion
 # ---------------------------------------------------------------------------
 def section_discussion(ctx: Any) -> List[Flowable]:
@@ -3530,7 +3876,7 @@ def section_discussion(ctx: Any) -> List[Flowable]:
     swr_eq = float(swr[swr["strategy"] == "balanced_all_equity"]
                    ["safe_withdrawal_rate_at_5%_ruin"].iloc[0])
 
-    out: List[Flowable] = [ctx.h1("15. Discussion")]
+    out: List[Flowable] = [ctx.h1("17. Discussion")]
     out.append(ctx.h2("15.1 What the replication does and does not establish"))
     out.append(ctx.p(
         "The central claim reproduces cleanly and survives an unusually wide "
@@ -3652,7 +3998,7 @@ def section_limitations(ctx: Any) -> List[Flowable]:
     f = ctx.f
     p = f.panel
     pr, adv = f.provenance, f.panel_advantage
-    out: List[Flowable] = [ctx.h1("16. Limitations and Threats to Validity")]
+    out: List[Flowable] = [ctx.h1("18. Limitations and Threats to Validity")]
     out.append(ctx.p(
         "This section is deliberately long. A replication that reports only "
         "the ways in which it succeeded is not much use."))
@@ -3812,7 +4158,7 @@ def section_conclusion(ctx: Any) -> List[Flowable]:
     f = ctx.f
     adv_tdf = f.advantage("balanced_all_equity", "target_date_fund")
     lottery = f.table("retirement_lottery_stats").iloc[0]
-    out: List[Flowable] = [ctx.h1("17. Conclusion")]
+    out: List[Flowable] = [ctx.h1("19. Conclusion")]
     out.append(ctx.p(
         f"We set out to reproduce a specific empirical claim and ended up with "
         f"a hierarchy. The claim reproduces: on a "
@@ -4275,6 +4621,8 @@ def story(ctx: Any) -> List[Flowable]:
     parts += section_retirement(ctx)
     parts += section_saving(ctx)
     parts += section_accumulation(ctx)
+    parts += section_valuation(ctx)
+    parts += section_housing(ctx)
     parts += section_discussion(ctx)
     parts += section_limitations(ctx)
     parts += section_conclusion(ctx)

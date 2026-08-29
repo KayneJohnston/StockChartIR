@@ -1,0 +1,5 @@
+holding_cost,investable_set,variant,cec,advantage_pct,mean_dom_eq,mean_intl_eq,mean_bond,mean_bill,mean_housing,evaluations,equity,fixed_income
+,four assets,de-smoothed,1.1829380018552114,0.0,0.1,0.8999999999999999,0.0,0.0,0.0,,,
+0.0,five assets,de-smoothed,1.326885281541839,12.168624176488873,0.0,0.55,0.0,0.0,0.45,88.0,0.55,0.0
+0.02,five assets,de-smoothed,1.2143226932735878,2.6531138038642377,0.05,0.7,0.0,0.0,0.25,92.0,0.75,0.0
+0.04,five assets,de-smoothed,1.1829380018552114,0.0,0.1,0.8999999999999999,0.0,0.0,0.0,93.0,0.9999999999999999,0.0
