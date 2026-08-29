@@ -5281,6 +5281,25 @@ def write_doc_16(
     raw_sweep = frames.get("raw_sweep")
     age_varying = frames.get("age_varying")
     displacement = frames.get("displacement", pd.DataFrame())
+    if len(displacement):
+        columns = [c for c in ("holding_cost", "dom_eq", "intl_eq", "bond",
+                               "bill", "housing")
+                   if c in displacement.columns]
+        displacement_tbl = md_table(_compact(
+            _pct(displacement, columns),
+            columns,
+            {"holding_cost": "Holding cost (%)", "housing": "Housing (pp)",
+             "dom_eq": "Dom. equity (pp)", "intl_eq": "Intl. equity (pp)",
+             "bond": "Bonds (pp)", "bill": "Bills (pp)"}),
+            floatfmt="{:.1f}")
+        reference = float(displacement["reference_cost"].iloc[0])
+        displacement_tbl = (
+            f"Read against the dearest case tried ({reference:.0%} a year), "
+            "where housing earns whatever the sweep gives it at that price, "
+            "each row is the change in the optimal weight as the cost falls "
+            "to that row's level:\n\n" + displacement_tbl)
+    else:
+        displacement_tbl = ""
     break_even = float(notes["break_even"])
     gamma = float(notes["gamma"])
 
@@ -5540,6 +5559,8 @@ execute in bricks.
 {verdict}
 
 {displaced}
+
+{displacement_tbl}
 
 ## 5. Is the answer an artefact of the smoothing?
 
