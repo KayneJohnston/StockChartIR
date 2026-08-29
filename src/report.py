@@ -4679,15 +4679,16 @@ quantified limitation and not silently applied.
     # than rendered as a row of zeros when the audit has nothing to report.
     housing_section = ""
     if len(housing) and house.get("countries"):
-        housing_section = f"""### 3.1 The asset class nobody here invests in
+        housing_section = f"""### 3.1 The fourth asset class
 
 The macro file carries a fourth asset the "Rate of Return on Everything"
-project measured and nothing in this pipeline reads: **housing total returns**,
-empirical for all {int(house.get('countries', 0))} observed countries over
+project measured: **housing total returns**, empirical for all
+{int(house.get('countries', 0))} observed countries over
 {int(house.get('country_years', 0)):,} country-years
-({int(house.get('first_year', 0))}-{int(house.get('last_year', 0))}). That is
-the largest block of genuine data in the sources that no result in this project
-uses, so it is audited here rather than left unmentioned.
+({int(house.get('first_year', 0))}-{int(house.get('last_year', 0))}). The
+headline results hold it out, using the same four-asset set as the work being
+replicated; it is audited here so that decision is visible rather than
+implicit, and `16_housing.md` then puts it in and prices it.
 
 {housing_tbl}
 
@@ -4700,9 +4701,9 @@ equity -- indistinguishable -- at a published standard deviation of
 {float(house.get('sd', float('nan'))) / float(house.get('equity_sd', float('nan'))):.2f}.
 Equity-like returns at that volatility would look dominant in any
 mean-variance comparison in this project, which is exactly why the series
-earns scrutiny rather than adoption.
+earns scrutiny before adoption.
 
-**It is not added to the investable set, and the table says why.** A house price
+**The table says why it cannot be taken at face value.** A house price
 index is built from appraisals and sparse transactions, which smooths it: the
 median lag-one autocorrelation of housing returns is
 {float(house.get('autocorrelation', float('nan'))):+.2f} against
@@ -4719,9 +4720,10 @@ free lunch is a measurement artefact.
 Even de-smoothed the series is not investable as written: it is an unlevered,
 untaxed, frictionless total return on the national housing stock, with no
 transaction costs, no vacancy, no maintenance and no concentration in a single
-property. Treating it as a fourth sleeve would overstate what a household can
-actually buy, and it would change the headline result. So it is measured,
-recorded, and left out — deliberately, and on the record.
+property. Adopting it as a fifth sleeve at face value would therefore overstate
+what a household can actually buy. `16_housing.md` adds it anyway, but only
+after de-smoothing it and charging an explicit annual holding cost -- and it is
+the size of that cost, not the raw return, that decides the answer.
 """
 
     advantage = float(notes.get("advantage", float("nan")))
@@ -5001,6 +5003,55 @@ def write_doc_15(
         floatfmt="{:.3f}")
     cuts = ", ".join(f"{c:.2%}" for c in meta["cuts"])
 
+    sleeve = frames.get("sleeve")
+    sleeve_notes = notes.get("sleeve", {})
+    if sleeve is not None and len(sleeve):
+        agree = float(sleeve_notes.get("agreement_pct", float("nan")))
+        corr = float(sleeve_notes.get("correlation", float("nan")))
+        sleeve_tbl = md_table(_compact(
+            _pct(sleeve, ["cut_low", "cut_high"]),
+            list(sleeve.columns),
+            {"sleeve": "Sleeve statistic", "cut_low": "Lower cut (%)",
+             "cut_high": "Upper cut (%)"}), floatfmt="{:.2f}")
+        if agree > 90.0:
+            sleeve_verdict = (
+                f"The choice barely matters: the two rank lifetimes almost "
+                f"identically (correlation {corr:.3f}) and "
+                f"{agree:.1f}% of them land in the same bucket either way, so "
+                f"the {int(sleeve_notes.get('reassigned', 0)):,} that move do "
+                f"not change any conclusion below.")
+        elif agree > 75.0:
+            sleeve_verdict = (
+                f"The choice moves a meaningful minority of lifetimes: the two "
+                f"correlate at {corr:.3f} and agree on {agree:.1f}% of "
+                f"bucket assignments, so "
+                f"{int(sleeve_notes.get('reassigned', 0)):,} lifetimes are "
+                f"classified differently. The results below use the mean; a "
+                f"reader who prefers the median should treat the bucket "
+                f"boundaries as approximate.")
+        else:
+            sleeve_verdict = (
+                f"**The choice matters.** The two statistics agree on only "
+                f"{agree:.1f}% of bucket assignments (correlation "
+                f"{corr:.3f}), which is low enough that the construction "
+                f"argument above is carrying real weight rather than settling "
+                f"a distinction without a difference.")
+        sleeve_section = f"""### 4.1 Mean or median across the sleeve?
+
+The international leg holds equal money in every other market with data that
+year. The dividend yield of an equally weighted portfolio is the plain mean of
+its constituents' yields, so the mean is what the leg's own construction
+implies. The median is the natural alternative -- it resists a single market
+trading at a distressed yield -- and the argument for the mean is an argument,
+not a measurement. So here is the measurement.
+
+{sleeve_tbl}
+
+{sleeve_verdict}
+"""
+    else:
+        sleeve_section = ""
+
     def _edge(v: float) -> str:
         return "-" if not np.isfinite(v) else f"{v:.2%}"
 
@@ -5157,6 +5208,8 @@ difference.
 Paths are split at the {cuts} cut-points of the drawn starting-yield
 distribution, so the buckets stay balanced however the sampler weights
 countries.
+
+{sleeve_section}
 
 **{position['iso']} in {int(position['year'])} carries a blended starting yield
 of {float(position['blended_yield']):.2%}, which is the

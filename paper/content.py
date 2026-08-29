@@ -3739,9 +3739,11 @@ def section_valuation(ctx: Any) -> List[Flowable]:
         "fig40_starting_valuation",
         "Left: annualised real equity returns following cheap and expensive "
         "starting yields, by horizon, with the correlation printed above each "
-        "pair. Centre: the distribution of starting yields the bootstrap "
-        "draws from, with the terciles that define the buckets. Right: the "
-        "all-equity advantage over the glide path within each bucket.",
+        "pair. Centre: the distribution of blended starting dividend yields "
+        "across the panel's country-years, with the most recent United States "
+        "observation marked so a reader can place themselves in it. Right: "
+        "the all-equity advantage over the glide path within each valuation "
+        "bucket.",
         max_height=8.5 * cm))
     return out
 

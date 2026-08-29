@@ -277,3 +277,42 @@ class TestPathAlignment:
         np.testing.assert_allclose(sub.ruin, outcome.ruin[mask])
         np.testing.assert_allclose(sub.wealth_at_retirement,
                                    outcome.wealth_at_retirement[mask])
+
+
+class TestSleeveComparison:
+    """The mean-vs-median choice, measured rather than argued."""
+
+    def test_identical_inputs_agree_completely(self) -> None:
+        starting = np.linspace(0.01, 0.09, 600)
+        frame, notes = vln.sleeve_comparison(
+            np.zeros((1, 1)), starting, starting.copy(),
+            vln.DEFAULT_EDGES, vln.BUCKET_LABELS)
+        assert notes["agreement_pct"] == pytest.approx(100.0)
+        assert notes["reassigned"] == 0
+        assert notes["correlation"] == pytest.approx(1.0)
+
+    def test_reports_disagreement_when_the_rankings_differ(self) -> None:
+        rng = np.random.default_rng(0)
+        a = rng.uniform(0.01, 0.09, 600)
+        b = rng.uniform(0.01, 0.09, 600)      # unrelated ranking
+        frame, notes = vln.sleeve_comparison(
+            np.zeros((1, 1)), a, b, vln.DEFAULT_EDGES, vln.BUCKET_LABELS)
+        assert notes["agreement_pct"] < 60.0
+        assert notes["reassigned"] > 200
+
+    def test_reports_both_sets_of_cut_points(self) -> None:
+        starting = np.linspace(0.01, 0.09, 600)
+        frame, _ = vln.sleeve_comparison(
+            np.zeros((1, 1)), starting, starting * 2.0,
+            vln.DEFAULT_EDGES, vln.BUCKET_LABELS)
+        assert list(frame["sleeve"]) == ["mean (used)", "median (check)"]
+        assert float(frame.iloc[1]["cut_low"]) == pytest.approx(
+            2.0 * float(frame.iloc[0]["cut_low"]))
+
+    def test_a_monotone_transform_keeps_every_path_in_its_bucket(self) -> None:
+        """Buckets are quantiles, so only the ranking matters."""
+        starting = np.linspace(0.01, 0.09, 600)
+        _, notes = vln.sleeve_comparison(
+            np.zeros((1, 1)), starting, starting * 3.0 + 0.01,
+            vln.DEFAULT_EDGES, vln.BUCKET_LABELS)
+        assert notes["reassigned"] == 0

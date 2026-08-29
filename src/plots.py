@@ -1765,7 +1765,11 @@ def plot_provenance(era: pd.DataFrame, contamination: pd.DataFrame,
 
 def plot_housing(audit: pd.DataFrame, directory: str | Path,
                  name: str = "fig39_housing_smoothing") -> Path:
-    """Why the observed housing series stays out of the investable set.
+    """How much of the housing series' apparent free lunch is measurement.
+
+    The audit behind the four-asset headline: how far the published index
+    understates the risk an owner bears, which is what has to be corrected
+    before housing can be compared with a traded asset at all.
 
     Left: risk and return by country, housing as published and again with its
     own smoothing undone, against that country's equity. Right: the lag-one
@@ -1864,7 +1868,7 @@ def plot_valuation(predictive: pd.DataFrame, buckets: pd.DataFrame,
         if np.isfinite(here):
             ax.axvline(here, color=_colour(1), linewidth=2.0)
             ax.annotate(f"{position.get('iso', '')} "
-                        f"{int(position.get('year', 0))}: {here:.1f}%\\n"
+                        f"{int(position.get('year', 0))}: {here:.1f}%\n"
                         f"{position.get('blended_percentile', float('nan')):.0f}th "
                         f"percentile",
                         (here, ax.get_ylim()[1] * 0.86),
@@ -1882,16 +1886,26 @@ def plot_valuation(predictive: pd.DataFrame, buckets: pd.DataFrame,
         ax.bar(x, block["advantage_pct"], width=0.55, color=_colour(0),
                label="all-equity lead over the glide path")
         for i, row in enumerate(block.itertuples()):
-            ax.text(i, row.advantage_pct + 0.25, f"{row.advantage_pct:.1f}%",
-                    ha="center", fontsize=9)
+            offset = 0.25 if row.advantage_pct >= 0 else -0.55
+            ax.text(i, row.advantage_pct + offset,
+                    f"{row.advantage_pct:.1f}%", ha="center", fontsize=9)
         ax.axhline(0.0, color="black", linewidth=1.2)
         ax.set_xticks(x)
         ax.set_xticklabels(block["bucket"], fontsize=9)
         ax.set_xlabel("Valuation the lifetime started at")
         ax.set_ylabel("Certainty-equivalent advantage (%)")
-        ax.set_ylim(0, max(block["advantage_pct"].max() * 1.25, 1.0))
-        ax.set_title("The ranking holds at every starting valuation,\n"
-                     "and the level does not", fontsize=10)
+        # Never clip a negative bar out of the frame: an exception to the
+        # ranking is exactly what this panel exists to make visible.
+        low = min(float(block["advantage_pct"].min()), 0.0)
+        high = max(float(block["advantage_pct"].max()), 1.0)
+        pad = max((high - low) * 0.2, 0.5)
+        ax.set_ylim(low - pad, high + pad)
+        holds = bool((block["advantage_pct"] > 0).all())
+        ax.set_title(
+            ("The ranking holds at every starting valuation,\n"
+             "and the level does not") if holds else
+            ("The ranking does NOT hold at every\n"
+             "starting valuation"), fontsize=10)
         ax.grid(axis="x", alpha=0.0)
         fig.tight_layout()
     return _save(fig, directory, name)

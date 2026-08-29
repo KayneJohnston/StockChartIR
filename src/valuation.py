@@ -319,3 +319,45 @@ def advantage_by_bucket(frame: pd.DataFrame, challenger: str, incumbent: str,
             "incumbent_ruin": float(indexed.loc[incumbent, "prob_ruin"]),
         })
     return pd.DataFrame.from_records(rows)
+
+
+def sleeve_comparison(domestic: np.ndarray, starting_mean: np.ndarray,
+                      paths_blended_median: np.ndarray,
+                      edges: Sequence[float], labels: Sequence[str],
+                      ) -> Tuple[pd.DataFrame, Dict[str, Any]]:
+    """Does taking the sleeve as a median rather than a mean change anything?
+
+    The mean is the right answer on construction grounds -- the leg holds
+    equal money in each market, and an equally weighted portfolio's dividend
+    yield is the mean of its constituents' -- but "right on construction
+    grounds" is an argument, not a measurement. This measures it: how far the
+    two rankings diverge, and how many lifetimes actually land in a different
+    valuation bucket because of the choice.
+    """
+    mean_index, mean_meta = bucket_paths(starting_mean, edges, labels)
+    median_index, median_meta = bucket_paths(paths_blended_median, edges,
+                                             labels)
+    both = (mean_index >= 0) & (median_index >= 0)
+    agree = float((mean_index[both] == median_index[both]).mean() * 100.0) \
+        if both.any() else float("nan")
+    finite = np.isfinite(starting_mean) & np.isfinite(paths_blended_median)
+    correlation = float(np.corrcoef(starting_mean[finite],
+                                    paths_blended_median[finite])[0, 1]) \
+        if finite.sum() > 2 else float("nan")
+    rows = [{
+        "sleeve": "mean (used)",
+        "cut_low": mean_meta["cuts"][0] if mean_meta["cuts"] else float("nan"),
+        "cut_high": mean_meta["cuts"][-1] if mean_meta["cuts"] else float("nan"),
+        **{f"n_{lab}": n for lab, n in zip(labels, mean_meta["counts"])},
+    }, {
+        "sleeve": "median (check)",
+        "cut_low": median_meta["cuts"][0] if median_meta["cuts"] else float("nan"),
+        "cut_high": median_meta["cuts"][-1] if median_meta["cuts"] else float("nan"),
+        **{f"n_{lab}": n for lab, n in zip(labels, median_meta["counts"])},
+    }]
+    return pd.DataFrame.from_records(rows), {
+        "agreement_pct": agree,
+        "correlation": correlation,
+        "reassigned": int((~(mean_index == median_index) & both).sum()),
+        "n_compared": int(both.sum()),
+    }

@@ -1965,6 +1965,22 @@ def step15_valuation(cfg: Dict[str, Any],
                 dict(zip(labels, meta["counts"])),
                 [f"{c:.2%}" for c in meta["cuts"]])
 
+    # The sleeve is a mean on construction grounds; measure what the median
+    # would have done rather than leaving that as an argument.
+    median_blended = vln.blended_yield(
+        domestic, vln.international_yield_median(domestic),
+        float(val_cfg.get("domestic_share", 0.5)))
+    median_starts: List[np.ndarray] = []
+    for chunk in sampler.chunks(n_paths, chunk_size):
+        median_starts.append(vln.path_starting_yield(chunk, median_blended))
+    sleeve, sleeve_notes = vln.sleeve_comparison(
+        domestic, starting, np.concatenate(median_starts),
+        [float(e) for e in val_cfg.get("quantile_edges", vln.DEFAULT_EDGES)],
+        labels)
+    LOGGER.info("sleeve check: mean and median agree on %.1f%% of lifetimes "
+                "(correlation %.3f)", sleeve_notes["agreement_pct"],
+                sleeve_notes["correlation"])
+
     buckets = vln.by_bucket(results, index, labels, cfg, spec)
     gamma = float(cfg["utility"]["baseline_risk_aversion"])
     column = f"cec_crra_gamma{gamma:g}"
@@ -1985,6 +2001,7 @@ def step15_valuation(cfg: Dict[str, Any],
     for frame, name in ((predictive, "valuation_predictive_power"),
                         (buckets, "valuation_by_bucket"),
                         (advantage, "valuation_advantage"),
+                        (sleeve, "valuation_sleeve_check"),
                         (distribution, "valuation_buckets")):
         _save_table(frame, tables, name)
 
@@ -1996,10 +2013,12 @@ def step15_valuation(cfg: Dict[str, Any],
     rp.write_doc_15(
         Path("docs") / "15_starting_valuation.md", cfg,
         {"predictive": predictive, "buckets": buckets,
-         "advantage": advantage, "distribution": distribution},
+         "advantage": advantage, "distribution": distribution,
+         "sleeve": sleeve},
         figures,
         {"elapsed_seconds": elapsed, "position": position, "meta": meta,
-         "probe_years": probes, "leak_free": leak_free})
+         "probe_years": probes, "leak_free": leak_free,
+         "sleeve": sleeve_notes})
     LOGGER.info("docs/15 written (%.0fs); %s sits at the %.0fth percentile",
                 elapsed, position["iso"], position["blended_percentile"])
     state.update({"valuation_buckets": buckets,
