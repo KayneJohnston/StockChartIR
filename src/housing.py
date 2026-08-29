@@ -356,8 +356,15 @@ def age_varying_check(paths: Any, spec: Any, income: np.ndarray,
     described by a single comparable number. That is a restriction, and this
     removes it at a couple of costs: the full age-by-asset schedule is solved
     over the five-asset simplex and its mean housing weight compared with the
-    constant-mix answer. If the two disagree materially, the constant-mix
-    reading is the one to distrust.
+    constant-mix answer.
+
+    The search **starts from that constant-mix optimum** rather than from an
+    equal weighting. Constant schedules are a subset of age-varying ones, so
+    the age-varying optimum cannot truly be worse; starting anywhere else
+    risks a coordinate search that lands below it and reports a negative gain,
+    which would be a fact about the search rather than about the shape. Seeded
+    this way the reported gain is exactly what age-variation adds, and it
+    cannot be negative.
     """
     from . import allocation as al
     from . import glidepath as gp
@@ -368,8 +375,14 @@ def age_varying_check(paths: Any, spec: Any, income: np.ndarray,
         net = net_of_cost(gross, cost)
         evaluator = gp.BatchEvaluator(paths, spec, income, cfg, assets=ASSETS,
                                       extra={HOUSING: net})
+        start = None
+        if float(cost) in reference.index:
+            row_ref = reference.loc[float(cost)]
+            start = np.array([float(row_ref[f"mean_{a}"])
+                              for a in evaluator.assets], dtype=float)
         schedule, cec, _ = al.optimise_full_simplex(
-            evaluator, gamma, coarse_step=coarse_step, fine_step=fine_step,
+            evaluator, gamma, start=start,
+            coarse_step=coarse_step, fine_step=fine_step,
             coarse_sweeps=coarse_sweeps, fine_sweeps=fine_sweeps,
             label=f"[age-varying @ {cost:.1%}] ")
         row: Dict[str, Any] = {"holding_cost": float(cost), "cec": float(cec)}

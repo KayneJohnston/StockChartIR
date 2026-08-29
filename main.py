@@ -1981,6 +1981,18 @@ def step15_valuation(cfg: Dict[str, Any],
                 "(correlation %.3f)", sleeve_notes["agreement_pct"],
                 sleeve_notes["correlation"])
 
+    # The bucket index is built from a re-drawn chunk stream; the outcomes came
+    # from step 3's. Both use the same (seed, n_paths, chunk_size), which is
+    # the sampler's reproducibility contract, but a silent mismatch here would
+    # show up as a null result rather than an error -- so check the one thing
+    # that is cheap to check.
+    n_outcomes = int(next(iter(results.values())).ruin.shape[0])
+    if index.size != n_outcomes:
+        raise RuntimeError(
+            f"valuation buckets cover {index.size} paths but the lifecycle "
+            f"results hold {n_outcomes}; the two were drawn from different "
+            "samplers and conditioning them on each other would be meaningless")
+
     buckets = vln.by_bucket(results, index, labels, cfg, spec)
     gamma = float(cfg["utility"]["baseline_risk_aversion"])
     column = f"cec_crra_gamma{gamma:g}"

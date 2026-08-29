@@ -3837,6 +3837,15 @@ def section_housing(ctx: Any) -> List[Flowable]:
         "draws, so the restriction cancels out of every comparison. Its own "
         f"optimum is {pc(float(control['mean_dom_eq']), 0)} domestic equity "
         f"and {pc(float(control['mean_intl_eq']), 0)} international."))
+    out.append(ctx.p(
+        "Housing enters as a <b>domestic</b> asset: each simulated investor "
+        "holds their own country's housing index, drawn on the same calendar "
+        "years, countries and blocks as their equity and bonds, so the "
+        "cross-asset correlation the bootstrap exists to preserve is "
+        "preserved. There is no international housing sleeve — people buy "
+        "property where they live, and the leave-one-out construction that "
+        "gives equity a foreign leg has no counterpart a household could "
+        "execute in bricks."))
 
     out.extend(ctx.table(
         rows_from(five,

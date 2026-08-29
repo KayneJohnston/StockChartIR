@@ -5209,8 +5209,6 @@ Paths are split at the {cuts} cut-points of the drawn starting-yield
 distribution, so the buckets stay balanced however the sampler weights
 countries.
 
-{sleeve_section}
-
 **{position['iso']} in {int(position['year'])} carries a blended starting yield
 of {float(position['blended_yield']):.2%}, which is the
 {float(position['blended_percentile']):.0f}th percentile of this panel.** The
@@ -5221,6 +5219,7 @@ that market today is starting more expensively than roughly
 study draws from -- which is precisely why the unconditional average is the
 wrong number for them.
 
+{sleeve_section}
 ## 5. What it does to the result
 
 {advantage_tbl}
@@ -5403,14 +5402,32 @@ def write_doc_16(
         if gaps is not None and gains is not None:
             worst = float(np.abs(gaps).max())
             best_gain = float(gains.max())
-            age_note = (
-                f"Letting the allocation vary with age moves the mean housing "
-                f"weight by at most {worst:.0%} of the portfolio and buys at "
-                f"most {best_gain:.2f}% more certainty-equivalent consumption "
-                + ("-- small enough that the constant-mix reading above stands."
-                   if worst < 0.10 and best_gain < 1.0 else
-                   "-- large enough that the constant-mix reading above should "
-                   "be treated as indicative only."))
+            # The search starts from the constant-mix optimum, so it can only
+            # improve on it. A gain that rounds to zero means age-variation
+            # found nothing, which is a result about the shape rather than a
+            # failure of the search.
+            if best_gain <= 0.05:
+                age_note = (
+                    "Letting the allocation vary with age buys essentially "
+                    f"nothing: at most {best_gain:.2f}% more "
+                    "certainty-equivalent consumption, from a search that "
+                    "began at the constant-mix optimum and could only improve "
+                    "on it. The single lifetime-long allocation reported above "
+                    "is, to the resolution of this search, the answer.")
+            elif worst < 0.10 and best_gain < 1.0:
+                age_note = (
+                    f"Letting the allocation vary with age moves the mean "
+                    f"housing weight by at most {worst:.0%} of the portfolio "
+                    f"and buys at most {best_gain:.2f}% more "
+                    "certainty-equivalent consumption -- small enough that the "
+                    "constant-mix reading above stands.")
+            else:
+                age_note = (
+                    f"Letting the allocation vary with age moves the mean "
+                    f"housing weight by up to {worst:.0%} of the portfolio and "
+                    f"buys up to {best_gain:.2f}% more certainty-equivalent "
+                    "consumption -- large enough that the constant-mix reading "
+                    "above should be treated as indicative only.")
 
     age_tbl = md_table(_compact(
         _pct(age_varying, ["holding_cost", "mean_housing",
@@ -5510,6 +5527,13 @@ One allocation, held for life, re-solved over the whole five-asset simplex at
 each annual holding cost. Common random numbers throughout: the paths, the
 income draws and the search are identical across rows, so a difference between
 two rows is the holding cost and nothing else.
+
+Housing enters as a **domestic** asset: each simulated investor holds their own
+country's housing index, drawn on the same calendar years, countries and blocks
+as their equity and bonds. There is no international housing sleeve, because
+people buy property where they live, and because the leave-one-out construction
+that gives equity a foreign leg has no counterpart a household could actually
+execute in bricks.
 
 {sweep_tbl}
 

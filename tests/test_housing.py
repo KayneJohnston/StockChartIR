@@ -334,3 +334,53 @@ class TestSearchOverFiveAssets:
         control = frame[frame["investable_set"] == "four assets"].iloc[0]
         assert float(control["mean_housing"]) == 0.0
         assert float(control["advantage_pct"]) == 0.0
+
+
+class TestAgeVaryingCheck:
+    """Removing the constant-mix restriction must not look like a loss."""
+
+    def _fixture(self, toy_panel, toy_config):
+        rng = np.random.default_rng(11)
+        housing = rng.normal(0.10, 0.08,
+                             (toy_panel.n_years, toy_panel.n_countries))
+        restricted = hs.restrict_to_housing(toy_panel, housing)
+        spec = lc.spec_from_config(toy_config)
+        sampler = bs.from_config(restricted, toy_config,
+                                 horizon_years=spec.horizon)
+        paths = sampler.sample(200, chunk_size=100)
+        income = lc.simulate_income(spec, paths.n_paths,
+                                    np.random.default_rng(1))
+        return paths, spec, income, hs.gather(paths, housing)
+
+    def test_never_reports_a_loss_against_the_constant_mix(
+            self, toy_panel, toy_config) -> None:
+        """Constant schedules are a subset of age-varying ones.
+
+        The age-varying optimum therefore cannot truly be worse, so a negative
+        gain would be a fact about the search rather than about the shape.
+        Seeding the search at the constant-mix answer rules that out.
+        """
+        paths, spec, income, gross = self._fixture(toy_panel, toy_config)
+        constant = hs.solve_sweep(paths, spec, income, toy_config, gross,
+                                  [0.0, 0.03], 5.0, 0.25, 0.05)
+        five = constant[constant["investable_set"] == "five assets"]
+        frame = hs.age_varying_check(paths, spec, income, toy_config, gross,
+                                     [0.0, 0.03], 5.0, five,
+                                     coarse_sweeps=1, fine_sweeps=1)
+        assert (frame["cec_gain_pct"] >= -1e-9).all(), \
+            frame[["holding_cost", "cec", "constant_mix_cec", "cec_gain_pct"]]
+
+    def test_splits_the_weight_by_life_phase(self, toy_panel,
+                                             toy_config) -> None:
+        paths, spec, income, gross = self._fixture(toy_panel, toy_config)
+        constant = hs.solve_sweep(paths, spec, income, toy_config, gross,
+                                  [0.0], 5.0, 0.25, 0.05)
+        five = constant[constant["investable_set"] == "five assets"]
+        frame = hs.age_varying_check(paths, spec, income, toy_config, gross,
+                                     [0.0], 5.0, five,
+                                     coarse_sweeps=1, fine_sweeps=1)
+        row = frame.iloc[0]
+        n_w, n_r = spec.n_working, spec.horizon - spec.n_working
+        blended = (float(row["housing_working"]) * n_w
+                   + float(row["housing_retired"]) * n_r) / spec.horizon
+        assert blended == pytest.approx(float(row["mean_housing"]), abs=1e-9)
