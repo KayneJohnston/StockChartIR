@@ -644,6 +644,7 @@ re-simulating, since γ, ψ and the bequest weight enter only the aggregator.
 
 ### Repository note
 
-This project lives alongside `StockChartIR` (image recognition on stock
-charts); the `Up/`, `Down/`, `Validation/` and `StockCharts.tgz` paths belong
-to that unrelated work.
+An earlier, unrelated project on this repository -- image recognition on stock
+charts -- remains on the `master` branch under `Up/`, `Down/`, `Validation/`
+and `StockCharts.tgz`. None of it is used here, and none of it is present on
+this branch.
