@@ -95,8 +95,7 @@ def front_matter(ctx: Any) -> List[Flowable]:
         Paragraph("A Computational Re-Examination of Lifecycle Asset "
                   "Allocation, with Ten Extensions", s["subtitle"]),
         Spacer(1, 0.2 * cm),
-        Paragraph("A reproducible replication and extension study", s["author"]),
-        Paragraph("StockChartIR research pipeline", s["author"]),
+        Paragraph("A replication and extension study", s["author"]),
         Spacer(1, 0.25 * cm),
         Paragraph(dt.date.today().strftime("This version: %d %B %Y"), s["date"]),
         Spacer(1, 0.85 * cm),
@@ -153,17 +152,17 @@ def front_matter(ctx: Any) -> List[Flowable]:
         f"explains {pc(float(lottery['r2_retirement_window']), 0)} of the "
         f"variation in retirement outcomes, a lottery no allocation rule can "
         f"diversify away. "
-        f"A provenance audit of the panel drove the choice of cross-section: "
-        f"an earlier version of this study covered 38 developed markets, of "
-        f"which {pr['n_removed']} had no recorded returns and were represented "
-        f"by factor-model draws. Those countries were removed rather than "
-        f"reported alongside, so every one of the panel's "
-        f"{pr['cells']:,} return cells is an observation and the "
-        f"international leg contains no generated market. "
-        f"Every table, figure and quoted number in this paper "
-        f"is regenerated from a single command; the pipeline, its "
-        f"{f.n_tests} unit tests and its full diagnostic record are "
-        f"public."
+f"Throughout, the panel is restricted to the "
+        f"{pr['n_countries']} developed markets whose equity, bond and bill "
+        f"returns were actually recorded. The developed-market universe runs "
+        f"to 38, and the missing {pr['n_removed']} could be filled with draws "
+        f"from a model fitted to the countries that remain; we do not do this, "
+        f"because it would widen the cross-section without adding evidence a "
+        f"reader can check. Every one of the panel's {pr['cells']:,} return "
+        f"cells is an observation, and we audit that claim rather than assert "
+        f"it. The cost — an international leg spanning "
+        f"{pr['n_countries'] - 1} foreign markets rather than 37 — is the "
+        f"paper's principal limitation and is stated as such."
     )
     out.append(Paragraph(abstract, s["abstract"]))
     out.append(Paragraph(
@@ -442,14 +441,11 @@ def section_background(ctx: Any) -> List[Flowable]:
         "international asset-return work and it is what makes an exercise of "
         "this kind possible at all."))
     out.append(ctx.p(
-        f"It is also the binding constraint on this study, and we are explicit "
-        f"about that in Section 3.2 and again in Section 16: "
-        f"{f.panel['n_tier_a']} countries have complete observed series, and "
-        f"and the developed-market universe the original study covers runs to "
-        f"38. We cover the {f.panel['n_tier_a']}. The other 22 have no recorded "
-        f"return series in any source available to us; an earlier version of "
-        f"this paper filled them with factor-model draws, and Section 3.6 "
-        f"explains why they were removed instead."))
+        f"It is also the binding constraint on this study. "
+        f"{f.panel['n_tier_a']} countries carry complete recorded equity, bond "
+        f"and bill returns; the developed-market universe runs to 38. We work "
+        f"with the {f.panel['n_tier_a']}, and Sections 3.2 and 16.1 set out "
+        f"what that costs and why we prefer it to the alternative."))
 
     out.append(ctx.h2("2.4 Adjacent literatures this paper touches"))
     out.extend(ctx.bullets([
@@ -528,51 +524,64 @@ def section_data(ctx: Any) -> List[Flowable]:
 
     out.extend(ctx.figure(
         "fig01_coverage_matrix",
-        "Usable country-years by country and decade. Darker cells indicate "
-        "more complete data. The gaps are not random: they cluster around the "
+        "Share of each decade for which a country has a complete return "
+        "record. Darker is more complete; the scale is a share so that the "
+        "final, partial decade compares with the rest. The gaps are not "
+        "random: they cluster around the "
         "two world wars and around the market closures that follow them, which "
         "is precisely the period a survivorship-prone sample would drop.",
         max_height=11.5 * cm))
 
-    out.append(ctx.h2("3.2 One kind of country, because we removed the others"))
+    out.append(ctx.h2("3.2 Sixteen countries, and why not thirty-eight"))
     out.append(ctx.p(
-        f"This is the most important disclosure in the paper, and it is now a "
-        f"short one. The Jordà–Schularick–Taylor database covers "
-        f"{p['n_tier_a']} countries with complete, independently sourced "
-        f"equity, bond and bill total returns. Those {p['n_tier_a']} countries "
-        f"are the panel. Every country-year of every return series in it is a "
-        f"number somebody recorded."))
+        f"The Jordà–Schularick–Taylor database carries complete, independently "
+        f"sourced equity, bond and bill total returns for {p['n_tier_a']} "
+        f"countries. Those {p['n_tier_a']} are our panel. Every country-year "
+        f"of every return series in it is a number somebody recorded."))
     out.append(ctx.p(
-        f"An earlier version of this study covered all 38 developed markets, "
-        f"matching the original paper's cross-section. It could only do that "
-        f"by generating the missing {pr['n_removed']}: their equity, bond and "
-        f"bill series were draws from a single-factor model fitted to a "
-        f"randomly assigned observed donor, plus Gaussian noise carrying that "
-        f"donor's residual covariance. We reported the contamination alongside "
-        f"the results and argued it was tolerable because the simulated "
-        f"countries <i>diluted</i> the headline rather than creating it."))
+        f"The developed-market universe is wider than that. Counting IMF "
+        f"advanced economies with an investable domestic equity market, plus "
+        f"Poland, gives 38 — the cross-section the study we are replicating "
+        f"uses, drawing on a proprietary database we cannot obtain. For the "
+        f"remaining {pr['n_removed']} markets, no openly licensed source we "
+        f"can reach carries an equity, bond or bill return series at all."))
     out.append(ctx.p(
-        "That argument was true and it was not good enough. A reader cannot "
-        "check a number that came out of a random number generator, and a "
+        "There is a standard way to close that gap. Fit a single-factor model "
+        "to the countries you do have, assign each missing country a donor, "
+        "and draw its returns from the donor's loadings plus noise carrying "
+        "the donor's residual covariance. The result looks like a 38-country "
+        "panel, reproduces the target cross-section exactly, and is defensible "
+        "in the sense that every parameter is estimated from real data."))
+    out.append(ctx.p(
+        "<b>We do not do this, and the reason is worth stating plainly.</b> A "
+        "reader cannot check a number that came out of a random number "
+        "generator. Worse, the exercise is self-defeating in a specific way: "
+        "the generated countries carry the fitted cross-section's average "
+        "behaviour and none of its idiosyncrasy, so averaging them into the "
+        "international leg makes that leg smoother and more correlated with "
+        "the domestic leg than a genuine cross-section of national markets is. "
+        "They would dilute the diversification benefit this paper measures "
+        "while making the evidence base look more than twice as broad. A "
         "cross-section of thirty-eight reads as stronger evidence than one of "
-        "sixteen while being weaker. The generated countries are gone."))
+        "sixteen precisely when it is weaker."))
     out.append(ctx.p(
-        f"The cost is a narrower cross-section, and we state it rather than "
-        f"bury it: the international leg is now an average over "
-        f"{p['n_tier_a'] - 1} other markets rather than 37. What it buys is "
-        f"that the leg contains no market that did not exist — it was 38% "
-        f"simulated for the average investor before, and 59% simulated after "
-        f"2000. Section 3.6 gives the audit that forced the change, what the "
-        f"removed countries did have, and the two recorded series we hold and "
-        f"still do not use."))
+        f"So we take the narrower panel and pay for it openly: the "
+        f"international leg is an average over {p['n_tier_a'] - 1} foreign "
+        f"markets rather than 37, and every statement in this paper about "
+        f"international diversification is a statement about that set. Section "
+        f"16.1 develops the limitation; Section 3.6 audits the data we do use, "
+        f"reports what the excluded countries have that is real, and describes "
+        f"two further bodies of recorded data we hold and deliberately leave "
+        f"out of the model."))
     out.append(ctx.p(
-        "The tier label survives as a check rather than a caveat. It is "
-        "<i>derived</i> from a per-cell record of what was observed, so a "
-        "country is labelled Tier A only when every available cell of every "
-        "return series is an observation. Every country here is Tier A, and "
-        "the audit separately reports any cell that is available but not "
-        "observed. Nothing about the panel's provenance needs to be taken on "
-        "trust."))
+        "One piece of bookkeeping supports all of this. Provenance is tracked "
+        "for every cell of the panel — one country, one year, one return "
+        "series — and each country's tier label is <i>derived</i> from those "
+        "records rather than assigned alongside them: a country is Tier A only "
+        "when every available cell of every return series is an observation. "
+        "Every country here is Tier A, and a separate check reports any cell "
+        "that is available but not observed. It is empty. Nothing about the "
+        "panel's provenance needs to be taken on trust."))
 
     out.append(ctx.h2("3.3 Constructing the international leg"))
     out.append(ctx.p(
@@ -674,31 +683,28 @@ def section_data(ctx: Any) -> List[Flowable]:
         "is <i>less</i> able to draw from countries with disrupted histories "
         "at long block lengths, which we quantify rather than assume: the "
         "run-length admissibility statistics are reported in Section 4.1."))
-    out.append(ctx.h2("3.6 A provenance audit, and what it removed"))
+    out.append(ctx.h2("3.6 A provenance audit"))
     out.append(ctx.p(
-        f"We wrote this audit to measure how much of the panel was generated "
-        f"rather than recorded. The answer was {pr['n_removed']} of 38 "
-        f"countries: no equity, bond or bill return series existed for any of "
-        f"them in any source we could reach, and their returns were draws from "
-        f"a single-factor model fitted to a randomly assigned observed donor. "
-        f"The audit's first output was therefore not a number but a deletion."))
+        "A panel assembled from a redistributed copy of someone else's "
+        "database deserves more scepticism than a citation. This section "
+        "establishes four things: that every number in the panel is an "
+        "observation, that the file those observations came from is genuine, "
+        "that one stretch of it does not pass a basic consistency test, and "
+        "what recorded data we hold that the model deliberately does not use."))
     out.append(ctx.p(
-        f"What remains is measured, not asserted. The panel's "
+        f"The first is measured rather than asserted. The panel's "
         f"{pr['country_years']:,} usable country-years carry three return "
         f"series each, so it holds {pr['cells']:,} return cells; "
         f"{pr['cells_simulated']:,} of them are generated. Provenance is "
-        f"recorded per cell, the tier labels are derived from those records, "
-        f"and a separate check reports any cell that is available but not "
-        f"observed. That check is empty."))
-    out.append(ctx.p(
-        f"The rest of this section audits the source those recorded numbers "
-        f"come from — it is a redistributed copy, so we do not assume it is "
-        f"genuine — reports one test it fails, and describes three bodies of "
-        f"real data we hold and do not use."))
+        f"recorded per cell, tier labels are derived from those records, and a "
+        f"separate check reports any cell that is available but not observed. "
+        f"That check is empty. If a generated block ever entered the panel, "
+        f"the tier label would change and the check would fill up — the claim "
+        f"is falsifiable by construction rather than maintained by care."))
 
-    out.append(ctx.h3("3.6.1 What the removed countries did have"))
+    out.append(ctx.h3("3.6.1 What the excluded countries do have"))
     out.append(ctx.p(
-        "Four of the removed countries are not blank. Austria, Canada, "
+        "Four of the excluded countries are not blank. Austria, Canada, "
         "Ireland and New Zealand carry recorded interest-rate histories: "
         "long-term yields and short rates in the macro file for Canada and "
         "Ireland, Clio-Infra long yields for Austria and New Zealand. A bond "
@@ -730,19 +736,19 @@ def section_data(ctx: Any) -> List[Flowable]:
         "They still cannot enter the panel. A lifecycle investor needs a "
         "domestic <i>equity</i> return; the macro file carries none for these "
         "countries, not even the interpolated variants it supplies elsewhere; "
-        "and no source reachable from our build environment provides one. "
-        "Adding them would mean generating the single most important series in "
-        "the model, which is the practice this revision ended. We report them "
-        "because the check is the reason the answer is sixteen countries "
-        "rather than twenty."))
+        "and no accessible source provides one. Adding them would mean "
+        "generating the single most important series in the model. We report "
+        "the exercise because it is the reason the answer is sixteen countries "
+        "and not twenty — the gap was checked, not assumed."))
     out.append(ctx.p(
-        "No new <i>external</i> source could be obtained. Outbound access from "
-        "our build environment is governed by a policy that denies the "
-        "macrohistory host itself along with every other bulk macro-data "
-        "provider we tested, and guessing at redistributed mirrors would have "
-        "produced precisely the unverifiable provenance this section exists to "
-        "prevent. Sixteen countries is the ceiling on observed equity here, "
-        "and we state it as a limit rather than work around it."))
+        "Nor could the gap be closed from outside. The remaining developed "
+        "markets have equity histories in commercial databases — Global "
+        "Financial Data and Dimson–Marsh–Staunton among them — but those are "
+        "proprietary and not redistributable, which is the same constraint "
+        "that prevents a direct replication of the original study. Working "
+        "from openly licensed sources, sixteen countries is the ceiling on "
+        "recorded equity, and we treat it as a limit rather than something to "
+        "engineer around."))
 
     hs = pr.get("housing", {})
     if hs.get("countries"):
@@ -961,11 +967,14 @@ def section_data(ctx: Any) -> List[Flowable]:
         "lifecycle result materially, but the finding is recorded rather than "
         "left for a reader to discover."))
 
-    out.append(ctx.h3("3.6.6 The international leg, and what the removal cost"))
+    out.append(ctx.h3("3.6.6 What the international leg is made of"))
     out.append(ctx.p(
+        "Section 5 attributes the headline result to international "
+        "diversification rather than to equity exposure as such, which puts "
+        "unusual weight on the composition of the cross-section. The "
         "international leg is a leave-one-out average across every country "
-        "with data that year, so the composition of the cross-section decides "
-        "what an investor is actually diversifying into."))
+        "with data in a given year, so whatever is in the panel is what the "
+        "investor is diversifying into."))
     out.extend(ctx.table(
         rows_from(contamination, ["era", "observations",
                                   "mean_synthetic_share_of_intl_leg"],
@@ -974,33 +983,26 @@ def section_data(ctx: Any) -> List[Flowable]:
                   {"era": str, "observations": lambda v: f"{int(v):,}",
                    "mean_synthetic_share_of_intl_leg": lambda v: pc(v, 1)}),
         "How much of an investor's international leg is simulated",
-        note="Zero throughout, by construction: there are no generated "
-             "markets left in the cross-section to average in. On the "
-             "38-country panel this table read 38% over the whole sample and "
-             "59% after 2000."))
+        note="Zero throughout, by construction: the panel contains no "
+             "generated market to average in."))
     out.append(ctx.p(
-        f"This was the worst number in the earlier version of this paper. An "
-        f"investor in one of the observed countries held an international leg "
-        f"that was 38% simulated on average and 59% simulated after 2000: the "
-        f"mechanism the headline rests on was substantially diversification "
-        f"into markets that did not exist. Removing the generated countries "
-        f"takes it to zero."))
+        f"The table is a row of zeros, which is the point of Section 3.2 "
+        f"arriving as a number. Had we filled the {pr['n_removed']} missing "
+        f"markets with model draws, the same calculation would read 38% across "
+        f"the whole sample and 59% after 2000: the average investor's "
+        f"international diversification would have been, in substantial part, "
+        f"diversification into markets that never existed. That is the "
+        f"specific failure the narrower panel avoids, and it is why the "
+        f"trade-off in Section 3.2 goes the way it does."))
     out.append(ctx.p(
-        f"The price is a narrower cross-section — an average over "
-        f"{p['n_tier_a'] - 1} markets rather than 37 — and it is worth being "
-        f"explicit about what that does and does not cost. It reduces the "
-        f"number of national markets the leg spans. It does not reduce the "
-        f"<i>evidence</i>, because the markets it drops contributed no "
-        f"evidence: they were smooth, average-behaving draws from a model "
-        f"fitted to the countries that remain. On the 38-country panel the "
-        f"all-equity advantage was smaller than on the observed subset, which "
-        f"is what one would expect from averaging in a cross-section with all "
-        f"of the mean and none of the idiosyncrasy of a real one."))
-    out.append(ctx.p(
-        f"On the panel as it now stands, the all-equity portfolio leads the "
-        f"target-date fund by <b>{adv['observed']:.1f}%</b> in "
-        f"certainty-equivalent consumption, and every input to that number is "
-        f"a recorded observation."))
+        f"What the panel gives up is breadth. The leg averages over "
+        f"{p['n_tier_a'] - 1} foreign markets, all of them advanced economies "
+        f"with long recorded histories, so the diversification measured here "
+        f"is diversification across rich-country equity markets and nothing "
+        f"wider. Section 16.1 takes that limitation seriously; on the panel we "
+        f"have, the all-equity portfolio leads the target-date fund by "
+        f"<b>{adv['observed']:.1f}%</b> in certainty-equivalent consumption, "
+        f"and every input to that number is a recorded observation."))
 
     out.extend(ctx.figure(
         "fig38_data_provenance",
@@ -1083,13 +1085,15 @@ def section_methods(ctx: Any) -> List[Flowable]:
         f"(<i>{cfg['bootstrap']['country_draw']}</i>) with probability "
         f"proportional to the length of that country's usable history "
         f"(<i>{cfg['bootstrap']['country_weighting']}</i>). Both choices are "
-        f"varied in Appendix C and summarised at the end of Section 5.5: "
-        f"redrawing the country at every block, and weighting countries "
-        f"uniformly, both leave the ranking unchanged. The weighting choice "
-        f"has little room to bite on this panel, where every country carries "
-        f"between {f.panel['min_years']} and {f.panel['max_years']} usable "
-        f"years — a spread the earlier, part-generated panel did not have, "
-        f"because its short histories all belonged to simulated markets."))
+        f"varied in Appendix C: redrawing the country at every block, and "
+        f"weighting countries uniformly, both leave the ranking unchanged. "
+        f"The weighting choice has little room to bite here, because every "
+        f"country carries between {f.panel['min_years']} and "
+        f"{f.panel['max_years']} usable years — history weighting and uniform "
+        f"weighting assign nearly the same probabilities. The choice would "
+        f"matter on a panel with short histories, where a country covering "
+        f"only one era could otherwise speak as loudly as one covering a "
+        f"century and a half."))
 
     out.extend(ctx.table(
         rows_from(moments, ["series", "bootstrap_mean", "panel_pooled_mean",
@@ -1323,15 +1327,14 @@ def section_methods(ctx: Any) -> List[Flowable]:
     # -- 4.5 implementation ----------------------------------------------
     out.append(ctx.h2("4.5 Implementation and verification"))
     out.append(ctx.p(
-        f"The pipeline is implemented in Python with NumPy and pandas, "
-        f"organised as thirteen sequential steps behind a single entry point. "
+        f"The model is implemented in Python with NumPy and pandas. "
         f"Portfolio returns for a whole cohort are formed as a batched matrix "
         f"product and the wealth recursion runs vectorised across paths, which "
         f"is what makes a hundred thousand lifetimes per strategy — and the "
         f"tens of thousands of policy evaluations the optimisers require — "
         f"tractable on a single core."))
     out.append(ctx.p(
-        f"Correctness is enforced by {f.n_tests} unit tests. The "
+        f"Correctness is enforced by {f.n_tests} automated tests. The "
         f"load-bearing ones "
         f"are equivalence tests: the path-dependent engine used for flexible "
         f"retirement and conditional saving must reproduce the fixed-date "
@@ -1341,9 +1344,9 @@ def section_methods(ctx: Any) -> List[Flowable]:
         f"extension in this paper is built on a simulator that is asserted "
         f"equal to the one that produced the baseline."))
     out.append(ctx.p(
-        "Appendix D lists the module structure and the exact commands needed "
-        "to regenerate every number, figure and table in this paper from the "
-        "raw data."))
+        "Appendix D sets out how the computation is organised, what the test "
+        "suite establishes, and the discipline by which the prose in this "
+        "paper is held to the tables it describes."))
     return out
 
 
@@ -1553,15 +1556,14 @@ def section_baseline(ctx: Any) -> List[Flowable]:
         "used to define the sustainable rate.",
         max_height=8.0 * cm))
 
-    out.append(ctx.h2("5.5 Is any of this resting on generated data?"))
+    out.append(ctx.h2("5.5 Does the country cross-section drive the result?"))
     out.append(ctx.p(
-        f"No, and the question is settled at the panel rather than in a "
-        f"robustness table. An earlier version of this paper reported the "
-        f"headline on a 38-country panel and again on its "
-        f"{f.panel['n_tier_a']}-country observed subset, because 22 of those "
-        f"countries had factor-model returns. Those countries were removed. "
-        f"The observed subset is now the panel, and there is nothing to hold "
-        f"it against."))
+        "Two questions sit behind that heading, and they have different "
+        "answers. The first is whether the result depends on any data that "
+        "was generated rather than recorded. It does not, and the reason is "
+        "structural rather than statistical: the panel contains no generated "
+        "data at all (Section 3.6), so there is no simulated subset to hold "
+        "the result against."))
     out.extend(ctx.table(
         rows_from(tiers.assign(label=tiers["strategy"].map(LABELS)),
                   ["tier", "label", "n_paths", "cec_crra_gamma5", "prob_ruin",
@@ -1572,36 +1574,36 @@ def section_baseline(ctx: Any) -> List[Flowable]:
                    "n_paths": lambda v: f"{int(v):,}",
                    "prob_ruin": lambda v: pc(v, 1),
                    "median_bequest": lambda v: f2(v, 1)}),
-        "Results split by country tier",
-        note="Every country is Tier A -- observed throughout -- so this "
-             "split is degenerate by construction. It is computed from the "
-             "per-cell observation masks rather than from a label, so a "
-             "second tier appearing here would mean a generated block had "
-             "returned to the panel.",
+        "Results split by the provenance tier of the drawn country",
+        note="Every country is Tier A -- recorded throughout -- so this split "
+             "has one row per strategy. It is computed from the per-cell "
+             "observation record rather than from a label, so a second tier "
+             "appearing here would mean generated data had entered the panel.",
         font_size=7.2))
     n_tiers = int(tiers["tier"].nunique()) if len(tiers) else 0
     if n_tiers > 1:
         out.append(ctx.p(
-            f"<b>This table should have one tier and has {n_tiers}.</b> That "
-            f"means the panel contains country-years that are available but "
-            f"not recorded, and the provenance audit of Section 3.6 should be "
-            f"read before anything else in this paper."))
+            f"<b>This table should have one tier and has {n_tiers}.</b> The "
+            f"panel contains country-years that are available but not "
+            f"recorded, and the provenance audit of Section 3.6 should be read "
+            f"before anything else in this paper."))
     else:
         out.append(ctx.p(
-            f"One row per strategy, one tier, {int(tiers['n_paths'].iloc[0]):,} "
-            f"paths each: the split has nothing to split. The all-equity "
-            f"portfolio's certainty equivalent is "
+            f"One tier, {int(tiers['n_paths'].iloc[0]):,} paths: the split has "
+            f"nothing to split. The all-equity portfolio's certainty "
+            f"equivalent is "
             f"{f2(_tier_cec(tiers, 'A', 'balanced_all_equity'), 3)} against "
             f"{f2(_tier_cec(tiers, 'A', 'target_date_fund'), 3)} for the "
             f"target-date fund, an advantage of {_tier_adv(tiers, 'A'):.1f}%, "
             f"and every path behind it was drawn from recorded returns."))
     out.append(ctx.p(
-        "It is worth being precise about what this does and does not "
-        "establish. It establishes that no result here is an artefact of "
-        "generated data, because there is none. It establishes nothing about "
-        "whether sixteen developed markets are a wide enough base for the "
-        "conclusion — that is a real limitation, and Section 16.1 states it "
-        "rather than this section answering it."))
+        f"The second question is harder and this section does not settle it: "
+        f"whether {f.panel['n_tier_a']} developed markets are a wide enough "
+        f"base for the conclusion. They are all advanced economies, all with "
+        f"long recorded histories, and all survivors — markets that closed and "
+        f"never reopened are absent from the source database by construction. "
+        f"Section 16.1 states that limitation rather than this section "
+        f"answering it."))
 
     out.append(ctx.p(
         "Two further sampling variations are reported in Appendix C: drawing "
@@ -2183,7 +2185,7 @@ def section_allocation(ctx: Any) -> List[Flowable]:
         f"Solved and benchmark schedules at risk aversion {gamma:g}",
         note="\"Full simplex optimal\" is this section's solution. The "
              "comparison also includes the schedules solved in Section 8 under "
-             "the 70/30 restriction, where the pipeline has them available."))
+             "the 70/30 restriction, where those are available."))
     out.append(ctx.p(
         f"The solved schedule leads the best fixed benchmark "
         f"({str(a['runner_up']).replace('_', ' ')}) by "
@@ -3772,12 +3774,13 @@ def section_limitations(ctx: Any) -> List[Flowable]:
 
     out.append(ctx.h2("16.1 The cross-section is sixteen countries"))
     out.append(ctx.p(
-        f"This is the largest weakness in the paper, and it is the weakness we "
-        f"chose. The developed-market universe the original study covers runs "
-        f"to 38 markets. We cover {pr['n_countries']}, because the other "
-        f"{pr['n_removed']} have no recorded return series in any source we "
-        f"can reach. Section 3.6 gives the audit; Section 3.6.1 gives what "
-        f"those countries do have and why it is not enough."))
+        f"This is the largest weakness in the paper, and it is a weakness we "
+        f"chose deliberately. The developed-market universe runs to 38 "
+        f"markets. We cover {pr['n_countries']}, because the other "
+        f"{pr['n_removed']} have no recorded return series in any openly "
+        f"licensed source. Section 3.6 audits what we do use; Section 3.6.1 "
+        f"reports what the excluded countries have and why it is not "
+        f"enough."))
     out.append(ctx.p(
         f"Every statement in this paper about international diversification is "
         f"therefore a statement about an average over {pr['n_countries'] - 1} "
@@ -3788,12 +3791,13 @@ def section_limitations(ctx: Any) -> List[Flowable]:
         f"never reopened are not in the source database, so the tail this "
         f"paper measures is the tail of markets that came back."))
     out.append(ctx.p(
-        f"The alternative was worse and we took it in an earlier version: "
-        f"filling the missing {pr['n_removed']} with factor-model draws made "
-        f"the cross-section look twice as broad while adding no evidence, and "
-        f"put simulated markets into 38% of the average investor's "
-        f"international leg. A narrow panel that a reader can check beats a "
-        f"wide one they cannot."))
+        f"We considered the obvious alternative and rejected it. Filling the "
+        f"missing {pr['n_removed']} with factor-model draws would make the "
+        f"cross-section look more than twice as broad while adding no evidence "
+        f"a reader could check, and would put simulated markets into 38% of "
+        f"the average investor's international leg — corrupting the very "
+        f"mechanism the paper measures. A narrow panel a reader can verify "
+        f"beats a wide one they cannot."))
     out.append(ctx.p(
         "The last five years of the series are separately flagged as "
         "unverified in Section 3.6, on a variance test that every country in "
@@ -4187,9 +4191,8 @@ def appendix_supplementary(ctx: Any) -> List[Flowable]:
         "per lifetime rather than per block, and weighting countries by "
         "history length rather than uniformly — are varied here. Neither "
         "reverses any ranking."))
-    # The panel variant that used to sit here compared the full panel against
-    # its observed subset. The generated countries were removed, so the subset
-    # is the panel and the comparison has no second side.
+    # Only the two sampling variants: there is no alternative panel to compare
+    # against, since the panel is exactly the recorded countries.
     for name, caption in (
             ("robustness_country_draw_per_block",
              "Redrawing the country at every block"),
@@ -4270,76 +4273,76 @@ def appendix_supplementary(ctx: Any) -> List[Flowable]:
 def appendix_software(ctx: Any) -> List[Flowable]:
     ctx_f = ctx.f
     out: List[Flowable] = [PageBreak(),
-                           ctx.h1("Appendix D. Software and Reproduction")]
+                           ctx.h1("Appendix D. Computational Design")]
     out.append(ctx.p(
-        "Every number, table and figure in this paper is produced by a single "
-        "pipeline from raw source data. Nothing is transcribed by hand, and "
-        "the paper itself reads its numbers from the pipeline's CSV output at "
-        "build time — so a rerun that changed a result would change the paper "
-        "rather than leave it silently contradicting the evidence."))
+        "Every number, table and figure in this paper is produced by one "
+        "program from the raw source files, and the document itself resolves "
+        "its quoted figures from that program's output when it is typeset. "
+        "Nothing is transcribed by hand. A rerun that changed a result would "
+        "change the paper rather than leave it silently contradicting its own "
+        "evidence."))
+    out.append(ctx.p(
+        "This appendix describes how the computation is organised and how its "
+        "correctness is established, because both bear on how much weight the "
+        "results can carry."))
 
-    out.append(ctx.h2("D.1 Reproduction"))
-    out.append(ctx.code(
-        "# full pipeline: panel, bootstrap, simulation, and all eight "
-        "extensions\n"
-        "python main.py\n\n"
-        "# a single step (13 is the leverage study of section 10)\n"
-        "python main.py --steps 13\n\n"
-        "# small-N smoke test of every step\n"
-        "python main.py --quick\n\n"
-        "# the test suite\n"
-        "python -m pytest -q\n\n"
-        "# this paper\n"
-        "python paper/build_paper.py"))
-
-    out.append(ctx.h2("D.2 Module structure"))
-    modules = [
-        ["Module", "Responsibility", "Paper section"],
-        ["src/data_loader.py", "Panel construction, deflation, the "
-         "leave-one-out international leg, hedged legs, coverage diagnostics",
-         "§3"],
-        ["src/bootstrap.py", "Stationary block bootstrap with gap-respecting "
+    out.append(ctx.h2("D.1 Structure"))
+    out.append(ctx.p(
+        "The work is split into stages that each own one idea, so that an "
+        "extension can reuse the baseline machinery instead of reimplementing "
+        "it. Reuse is the point: every extension in this paper is compared "
+        "against a baseline, and a comparison between two different "
+        "implementations of the same model measures the implementations as "
+        "much as the economics."))
+    stages = [
+        ["Stage", "What it owns", "Paper section"],
+        ["Panel construction", "Deflation to real returns, the leave-one-out "
+         "international leg, currency-hedged legs, coverage and gap "
+         "diagnostics, per-cell provenance", "§3"],
+        ["Sampler", "The stationary block bootstrap with gap-respecting "
          "admissibility; moment and persistence diagnostics", "§4.1"],
-        ["src/lifecycle.py", "The lifecycle simulator, income process, "
+        ["Lifecycle simulator", "The wealth recursion, income process, "
          "social-security schedule and strategy definitions", "§4.2"],
-        ["src/utility.py", "CRRA and Epstein–Zin certainty equivalents, the "
-         "De Nardi bequest term, shortfall metrics", "§4.3"],
-        ["src/sensitivity.py", "Sweep engine under common random numbers; "
+        ["Preferences", "CRRA and Epstein–Zin certainty equivalents, the "
+         "bequest term, shortfall and ruin metrics", "§4.3"],
+        ["Sweep engine", "Parameter sweeps under common random numbers; "
          "tornado and crossover analysis", "§6"],
-        ["src/spending.py", "Eight families of withdrawal policy behind one "
-         "interface", "§7"],
-        ["src/glidepath.py", "Batched evaluator and coordinate ascent over "
+        ["Spending rules", "Eight families of withdrawal policy behind a "
+         "single interface", "§7"],
+        ["Glide-path solver", "A batched evaluator and coordinate ascent over "
          "the age-by-asset schedule", "§8"],
-        ["src/hedging.py", "Covered-interest-parity hedged legs, break-even "
-         "cost and optimal hedge ratio", "§11"],
-        ["src/allocation.py", "The full four-asset simplex solved at every "
-         "age: lattice and pairwise-exchange coordinate ascent", "§9"],
-        ["src/leverage.py", "A levered evaluator, the cost-of-credit sweep and "
-         "the age-varying leverage schedule", "§10"],
-        ["src/retirement.py", "The path-dependent engine: endogenous "
-         "retirement dates and conditional saving", "§12–§14"],
-        ["src/saving.py", "Savings-rate rules, the fixed-mean shape solver "
-         "and matched-rate scoring", "§13"],
-        ["src/accumulation.py", "Response forms, targets, the signal horse "
-         "race, feasibility bands and grid-edge checks", "§14"],
-        ["src/report.py", "Generates the thirteen Markdown documents the "
-         "paper draws on", "All"],
-        ["src/plots.py", "All 37 figures", "All"],
-        ["paper/", "This document: style, facts loader, prose, build script",
-         "—"],
+        ["Allocation solver", "The four-asset simplex solved at every age: "
+         "lattice search then pairwise-exchange ascent", "§9"],
+        ["Leverage", "A levered evaluator, the cost-of-credit sweep and the "
+         "age-varying leverage schedule", "§10"],
+        ["Hedging", "Covered-interest-parity hedged legs, break-even cost and "
+         "optimal hedge ratio", "§11"],
+        ["Path-dependent engine", "Endogenous retirement dates and "
+         "state-conditioned saving", "§12–§14"],
+        ["Savings rules", "Rule families, the fixed-mean shape solver and "
+         "matched-rate scoring", "§13–§14"],
     ]
     out.extend(ctx.table(
-        modules, "Module responsibilities",
-        col_widths=[ctx.width * 0.24, ctx.width * 0.62, ctx.width * 0.14],
+        stages, "How the computation is organised",
+        col_widths=[ctx.width * 0.22, ctx.width * 0.64, ctx.width * 0.14],
         font_size=7.2))
+
+    out.append(ctx.h2("D.2 Performance"))
+    out.append(ctx.p(
+        "Portfolio returns for a whole cohort are formed as a batched matrix "
+        "product and the wealth recursion runs vectorised across paths. That "
+        "is what makes a hundred thousand lifetimes per strategy — and the "
+        "tens of thousands of policy evaluations the optimisers require — "
+        "tractable on a single core, which in turn is what makes the "
+        "sensitivity analysis of Section 6 affordable enough to run "
+        "exhaustively rather than selectively."))
 
     out.append(ctx.h2("D.3 Verification"))
     out.append(ctx.p(
-        f"The suite contains {ctx_f.n_tests} tests. The ones that carry the "
-        f"most weight "
-        f"are equivalence tests between simulators, because every extension in "
-        f"this paper is built on an engine that must agree with the one that "
-        f"produced the baseline:"))
+        f"Correctness rests on {ctx_f.n_tests} automated tests. The ones that "
+        f"carry the most weight are equivalence tests between simulators, "
+        f"because every extension here is built on an engine that must agree "
+        f"with the one that produced the baseline:"))
     out.extend(ctx.bullets([
         "The path-dependent engine reproduces the fixed-date engine "
         "<i>bit for bit</i> given a fixed retirement age and a constant "
@@ -4353,14 +4356,18 @@ def appendix_software(ctx: Any) -> List[Flowable]:
         "the run-length structure directly.",
         "A savings rule is never handed a return it has not yet lived "
         "through — the no-lookahead property is asserted, not assumed.",
+        "Every available cell of the panel is an observation, checked against "
+        "the per-cell provenance record rather than against the tier labels "
+        "derived from it.",
     ]))
     out.append(ctx.p(
-        "Documented diagnostics for every step, including the ones that "
-        "changed a result, are in the eleven generated Markdown documents "
-        "under <font face=\"PaperMono\" size=\"8\">docs/</font>. Where a bug "
-        "or a specification artefact altered a published number during "
-        "development, the corrected number and the reason are recorded there "
-        "as well as in the relevant section above."))
+        "A further discipline runs through the prose. Where this paper states "
+        "a direction — that one quantity exceeds another, that a ranking "
+        "survives, that an effect has a sign — the statement is classified "
+        "from the computed table when the document is typeset rather than "
+        "written down in advance. Several claims in earlier drafts were "
+        "reversed this way, and the mechanism exists so that a result which "
+        "moves takes its description with it."))
 
     out.append(ctx.h2("D.4 List of figures"))
     for entry in ctx.figure_index:

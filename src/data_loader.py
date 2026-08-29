@@ -797,13 +797,21 @@ def summary_statistics(panel: Panel) -> pd.DataFrame:
 
 
 def coverage_matrix(panel: Panel, decade: bool = True) -> pd.DataFrame:
-    """Country x year (or decade) count of usable observations."""
-    frame = pd.DataFrame(panel.available.astype(int),
+    """Country x year (or decade) coverage of usable observations.
+
+    By decade the value is the *share* of that decade's years with complete
+    data, not the count. The panel's last bucket is usually a partial decade --
+    2020 on its own, say -- and a raw count there tops out at one against a
+    scale of ten, which reads as an absence of data rather than as a bucket
+    with one year in it.
+    """
+    frame = pd.DataFrame(panel.available.astype(float),
                          index=panel.years, columns=list(panel.countries))
     if not decade:
         return frame.T
-    frame["decade"] = (frame.index // 10) * 10
-    grouped = frame.groupby("decade").sum()
+    buckets = (frame.index // 10) * 10
+    grouped = frame.groupby(buckets).mean()
+    grouped.index.name = "decade"
     return grouped.T
 
 

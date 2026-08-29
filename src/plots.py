@@ -78,15 +78,19 @@ def plot_coverage(coverage: pd.DataFrame, directory: str | Path,
         height = max(4.0, 0.22 * coverage.shape[0] + 1.5)
         fig, ax = plt.subplots(figsize=(11, height))
         data = coverage.to_numpy(dtype=float)
-        im = ax.imshow(data, aspect="auto", cmap="YlGnBu", vmin=0, vmax=10)
+        im = ax.imshow(data, aspect="auto", cmap="YlGnBu", vmin=0.0, vmax=1.0)
         ax.set_yticks(range(coverage.shape[0]))
         ax.set_yticklabels(coverage.index)
         ax.set_xticks(range(coverage.shape[1]))
         ax.set_xticklabels([str(c) for c in coverage.columns], rotation=90)
-        ax.set_title("Usable country-years by decade")
+        ax.set_title("Share of each decade with a complete return record")
         ax.set_xlabel("Decade")
         ax.grid(False)
-        fig.colorbar(im, ax=ax, shrink=0.7, label="years with complete data")
+        bar = fig.colorbar(im, ax=ax, shrink=0.7,
+                           label="share of the decade with complete data")
+        bar.set_ticks([0.0, 0.25, 0.5, 0.75, 1.0])
+        bar.set_ticklabels(["0%", "25%", "50%", "75%", "100%"])
+        fig.tight_layout()
     return _save(fig, directory, name)
 
 
