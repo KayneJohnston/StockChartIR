@@ -4396,13 +4396,19 @@ def section_mortgage(ctx: Any) -> List[Flowable]:
                              "correlation_with_housing"],
                       ["Asset", "Mean real", "s.d.", "Return per unit of risk",
                        "Correlation with housing"],
-                      {"asset": str, "mean": lambda v: pc(v, 2),
+                      {"asset": lambda v: {
+                           "housing": "Housing", "dom_eq": "Domestic equity",
+                           "intl_eq": "International equity",
+                           "bond": "Bonds", "bill": "Bills"}.get(str(v),
+                                                                 str(v)),
+                       "mean": lambda v: pc(v, 2),
                        "sd": lambda v: pc(v, 2),
                        "return_per_unit_risk": lambda v: f2(v, 2),
                        "correlation_with_housing": lambda v: f2(v, 2)}),
             "Housing against the assets it competes with",
-            note=f"Housing is net of the {pc(float(notes['holding_cost']), 0)} "
-                 f"holding cost this section charges; the others are gross. "
+            note=f"Housing is net of the "
+                 f"{pc(float(h['holding_cost_applied']), 0)} holding cost "
+                 f"this section charges; the others are gross. "
                  f"For reference, the two equity legs correlate at "
                  f"{f2(legs, 2)} with each other."))
         better = float(h["return_per_unit_risk"]) > float(
