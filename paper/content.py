@@ -1004,11 +1004,14 @@ def section_data(ctx: Any) -> List[Flowable]:
 
     out.extend(ctx.figure(
         "fig38_data_provenance",
-        "Left: the panel's composition by era, with the simulated share "
-        "labelled. Centre: how much of an observed investor's international "
-        "leg is simulated. Right: the ratio of each country's 2016–2020 "
-        "equity-return standard deviation to its 1950–2015 standard "
-        "deviation — every country below one.",
+        "Left: the panel's return cells by era, split observed against "
+        "generated; the generated series is absent because there is none, and "
+        "the label gives the mean size of the cross-section since bar height "
+        "also tracks era length. Centre: usable years per country, which is "
+        "what the history-weighted country draw acts on — the histories are "
+        "even enough that the weighting barely bites. Right: the ratio of each "
+        "country's 2016–2020 equity-return standard deviation to its 1950–2015 "
+        "standard deviation, every country below one.",
         max_height=8.0 * cm))
 
     out.extend(ctx.figure(
