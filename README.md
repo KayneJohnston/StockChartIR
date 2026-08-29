@@ -499,8 +499,8 @@ while also spending more.
 ```bash
 pip install numpy pandas scipy matplotlib pyyaml openpyxl pytest
 
-python main.py --quick      # ~20 s smoke run at reduced N
-python main.py              # ~30 min full run: N = 100,000 plus sweeps and searches
+python main.py --quick      # ~1 min smoke run at reduced N
+python main.py              # ~1 h full run: N = 100,000 plus sweeps and searches
 python -m pytest tests/ -q  # 580 tests
 ```
 
