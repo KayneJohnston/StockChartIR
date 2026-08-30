@@ -498,12 +498,28 @@ def section_background(ctx: Any) -> List[Flowable]:
         "long-horizon outcomes fat-tailed."))
     out.append(ctx.p(
         "ACO's response is to replace the return-generating process. Their "
-        "sample is the developed-market cross-section over more than a "
-        "century, and their sampling scheme draws contiguous blocks so that "
-        "runs of good and bad decades survive into the simulated lifetimes. "
-        "The claim is that under this process the case for the glide path "
-        "evaporates. This paper reconstructs that process independently and "
-        "asks whether the claim holds."))
+        "sample is 39 developed countries of monthly returns from 1890 to "
+        "2023, drawn from Global Financial Data, and their sampling scheme is "
+        "a stationary block bootstrap with geometric block lengths averaging "
+        "120 months, so runs of good and bad decades survive into the "
+        "simulated lifetimes. Their household is a couple facing random "
+        "longevity from Social Security Administration mortality tables, "
+        "saving 10% of labour income, retiring at 65 and drawing 4% of "
+        "wealth at retirement thereafter, with utility calibrated to De "
+        "Nardi, French and Jones (2010) at a risk aversion of 3.84. Their "
+        "conclusion is that a 50/50 domestic/international equity portfolio, "
+        "held for life, beats the glide path on wealth, retirement "
+        "consumption, capital preservation and bequests alike."))
+    out.append(ctx.p(
+        "This paper reconstructs that process independently and asks whether "
+        "the claim holds. The sampling scheme here is deliberately the same "
+        "in form — stationary blocks, geometric lengths, a ten-year mean — so "
+        "that any divergence is attributable to the panel and the lifecycle "
+        "assumptions rather than to how returns are drawn. Where this study "
+        "differs, it differs in ways it can state: annual rather than monthly "
+        "data, sixteen countries rather than thirty-nine, an individual "
+        "rather than a couple, and a deterministic horizon rather than "
+        "random longevity."))
 
     out.append(ctx.h2("2.3 The data source"))
     out.append(ctx.p(
@@ -1469,8 +1485,23 @@ def section_baseline(ctx: Any) -> List[Flowable]:
         f"still ({f2(float(intl[f'cec_crra_gamma{gamma:g}']), 3)}), which is a "
         f"consequence of the leave-one-out construction rather than a "
         f"recommendation: an investor holding \"international\" equity in this "
-        f"model holds a 37-country average, and no single real investor has "
+        f"model holds a {f.panel['n_tier_a'] - 1}-country average, and no single "
+        f"real investor has "
         f"that opportunity set without also holding their own market."))
+    out.append(ctx.p(
+        f"This is the one place the replication does not reproduce ACO's "
+        f"headline. Their recommended portfolio is an even 50/50 split, held "
+        f"for life; on this panel that split is beaten by the international "
+        f"leg alone. We read the difference as a property of a "
+        f"{f.panel['n_tier_a']}-country panel rather than a correction to "
+        f"them. The domestic leg here is a single draw from a set that "
+        f"includes several century-long underperformers, while the "
+        f"international leg averages away exactly that risk; with "
+        f"thirty-nine countries and a tradeable international index the two "
+        f"legs are far closer in character, and the case for holding both is "
+        f"correspondingly stronger. Nothing measurable here contradicts the "
+        f"50/50 recommendation — the narrower claim this panel supports is "
+        f"that a diversified sleeve dominates a concentrated one."))
     out.append(ctx.p(
         "The practical reading is that the case for equities here is a case "
         "for <i>diversified</i> equities. A single national market can and did "
@@ -1741,7 +1772,8 @@ def section_sensitivity(ctx: Any) -> List[Flowable]:
         f"{pc(float(dom_opt['optimal_domestic_share'].iloc[-1]), 0)} at "
         f"γ = 10. We do not read this as a recommendation to hold almost no "
         f"domestic equity. The international leg in this model is a "
-        f"37-country leave-one-out average, which is better diversified than "
+        f"{f.panel['n_tier_a'] - 1}-country leave-one-out average, which is "
+        f"better diversified than "
         f"any tradeable international index; the honest reading is that the "
         f"model prefers <i>more</i> diversification than the 50/50 headline "
         f"strategy provides, not that a specific number is optimal."))
@@ -2149,7 +2181,8 @@ def section_allocation(ctx: Any) -> List[Flowable]:
     out.append(ctx.p(
         f"The domestic/international split carries the same caveat as Section "
         f"6.2 and should not be read as advice. The international leg in this "
-        f"model is a 37-country leave-one-out average, better diversified than "
+        f"model is a {f.panel['n_tier_a'] - 1}-country leave-one-out average, "
+        f"better diversified than "
         f"any tradeable international index and available to no individual "
         f"investor without also holding their own market. A solved schedule "
         f"that wants {pc(a['mean_intl_eq'], 0)} international is saying the "

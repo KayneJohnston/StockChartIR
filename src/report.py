@@ -163,9 +163,8 @@ def write_doc_01(
     scope = f"""
 ## 1. What this panel is, and what it is not
 
-The paper's own panel is a hand-collected, monthly, 38-country
-developed-market database spanning 1890-2019, assembled from Global Financial
-Data, Dimson-Marsh-Staunton and national statistical sources. **That database
+The paper's own panel is a monthly, 39-country developed-market database
+spanning 1890-2023, drawn from Global Financial Data. **That database
 is proprietary and is not redistributable**, so it cannot be downloaded and
 re-used here. This replication therefore rebuilds the closest panel that can
 be assembled from openly licensed primary data, and labels every series by
@@ -1239,10 +1238,9 @@ Each variant re-runs the entire pipeline end to end with one change.
 The ranking is stable across the `per_block` country draw and uniform country
 weighting.
 
-There is no panel variant left to report here, and that is the point. This
-section used to compare a 38-country panel against its 16-country empirical
-subset, because 22 of those countries had factor-model returns. The simulated
-countries have been removed, so the empirical subset *is* the panel and there
+There is no panel variant to report here. Every country in the panel carries
+recorded equity, bond and bill returns, so there is no second panel to compare
+against and there
 is nothing to hold it against. `14_data_provenance.md` records what the removal
 cost -- an international leg averaged over {runtime_notes.get('n_countries', 0) - 1}
 markets rather than 37 -- and what it bought.
@@ -1265,9 +1263,10 @@ block had returned to the panel.
 | Expected real equity returns are *lower* than US-only data imply | median 68-year annualised domestic equity is well below the US historical rate (`02`, section 4.4) | yes |
 
 Levels are **not** expected to match the published tables, and do not. The
-paper uses a monthly, 38-country proprietary panel with country-linked labour
-income, mortality risk, a Social Security benefit calibrated to the US
-earnings distribution, and full recursive Epstein-Zin utility. This
+paper uses a monthly, 39-country proprietary panel with country-linked labour
+income, random longevity from Social Security Administration mortality tables,
+a benefit calibrated to the US earnings distribution, and a household that is
+a couple rather than an individual. This
 replication uses annual public data, deterministic mortality, idiosyncratic
 labour income and ex-ante Epstein-Zin. What replicates is the **ordering and
 its economic mechanism**, which is what the paper's contribution actually is.
@@ -4096,7 +4095,8 @@ At the baseline preference (γ = {gamma:g}) the solved portfolio averages
 
 The domestic/international split carries the same caveat as `docs/05` section
 3.1 and should not be read as advice. The international leg in this model is a
-37-country leave-one-out average, better diversified than any tradeable
+{summary['n_countries'] - 1}-country leave-one-out average, better
+diversified than any tradeable
 international index and available to no individual investor without also
 holding their own market. The honest reading of a solved schedule that wants
 {intl:.0%} international is that the model prefers *more* diversification than

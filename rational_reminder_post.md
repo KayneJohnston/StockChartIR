@@ -6,15 +6,25 @@ I wanted to see whether the ACO result survives contact with a different dataset
 
 ## Design differences worth knowing before you read the numbers
 
-| | BTSQ (as I understand it) | This build |
-|---|---|---|
-| Panel | ~38–39 developed markets | **16 countries**, 1890–2020, 2,010 country-years |
-| Source | DMS-lineage, largely proprietary | Jordà–Schularick–Taylor + *Rate of Return on Everything*, openly licensed |
-| Mortality | Survival probabilities | **None** — fixed 25 → 63 → 93 |
-| International leg | Broad developed-market index | Leave-one-out equal-weighted across the other 15 |
-| Preferences | CRRA over consumption + bequest | CRRA and Epstein–Zin, De Nardi shifted-power bequest |
+Checked against the 10 July 2025 version rather than my memory of it.
 
-The country count is the binding constraint and I'd weight it heavily. Sixteen markets is what the openly licensed record supports with complete equity, bond and bill total returns; the international leg therefore spans 15 foreign markets, all advanced economies that ended the century with functioning capital markets. I also make no attempt at mortality risk, so my horizon is deterministic where theirs isn't.
+| | BTSQ (July 2025) | This build |
+|---|---|---|
+| Panel | **39 developed countries**, 1890–2023, ~2,600 country-years | **16 countries**, 1890–2020, 2,010 country-years |
+| Source | GFDatabase (proprietary) | Jordà–Schularick–Taylor + *Rate of Return on Everything*, openly licensed |
+| Frequency | Monthly | **Annual** |
+| Household | **A couple** | A single investor |
+| Mortality | Random, SSA conditional survival | **None** — fixed 25 → 63 → 93 |
+| Retirement age | 65 | 63 |
+| Bootstrap | Stationary block, geometric, mean 120 months | Stationary block, geometric, mean 10 years — *same* |
+| Savings rate | 10% above a $15k income floor | 10% |
+| Withdrawal | 4% then inflation-adjusted | Same |
+| Social Security | SSA formulas incl. SSI | SSA PIA bend points |
+| Preferences | CRRA, γ = 3.84, De Nardi–French–Jones (2010) bequest | CRRA (γ = 2/5/10) and Epstein–Zin, De Nardi (2004) bequest |
+
+Two things worth noticing. The **sampler is essentially the same** — stationary block bootstrap, geometric block length, ten-year mean — which is reassuring, because it means differences below are about data and lifecycle assumptions rather than about how returns are drawn. And the **panel is less than half the size**: sixteen markets is what the openly licensed record supports with complete equity, bond and bill total returns. My international leg is a leave-one-out equal weighting across the other 15, all advanced economies that ended the century with functioning capital markets.
+
+I also model an individual with a deterministic horizon where they model a couple with random longevity, and I stop at annual frequency where they work monthly.
 
 The sampler is a calendar-joint stationary block bootstrap — whole (country, window) blocks, mean length 10 years — so cross-asset covariance, persistence and fat tails survive. Gaps (closures, war years) are respected rather than interpolated across, which matters because they cluster exactly where a survivorship-prone sample would quietly drop observations.
 
@@ -35,13 +45,21 @@ All-equity beats the glide path by **11.2%** and 60/40 by **20.3%**, cutting rui
 
 Two points I'd underline because they replicated hard:
 
-**The mechanism is international, not equity.** 100% domestic equity *loses* to the glide path. The all-equity result is a diversification result wearing an equity costume — consistent with their domestic/international split being nowhere near 50/50.
-
-**Sustainable withdrawal rates are far below 4%.** 3.2% for all-equity, 2.1% for the glide path, at 5% ruin tolerance.
+**The mechanism is international, not equity.** 100% domestic equity *loses* to the glide path — 0.882 against 0.943. The all-equity result is a diversification result wearing an equity costume, and on this panel the domestic leg is doing none of the work.
 
 Solving the glide path directly reproduces the all-equity corner. Freeing all four weights at every age — 204 parameters — adds 0.46% over the best fixed benchmark and still produces no glide. A deviation profile shows only **2 of 68 ages** move the objective by more than a basis point.
 
 ![Solved glide path](fig20_optimal_glide_path.png)
+
+## One place I don't replicate them
+
+Their headline is **50/50 domestic/international**, held for life. On my panel that is beaten by **100% international** — 1.108 against 1.048, with ruin at 9.0% against 11.7%. The all-equity conclusion survives; the *split* doesn't.
+
+I'd read that as a panel artefact rather than a correction to them, and the mechanism is visible in the construction. My international leg is a leave-one-out equal weighting across the other fifteen markets, so it is a genuinely diversified sleeve. My domestic leg is a single draw from a sixteen-country set that includes some poor century-long performers — Portugal at 3.2% real, France at 3.6%. With 39 countries and a broader international index, the two legs are far closer in character than they are here, and the case for holding both is correspondingly stronger.
+
+So: their 50/50 is not contradicted by anything I can measure. What my panel says is narrower — that on *these* sixteen markets, the diversified sleeve dominates the concentrated one badly enough that mixing in a domestic bet costs you. Whether that survives at 39 countries I can't test, and it is exactly the sort of thing the larger sample should settle.
+
+**Sustainable withdrawal rates are far below 4%.** 3.2% for all-equity, 2.1% for the glide path, at a 5% ruin tolerance. This one is mine rather than a replication — they *assume* a 4% rule as the baseline withdrawal policy rather than solving for a sustainable rate.
 
 ## Where Ayres and Nalebuff turn out to be right — and about which instrument
 
@@ -60,13 +78,11 @@ It isn't the borrowing rate. Both studies borrow at the same real bill rate plus
 | 2% | +0.4% | **+5.9%** |
 | 3% | 0.0% | +1.0% |
 
-It's diversification. Housing's *standalone* risk-adjusted return is slightly **worse** than international equity's — 4.8% real on 14.5% vol after a 2% holding cost, against 8.2% on 22.6%. What it has is a correlation of **+0.09** with the equity sleeve, where the two equity legs correlate at +0.40. Levering the portfolio just scales risk you already own. Levering housing spends the borrowing on a near-uncorrelated asset, and lets the investor hold more gross property while tying up less capital in it.
+It's diversification. Housing's *standalone* risk-adjusted return is slightly **worse** than international equity's — 4.8% real on 14.5% vol after a 2% holding cost, against 8.2% on 22.6%. What it has is a correlation of **+0.09** with the equity sleeve, where the two equity legs correlate at +0.40. Levering the portfolio just scales risk you already own; levering housing spends the borrowing on a near-uncorrelated asset.
 
-So the Ayres–Nalebuff shape survives, but the reason it pays here is not the one their argument turns on. In my panel, levering *equity* — their instrument — is worth almost nothing once credit is priced realistically. The gain appears when leverage buys a diversifier instead.
+So the Ayres–Nalebuff shape survives, but not for the reason their argument turns on. Levering *equity* — their instrument — is worth almost nothing here once credit is priced realistically. The gain appears when leverage buys a diversifier. That the cheapest household leverage happens to be secured against that diversifier is a convenience, not the mechanism.
 
-The real-world borrowing rate reinforces this rather than driving it: margin costs a household several hundred basis points over the short rate, a mortgage roughly 150–200bp and secured. The cheapest leverage an ordinary household can get happens to be attached to the asset that most deserves it.
-
-Magnitudes are more modest than 2:1 — at a 2% spread the optimum holds gross housing of about 0.62× net wealth alongside ~77% international equity, so roughly 1.4:1 all-in. And it's overwhelmingly sensitive to the margin: +25.6% at a zero spread, nothing by 4%. Your mortgage rate, not the return on housing, decides this.
+Magnitudes are more modest than 2:1 — roughly 1.4:1 all-in at a 2% spread. And it's overwhelmingly sensitive to the margin: +25.6% at a zero spread, nothing by 4%. Your mortgage rate, not the return on housing, decides this.
 
 It is also the mirror image of the glide path this whole literature argues about: **what should decline with age is the borrowing, not the equity.**
 
@@ -96,7 +112,7 @@ Also: eight spending rules compared on their own optimised rates, and endogenous
 
 ## Caveats
 
-Sixteen countries, all survivors at the system level. No taxes, fees, mortality risk or behavioural constraints. The mortgage rebalances annually, which no real mortgage does, and prices no mortgage insurance or interest deductibility. Housing is a national index, not a house — the concentration risk that makes a real mortgage dangerous is absent. Several results changed sign or magnitude once every policy was scored against a *matched* baseline differing in one dimension, every optimiser run under common random numbers, and every solved schedule put through a deviation profile before its shape was described.
+Sixteen countries, all survivors at the system level. No taxes, fees, mortality risk or behavioural constraints. The mortgage rebalances annually, which no real mortgage does. Housing is a national index, not a house. Several results changed sign or magnitude once every policy was scored against a *matched* baseline differing in one dimension, every optimiser run under common random numbers, and every solved schedule put through a deviation profile before its shape was described.
 
 Repo and full PDF: **github.com/KayneJohnston/StockChartIR**
 
