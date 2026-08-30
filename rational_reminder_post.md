@@ -24,7 +24,7 @@ At γ = 5 over 100,000 lifetimes, certainty-equivalent consumption:
 
 | Strategy | CEC | P(ruin) | SWR @ 5% ruin |
 |---|---|---|---|
-| 100% international equity | **1.109** | 9.0% | 3.5% |
+| 100% international equity | **1.108** | 9.0% | 3.5% |
 | 50/50 domestic/international | 1.048 | 11.7% | 3.2% |
 | Target-date glide path | 0.943 | 22.2% | 2.1% |
 | 100% domestic equity | 0.882 | 25.4% | 1.6% |
