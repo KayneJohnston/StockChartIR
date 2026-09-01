@@ -449,9 +449,11 @@ def section_introduction(ctx: Any) -> List[Flowable]:
         "three that relax assumptions the model itself makes: that a "
         "lifetime's starting valuation is irrelevant (Section 15), that the "
         "opportunity set contains no housing (Section 16), and that the house "
-        "is owned outright (Section 17). Section 18 "
-        "discusses what the results collectively imply, Section 19 states the "
-        "limitations candidly, and Section 20 concludes. Four appendices give "
+        "is owned outright (Section 17). Section 18 asks whether the "
+        "headline survives an international sleeve weighted by economy size "
+        "rather than equally. Section 19 "
+        "discusses what the results collectively imply, Section 20 states the "
+        "limitations candidly, and Section 21 concludes. Four appendices give "
         "the full parameter set, the country panel, supplementary tables and "
         "the reproduction instructions."))
     return out
@@ -542,7 +544,7 @@ def section_background(ctx: Any) -> List[Flowable]:
         f"It is also the binding constraint on this study: it carries complete "
         f"equity, bond and bill total returns for {f.panel['n_tier_a']} "
         f"countries, and that set is our panel. Section 3.2 describes it and "
-        f"Section 19.1 sets out what its breadth costs."))
+        f"Section 20.1 sets out what its breadth costs."))
 
     out.append(ctx.h2("2.4 Adjacent literatures this paper touches"))
     out.extend(ctx.bullets([
@@ -646,7 +648,7 @@ def section_data(ctx: Any) -> List[Flowable]:
         f"evidence, and Section 3.6.1 reports what the excluded countries do "
         f"carry."))
     out.append(ctx.p(
-        f"That breadth is the paper's principal limitation and Section 19.1 "
+        f"That breadth is the paper's principal limitation and Section 20.1 "
         f"develops it. Its most direct consequence is on the international "
         f"leg, which is a leave-one-out average and therefore spans "
         f"{p['n_tier_a'] - 1} foreign markets, all advanced economies with "
@@ -4601,7 +4603,218 @@ def section_mortgage(ctx: Any) -> List[Flowable]:
 
 
 # ---------------------------------------------------------------------------
-# 18. Discussion
+# 18. How the international sleeve is weighted
+# ---------------------------------------------------------------------------
+def section_sleeve(ctx: Any) -> List[Flowable]:
+    f = ctx.f
+    ranking = f.table("sleeve_ranking")
+    moments = f.table("sleeve_moments")
+    conc = f.table("sleeve_concentration").sort_values("year")
+    comparison = f.table("sleeve_comparison")
+
+    from src.sleeve import verdict
+    found = verdict(comparison)
+    equal, gdp = found.get("equal", {}), found.get("gdp", {})
+    cfg = f.cfg
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    n_paths = int(cfg.get("sleeve", {}).get(
+        "n_paths", cfg["bootstrap"]["n_paths"]))
+    n_markets = int(conc["markets"].max())
+    eff_first = float(conc["effective_markets"].iloc[0])
+    eff_last = float(conc["effective_markets"].iloc[-1])
+    top_last = float(conc["largest_share"].iloc[-1])
+    top_name = str(conc["largest_market"].iloc[-1])
+
+    out: List[Flowable] = [ctx.h1("18. How the International Sleeve Is "
+                                  "Weighted")]
+    out.append(ctx.p(
+        f"Every result to this point rests on an international equity leg "
+        f"built as a leave-one-out <b>equal-weighted</b> average of the other "
+        f"{n_markets - 1} markets. That construction is defensible and "
+        f"unusually favourable. An equal-weighted portfolio of {n_markets} "
+        f"national markets is a more diversified object than any index a "
+        f"person could have bought: it holds as much Portugal as it holds the "
+        f"United States, it rebalances into whatever has fallen, and it never "
+        f"lets one market grow to dominate. A real investor holds something "
+        f"closer to a capitalisation-weighted index, which is concentrated by "
+        f"construction and grows <i>more</i> concentrated exactly when one "
+        f"market has run."))
+    out.append(ctx.p(
+        "That matters here specifically. The one place this paper diverges "
+        "from the study it re-implements — all-international beating the "
+        "50/50 domestic/international split — is a claim about how much "
+        "diversification the foreign sleeve delivers. If the equal weighting "
+        "is doing that work, the divergence is an artefact of panel "
+        "construction rather than a finding about the world. This section "
+        "rebuilds the panel with a GDP-weighted sleeve and re-runs the "
+        "headline comparison through the same summariser, so the two answers "
+        "differ in the weighting and in nothing else."))
+
+    out.append(ctx.h2("18.1 What GDP weighting is, and is not"))
+    out.append(ctx.p(
+        "The weights are Maddison real GDP per head times population, "
+        "<b>lagged one year</b>, renormalised each year over the other "
+        "markets that have a return. Maddison is used rather than the "
+        "database's own nominal GDP series because that series carries "
+        "country-specific currency units — pesetas for Spain, lire for Italy "
+        "— with no consistent scaling, so cross-country ratios taken from it "
+        "are meaningless. Three properties are worth stating plainly. It is a "
+        "<i>proxy</i> for capitalisation weights: it reproduces the "
+        "concentration that makes a real index a real index, but not the "
+        "wedge between an economy's size and its listed market's. It is "
+        "PPP-based, which understates a market whose currency is temporarily "
+        "strong — Japan in the late 1980s is the clearest case. And the lag "
+        "makes it implementable: no weight is formed from a number the "
+        "investor could not yet have seen, the same discipline Section 15 "
+        "applies to valuation terciles."))
+    out.append(ctx.p(
+        "Both panels share their years, their countries and their "
+        "availability mask, so the bootstrap draws identical calendar history "
+        "for each and the comparison is paired rather than merely parallel."))
+
+    out.append(ctx.h2("18.2 How much concentration this adds"))
+    decades = conc[conc["year"] % 20 == 0]
+    out.extend(ctx.table(
+        rows_from(decades, ["year", "effective_markets", "largest_market",
+                            "largest_share", "top3_share"],
+                  ["Year", "Effective markets (1/HHI)", "Largest",
+                   "Largest share", "Top three"],
+                  {"year": lambda v: f"{int(v)}",
+                   "effective_markets": lambda v: f2(v, 2),
+                   "largest_market": str,
+                   "largest_share": lambda v: pc(v, 1),
+                   "top3_share": lambda v: pc(v, 1)}),
+        "Concentration of the GDP-weighted international sleeve",
+        note=f"Measured across all {n_markets} markets. Equal weighting "
+             f"holds the effective number fixed at {n_markets} in every "
+             f"year; each investor's own sleeve is the other "
+             f"{n_markets - 1} of them, so the leave-one-out figures sit "
+             f"slightly below both."))
+    out.append(ctx.p(
+        f"GDP weighting runs from an effective {eff_first:.1f} markets to "
+        f"{eff_last:.1f}, with {top_name} at {top_last:.0%} of the total by "
+        f"the end, against a flat {n_markets} for equal weighting. An "
+        f"effective four markets against sixteen is a large difference in "
+        f"concentration, which is what makes this a test rather than a "
+        f"formality."))
+
+    out.append(ctx.h2("18.3 The headline under both weightings"))
+    out.extend(ctx.table(
+        rows_from(ranking, ["label", "equal", "gdp", "change_pct",
+                            "ruin_equal", "ruin_gdp"],
+                  ["Strategy", "CEC, equal", "CEC, GDP", "Change",
+                   "P(ruin) equal", "P(ruin) GDP"],
+                  {"label": str, "equal": lambda v: f2(v, 4),
+                   "gdp": lambda v: f2(v, 4),
+                   "change_pct": lambda v: f"{float(v):+.2f}%",
+                   "ruin_equal": lambda v: pc(v, 1),
+                   "ruin_gdp": lambda v: pc(v, 1)}),
+        f"Every strategy under both sleeve constructions, at "
+        f"\u03b3 = {gamma:g}",
+        note=f"{n_paths:,} lifetimes per weighting, drawn from identical "
+             "calendar history. The strategies holding no international "
+             "equity are unchanged by construction, which is the cheapest "
+             "available check that the panels differ only in the sleeve."))
+
+    if found["winner_changes"]:
+        call = (f"<b>The weighting changes which strategy wins.</b> On the "
+                f"equal-weighted sleeve the best strategy is "
+                f"{equal.get('winner_label', '?')}; on the GDP-weighted "
+                f"sleeve it is {gdp.get('winner_label', '?')}. The headline "
+                f"of this paper is a property of how the international leg "
+                f"was built.")
+    elif found["ordering_changes"]:
+        call = ("<b>The weighting flips the ordering this paper diverges "
+                "on.</b> All-international leads the 50/50 split under one "
+                "construction and trails it under the other, so the "
+                "divergence should be attributed to panel construction "
+                "rather than read as a finding.")
+    else:
+        call = (f"<b>The ordering survives the weighting.</b> "
+                f"All-international leads the 50/50 split by "
+                f"{equal.get('gap_pct', float('nan')):+.2f}% on the "
+                f"equal-weighted sleeve and "
+                f"{gdp.get('gap_pct', float('nan')):+.2f}% on the "
+                f"GDP-weighted one. Roughly "
+                f"{100 * (1 - gdp.get('gap_pct', float('nan')) / equal.get('gap_pct', float('nan'))):.0f}% "
+                f"of the advantage is attributable to the equal weighting, "
+                f"and the rest is not.")
+    out.append(ctx.p(call))
+
+    out.append(ctx.h2("18.4 Why it moves the way it does"))
+    out.extend(ctx.table(
+        rows_from(moments, ["label", "mean", "sd", "return_per_unit_risk",
+                            "correlation_with_domestic"],
+                  ["Sleeve", "Mean", "SD", "Return per unit risk",
+                   "Correlation with home market"],
+                  {"label": str, "mean": lambda v: pc(v, 2),
+                   "sd": lambda v: pc(v, 2),
+                   "return_per_unit_risk": lambda v: f2(v, 3),
+                   "correlation_with_domestic": lambda v: f2(v, 3)}),
+        "Pooled moments of the international sleeve under each weighting",
+        note="Pooled over every available country-year. The correlation is "
+             "with the investor's own domestic market."))
+
+    e = moments[moments["weighting"] == "equal"].iloc[0]
+    g = moments[moments["weighting"] == "gdp"].iloc[0]
+    d_mean = (float(g["mean"]) - float(e["mean"])) * 100.0
+    d_sd = (float(g["sd"]) - float(e["sd"])) * 100.0
+    d_corr = float(g["correlation_with_domestic"]) \
+        - float(e["correlation_with_domestic"])
+    out.append(ctx.p(
+        f"Weighting by GDP moves the sleeve's mean by {d_mean:+.2f} "
+        f"percentage points and its volatility by {d_sd:+.2f}, so return per "
+        f"unit of risk "
+        f"{'falls' if float(g['return_per_unit_risk']) < float(e['return_per_unit_risk']) else 'rises'} "
+        f"from {float(e['return_per_unit_risk']):.3f} to "
+        f"{float(g['return_per_unit_risk']):.3f} — concentration costs "
+        f"something, as it should."))
+    out.append(ctx.p(
+        f"The correlation with the home market moves the other way, "
+        f"{'down' if d_corr < 0 else 'up'} by {abs(d_corr):.3f}. That reads "
+        f"as a surprise and is not one: the sleeve is leave-one-out, so "
+        f"concentrating it into the largest economies makes the typical "
+        f"investor's foreign holding <i>less</i> like their own market, not "
+        f"more. A Danish investor's equal-weighted sleeve is mostly other "
+        f"small European markets that move with Denmark; their GDP-weighted "
+        f"sleeve is mostly the United States and Japan, which do not. The two "
+        f"effects push in opposite directions, and the certainty equivalents "
+        f"in Section 18.3 are where they net out."
+        if d_corr < 0 else
+        f"The correlation with the home market moves the same way, up by "
+        f"{abs(d_corr):.3f}, so the concentrated sleeve is both riskier and "
+        f"less distinct from the home market — costly on both counts."))
+
+    out.extend(ctx.figure(
+        "fig43_sleeve_weighting",
+        "Left: the effective number of markets in the sleeve under each "
+        "weighting. Centre: certainty-equivalent consumption for every "
+        "strategy under both. Right: what moved in the sleeve itself.",
+        max_height=8.0 * cm))
+
+    out.append(ctx.h2("18.5 What this changes"))
+    out.extend(ctx.bullets([
+        "The equal-weighted sleeve is the more favourable construction, and "
+        "the levels in every table of this paper reflect that. The certainty "
+        "equivalents should be read as construction-dependent.",
+        ("The ordering this paper diverges from the replicated study on does "
+         "<b>not</b> survive the reweighting, so that divergence is a "
+         "property of panel construction."
+         if found["ordering_changes"] else
+         "The ordering this paper diverges from the replicated study on "
+         "<b>does</b> survive the reweighting, so the divergence is not "
+         "manufactured by the equal weighting — though the margin narrows."),
+        "GDP weighting is still not capitalisation weighting. This section "
+        "brackets the answer rather than settling it: the truth sits between "
+        "an equal-weighted sleeve nobody could buy and a PPP-GDP sleeve that "
+        "misprices strong-currency markets. Section 20.1 carries this as a "
+        "limitation.",
+    ]))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# 19. Discussion
 # ---------------------------------------------------------------------------
 def section_discussion(ctx: Any) -> List[Flowable]:
     f = ctx.f
@@ -4610,8 +4823,8 @@ def section_discussion(ctx: Any) -> List[Flowable]:
     swr_eq = float(swr[swr["strategy"] == "balanced_all_equity"]
                    ["safe_withdrawal_rate_at_5%_ruin"].iloc[0])
 
-    out: List[Flowable] = [ctx.h1("18. Discussion")]
-    out.append(ctx.h2("18.1 What the replication does and does not establish"))
+    out: List[Flowable] = [ctx.h1("19. Discussion")]
+    out.append(ctx.h2("19.1 What the replication does and does not establish"))
     out.append(ctx.p(
         "The central claim reproduces cleanly and survives an unusually wide "
         "robustness exercise. That is a real result and it should update "
@@ -4639,7 +4852,7 @@ def section_discussion(ctx: Any) -> List[Flowable]:
         "outside the support of the sampler, and no amount of block "
         "resampling can put it back in."))
 
-    out.append(ctx.h2("18.2 The hierarchy of levers"))
+    out.append(ctx.h2("19.2 The hierarchy of levers"))
     out.append(ctx.p(
         "Reading the extensions together produces a ranking of what actually "
         "moves a retirement outcome, and it is not the ranking the industry's "
@@ -4701,7 +4914,7 @@ def section_discussion(ctx: Any) -> List[Flowable]:
         "should read that list from the top, not from the bottom. The "
         "profession's attention is allocated in roughly the reverse order."))
 
-    out.append(ctx.h2("18.3 Why the pay cheque beats the portfolio"))
+    out.append(ctx.h2("19.3 Why the pay cheque beats the portfolio"))
     out.append(ctx.p(
         "The single most surprising result in the paper is that the best "
         "state variable for a savings rule is labour income relative to its "
@@ -4724,7 +4937,7 @@ def section_discussion(ctx: Any) -> List[Flowable]:
         "no balance lookup and no arithmetic, and on this model it outperforms "
         "the wealth-target advice that dominates financial planning."))
 
-    out.append(ctx.h2("18.4 Implications for default design"))
+    out.append(ctx.h2("19.4 Implications for default design"))
     out.append(ctx.p(
         "If the results here were taken at face value by a plan sponsor, the "
         "implied redesign would not be \"raise the equity share of the "
@@ -4761,12 +4974,12 @@ def section_limitations(ctx: Any) -> List[Flowable]:
     f = ctx.f
     p = f.panel
     pr, adv = f.provenance, f.panel_advantage
-    out: List[Flowable] = [ctx.h1("19. Limitations and Threats to Validity")]
+    out: List[Flowable] = [ctx.h1("20. Limitations and Threats to Validity")]
     out.append(ctx.p(
         "This section is deliberately long. A replication that reports only "
         "the ways in which it succeeded is not much use."))
 
-    out.append(ctx.h2("19.1 The cross-section is sixteen countries"))
+    out.append(ctx.h2("20.1 The cross-section is sixteen countries"))
     out.append(ctx.p(
         f"This is the largest weakness in the paper, and it is a weakness we "
         f"chose deliberately. The developed-market universe runs to 38 "
@@ -4790,7 +5003,7 @@ def section_limitations(ctx: Any) -> List[Flowable]:
         "unverified in Section 3.6, on a variance test that every country in "
         "the sample fails in the same direction."))
 
-    out.append(ctx.h2("19.2 What the bootstrap cannot represent"))
+    out.append(ctx.h2("20.2 What the bootstrap cannot represent"))
     out.extend(ctx.bullets([
         "<b>No valuation conditioning.</b> Blocks are drawn without regard to "
         "the starting dividend yield or price-earnings ratio, so a simulated "
@@ -4811,7 +5024,7 @@ def section_limitations(ctx: Any) -> List[Flowable]:
         "the exercise. We quantify this rather than correct it.",
     ]))
 
-    out.append(ctx.h2("19.3 What the lifecycle model omits"))
+    out.append(ctx.h2("20.3 What the lifecycle model omits"))
     hs, wg = pr.get("housing", {}), pr.get("wages", {})
     housing_bullet = (
         "<b>No housing.</b> For most households the primary residence is the "
@@ -4859,7 +5072,7 @@ def section_limitations(ctx: Any) -> List[Flowable]:
         "abandons an all-equity portfolio in the middle of a 60% drawdown.",
     ] if x]))
 
-    out.append(ctx.h2("19.4 Specification sensitivities we know about"))
+    out.append(ctx.h2("20.4 Specification sensitivities we know about"))
     out.append(ctx.p(
         "Three modelling choices are load-bearing and a reader should know "
         "where they bite."))
@@ -4881,7 +5094,7 @@ def section_limitations(ctx: Any) -> List[Flowable]:
         "of two.",
     ]))
 
-    out.append(ctx.h2("19.5 What the new searches assume"))
+    out.append(ctx.h2("20.5 What the new searches assume"))
     out.extend(ctx.bullets([
         "<b>The simplex search is a coordinate search.</b> Section 9 reports "
         "restarts from three corners and they agree, but coordinate ascent "
@@ -4927,7 +5140,7 @@ def section_limitations(ctx: Any) -> List[Flowable]:
         "lender would extend that against a retirement account.",
     ]))
 
-    out.append(ctx.h2("19.6 Statistical caveats"))
+    out.append(ctx.h2("20.6 Statistical caveats"))
     out.append(ctx.p(
         "Certainty equivalents are reported without standard errors. Under "
         "common random numbers the <i>differences</i> between policies are far "
@@ -4947,7 +5160,7 @@ def section_conclusion(ctx: Any) -> List[Flowable]:
     f = ctx.f
     adv_tdf = f.advantage("balanced_all_equity", "target_date_fund")
     lottery = f.table("retirement_lottery_stats").iloc[0]
-    out: List[Flowable] = [ctx.h1("20. Conclusion")]
+    out: List[Flowable] = [ctx.h1("21. Conclusion")]
     out.append(ctx.p(
         f"We set out to reproduce a specific empirical claim and ended up with "
         f"a hierarchy. The claim reproduces: on a "
@@ -5438,6 +5651,7 @@ def story(ctx: Any) -> List[Flowable]:
     parts += section_valuation(ctx)
     parts += section_housing(ctx)
     parts += section_mortgage(ctx)
+    parts += section_sleeve(ctx)
     parts += section_discussion(ctx)
     parts += section_limitations(ctx)
     parts += section_conclusion(ctx)

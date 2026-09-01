@@ -142,3 +142,21 @@ def real_panel_or_skip():
     except (FileNotFoundError, KeyError, ValueError) as exc:
         pytest.skip(f"raw data unavailable: {exc}")
     return panel, jst
+
+
+@pytest.fixture(scope="session")
+def real_config_or_skip():
+    """The project's own configuration, or a skip.
+
+    Some properties -- that the GDP weights are genuinely lagged, that two
+    panels are paired on identical history -- are claims about the real data
+    and the real config, and the toy fixtures cannot stand in for them.
+    """
+    from src import data_loader as dl
+
+    try:
+        cfg = dl.load_config("config.yaml")
+        dl.load_jst(cfg)
+    except (FileNotFoundError, KeyError, ValueError) as exc:
+        pytest.skip(f"raw data unavailable: {exc}")
+    return cfg

@@ -55,9 +55,26 @@ Solving the glide path directly reproduces the all-equity corner. Freeing all fo
 
 Their headline is **50/50 domestic/international**, held for life. On my panel that is beaten by **100% international** — 1.108 against 1.048, with ruin at 9.0% against 11.7%. The all-equity conclusion survives; the *split* doesn't.
 
-I'd read that as a panel artefact rather than a correction to them, and the mechanism is visible in the construction. My international leg is a leave-one-out equal weighting across the other fifteen markets, so it is a genuinely diversified sleeve. My domestic leg is a single draw from a sixteen-country set that includes some poor century-long performers — Portugal at 3.2% real, France at 3.6%. With 39 countries and a broader international index, the two legs are far closer in character than they are here, and the case for holding both is correspondingly stronger.
+My first instinct was to blame my own construction. My international leg is a leave-one-out **equal weighting** across the other fifteen markets, which is a more diversified object than any index anyone could have bought: it holds as much Portugal as it holds the United States, and it rebalances into whatever has fallen. So I tested it — rebuilt the whole panel with the sleeve weighted by **lagged GDP** (Maddison real GDP per head × population, one-year lag so the weights are ones you could actually have known), which drops the effective number of markets from 16 to about **four**, with the US at 47% of it by the end.
 
-So: their 50/50 is not contradicted by anything I can measure. What my panel says is narrower — that on *these* sixteen markets, the diversified sleeve dominates the concentrated one badly enough that mixing in a domestic bet costs you. Whether that survives at 39 countries I can't test, and it is exactly the sort of thing the larger sample should settle.
+| Strategy | CEC, equal-weighted | CEC, GDP-weighted | Change |
+|---|---|---|---|
+| 100% international | 1.1085 | 1.1098 | +0.1% |
+| 50/50 domestic/international | 1.0478 | 1.0701 | +2.1% |
+| Target-date glide path | 0.9425 | 0.9541 | +1.2% |
+| 100% domestic | 0.8818 | 0.8818 | 0.0% |
+| 60/40 | 0.8707 | 0.8707 | 0.0% |
+| Bills | 0.7390 | 0.7390 | 0.0% |
+
+![Sleeve weighting](fig43_sleeve_weighting.png)
+
+**The ordering survives, and the margin narrows.** All-international leads 50/50 by 5.79% equal-weighted and 3.71% GDP-weighted — so roughly **36% of my advantage over their split is attributable to the equal weighting**, and the rest isn't. (The three strategies with no foreign exposure come back identical to four decimal places, which is the cheapest available check that the two panels differ only in the sleeve.)
+
+The mechanism was a genuine surprise to me. Concentrating the sleeve makes it riskier, as you'd expect — volatility 21.7% → 24.3%, return per unit of risk 0.384 → 0.372. But it also makes it **less** correlated with the home market, 0.43 → 0.36. Because the sleeve is leave-one-out, loading it onto the US and Japan makes a Danish investor's foreign holding *less* like Denmark than a basket of fifteen mostly-European markets is. The two effects largely offset.
+
+Caveat worth stating: GDP weighting is a proxy for cap weighting, not a substitute. It's PPP-based, so it understates a market whose currency is temporarily strong — Japan in the late 1980s above all. It brackets the answer rather than settling it.
+
+So their 50/50 still isn't contradicted by anything I can measure. My domestic leg is a single draw from a sixteen-country set that includes some poor century-long performers — Portugal at 3.2% real, France at 3.6% — and with 39 countries and a broader international index the two legs sit far closer together than they do here. But I can now say the divergence isn't merely an artefact of how I built the sleeve.
 
 **Sustainable withdrawal rates are far below 4%.** 3.2% for all-equity, 2.1% for the glide path, at a 5% ruin tolerance. This one is mine rather than a replication — they *assume* a 4% rule as the baseline withdrawal policy rather than solving for a sustainable rate.
 

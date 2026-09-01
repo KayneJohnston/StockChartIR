@@ -38,6 +38,7 @@ from src import provenance as pvn
 from src import valuation as vln
 from src import report as rp
 from src import retirement as rt
+from src import sleeve as slv
 from src import saving as sav
 from src import sensitivity as sn
 from src import spending as spg
@@ -104,6 +105,8 @@ def _apply_quick(cfg: Dict[str, Any]) -> Dict[str, Any]:
         cfg["mortgage"]["coarse_step"] = 0.25
         cfg["mortgage"]["fine_step"] = 0.05
         cfg["mortgage"]["rounds"] = 1
+    if "sleeve" in cfg:
+        cfg["sleeve"]["n_paths"] = 2000
     if "accumulation" in cfg:
         cfg["accumulation"]["n_paths"] = 2000
         cfg["accumulation"]["response_grids"] = {
@@ -2331,17 +2334,78 @@ def step17_mortgage(cfg: Dict[str, Any],
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Step 18
+# ---------------------------------------------------------------------------
+def step18_sleeve(cfg: Dict[str, Any],
+                  state: Dict[str, Any]) -> Dict[str, Any]:
+    """Rebuild the international sleeve by GDP weight and re-run the headline."""
+    sleeve_cfg = cfg.get("sleeve", {})
+    if not sleeve_cfg.get("enabled", False):
+        LOGGER.info("sleeve study disabled; skipping step 18")
+        return state
+    LOGGER.info("=== STEP 18: how the international sleeve is weighted ===")
+    started = time.perf_counter()
+
+    spec = state.get("spec") or lc.spec_from_config(cfg)
+    strategies = state.get("strategies") or lc.build_strategies(cfg, spec)
+    n_paths = int(sleeve_cfg.get("n_paths", cfg["bootstrap"]["n_paths"]))
+    weightings = [str(w) for w in sleeve_cfg.get("weightings", slv.WEIGHTINGS)]
+
+    panels = slv.build_panels(cfg, weightings)
+    LOGGER.info("built %d panels on identical history: %s",
+                len(panels), ", ".join(panels))
+
+    # The headline summariser itself, not a copy of it: the whole claim of
+    # this section is that only the weighting differs between the two runs.
+    def summarise(panel: dl.Panel, paths: int) -> pd.DataFrame:
+        return _run_variant(cfg, panel, spec, strategies, paths)
+
+    comparison = slv.compare_headline(cfg, panels, summarise, n_paths)
+    ranking = slv.ranking_shift(comparison)
+    moments = slv.sleeve_moments(panels)
+    conc = slv.concentration(cfg, panels[weightings[0]].countries,
+                             panels[weightings[0]].years)
+    findings = slv.verdict(comparison)
+    LOGGER.info("sleeve verdict: winner changes=%s, ordering changes=%s",
+                findings["winner_changes"], findings["ordering_changes"])
+
+    tables = cfg["run"]["table_dir"]
+    for frame, name in ((comparison, "sleeve_comparison"),
+                        (ranking, "sleeve_ranking"),
+                        (moments, "sleeve_moments"),
+                        (conc, "sleeve_concentration")):
+        if len(frame):
+            _save_table(frame, tables, name)
+
+    figures = [str(plots.plot_sleeve_weighting(
+        conc, ranking, moments, cfg["run"]["figure_dir"]))]
+
+    elapsed = time.perf_counter() - started
+    rp.write_doc_18(
+        Path("docs") / "18_sleeve_weighting.md", cfg,
+        {"comparison": comparison, "ranking": ranking, "moments": moments,
+         "concentration": conc},
+        figures, {"elapsed_seconds": elapsed, "n_paths": n_paths,
+                  "gamma": float(cfg["utility"]["baseline_risk_aversion"]),
+                  "verdict": findings})
+    LOGGER.info("docs/18 written (%.0fs)", elapsed)
+    state["sleeve_comparison"] = comparison
+    return state
+
+
 STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
          4: step4_report, 5: step5_sensitivity, 6: step6_spending,
          7: step7_glide_path, 8: step8_hedging, 9: step9_retirement_timing,
          10: step10_saving, 11: step11_accumulation,
          12: step12_allocation, 13: step13_leverage,
          14: step14_provenance, 15: step15_valuation,
-         16: step16_housing, 17: step17_mortgage}
+         16: step16_housing, 17: step17_mortgage,
+         18: step18_sleeve}
 
 
 def run(config_path: str = "config.yaml",
-        steps: Sequence[int] = tuple(range(1, 18)),
+        steps: Sequence[int] = tuple(range(1, 19)),
         quick: bool = False) -> Dict[str, Any]:
     """Execute the pipeline and return the accumulated state."""
     cfg = dl.load_config(config_path)
@@ -2371,8 +2435,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--steps", nargs="+", type=int,
-                        default=list(range(1, 18)),
-                        choices=list(range(1, 18)))
+                        default=list(range(1, 19)),
+                        choices=list(range(1, 19)))
     parser.add_argument("--quick", action="store_true",
                         help="small N for smoke tests")
     parser.add_argument("--verbose", action="store_true")

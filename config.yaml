@@ -702,3 +702,12 @@ mortgage:
   # The spread at which the age-by-age schedule is reported in full.
   # 200bp: the top of the 150-200bp range a competitive borrower pays.
   detail_spread: 0.02
+
+# How the international sleeve is weighted, and whether the headline needs the
+# equal weighting to survive. See docs/18.
+sleeve:
+  enabled: true
+  # The headline runs at bootstrap.n_paths; this matches it so the two tables
+  # are directly comparable rather than merely similar.
+  n_paths: 100000
+  weightings: ["equal", "gdp"]

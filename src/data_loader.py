@@ -329,7 +329,7 @@ def load_jst(cfg: Mapping[str, Any]) -> pd.DataFrame:
     frame = _WORKBOOK_CACHE[key].copy()
     keep = ["year", "country", "iso", "cpi", "xrusd", "eq_tr", "bond_tr",
             "bill_rate", "eq_dp", "eq_capgain", "bond_rate", "stir", "ltrate",
-            "housing_tr", "wage"]
+            "housing_tr", "wage", "rgdpmad", "pop"]
     missing = [c for c in keep if c not in frame.columns]
     if missing:
         raise ValueError(f"JST workbook is missing expected columns: {missing}")
@@ -407,6 +407,7 @@ def build_international_leg(
     wide_inflation: np.ndarray,
     weighting: str = "equal",
     winsor_pct: float = 0.0,
+    wide_weight: np.ndarray | None = None,
 ) -> np.ndarray:
     """Real return on the *rest of the world* equity portfolio.
 
@@ -420,8 +421,15 @@ def build_international_leg(
     wide_inflation:
         ``(T, C)`` domestic CPI inflation.
     weighting:
-        ``"equal"`` is the only weighting currently implemented; it averages
-        *gross* USD returns across the available foreign markets.
+        ``"equal"`` averages *gross* USD returns across the available foreign
+        markets. ``"gdp"`` weights them by ``wide_weight`` instead, which is
+        how :mod:`src.sleeve` asks whether the equal-weighted sleeve is
+        manufacturing diversification no real index could offer.
+    wide_weight:
+        ``(T, C)`` relative economy size for the ``"gdp"`` weighting, and
+        ignored otherwise. It must already be **lagged**: the weight used in
+        year ``t`` has to be one an investor could have known at the start of
+        it. Only ratios matter, so the units are free.
     winsor_pct:
         If positive, the resulting real returns are winsorised at the pooled
         ``winsor_pct`` and ``100 - winsor_pct`` percentiles.  This targets a
@@ -435,19 +443,39 @@ def build_international_leg(
     ``(T, C)`` real return, in each country's own consumption units, of an
     equally weighted portfolio of the *other* countries' equity markets.
     """
-    if weighting != "equal":
+    if weighting not in ("equal", "gdp"):
         raise NotImplementedError(f"weighting {weighting!r} is not implemented")
+    if weighting == "gdp" and wide_weight is None:
+        raise ValueError("gdp weighting needs wide_weight, the (T, C) economy "
+                         "size known at the start of each year")
 
     valid = np.isfinite(wide_usd_gross)
-    filled = np.where(valid, wide_usd_gross, 0.0)
-    row_sum = filled.sum(axis=1, keepdims=True)
-    row_count = valid.sum(axis=1, keepdims=True)
+    if weighting == "gdp":
+        size = np.asarray(wide_weight, dtype=float)
+        if size.shape != wide_usd_gross.shape:
+            raise ValueError(f"wide_weight is {size.shape}, expected "
+                             f"{wide_usd_gross.shape}")
+        if np.any(size[np.isfinite(size)] < 0.0):
+            raise ValueError("economy sizes must be non-negative")
+        # A market with a return but no size would otherwise be silently
+        # dropped from the sleeve, which is a different portfolio.
+        valid = valid & np.isfinite(size)
+        size = np.where(valid, size, 0.0)
+    else:
+        size = valid.astype(float)
 
-    # Leave-one-out mean of gross USD returns across the *other* markets.
+    filled = np.where(valid, wide_usd_gross, 0.0) * size
+    row_sum = filled.sum(axis=1, keepdims=True)
+    row_weight = size.sum(axis=1, keepdims=True)
+
+    # Leave-one-out weighted mean of gross USD returns across the *other*
+    # markets: subtracting the home column is what makes each country's sleeve
+    # genuinely foreign, and the renormalisation is over the others alone.
     others_sum = row_sum - filled
-    others_count = row_count - valid.astype(int)
+    others_weight = row_weight - size
     with np.errstate(invalid="ignore", divide="ignore"):
-        others_mean = np.where(others_count > 0, others_sum / others_count, np.nan)
+        others_mean = np.where(others_weight > 0,
+                               others_sum / others_weight, np.nan)
 
     # Translate USD -> local currency, then deflate by domestic inflation.
     with np.errstate(invalid="ignore", divide="ignore"):
@@ -596,14 +624,40 @@ def _pivot(frame: pd.DataFrame, column: str, years: np.ndarray,
     return wide.to_numpy(dtype=float)
 
 
+def economy_size(frame: pd.DataFrame, years: np.ndarray,
+                 isos: Sequence[str]) -> np.ndarray:
+    """``(T, C)`` relative economy size, lagged one year, for GDP weighting.
+
+    Real GDP is ``rgdpmad * pop`` -- Maddison real GDP per head in 1990
+    international dollars, times population. Maddison is used in preference
+    to JST's own nominal ``gdp`` because that series carries country-specific
+    currency units (pesetas for Spain, lire for Italy) with no consistent
+    scaling, so cross-country ratios taken from it are meaningless. The cost
+    is that this is a **PPP** measure where market capitalisation is a
+    market-exchange-rate quantity, which understates an economy whose currency
+    is temporarily strong -- Japan in the late 1980s most of all.
+
+    The row for year ``t`` holds GDP for ``t - 1``, so a weight is never
+    formed from a number the investor could not yet have seen.
+    """
+    lagged = _pivot(frame, "rgdpmad", years - 1, isos) \
+        * _pivot(frame, "pop", years - 1, isos)
+    return np.where(np.isfinite(lagged) & (lagged > 0.0), lagged, np.nan)
+
+
 def build_tier_a(cfg: Mapping[str, Any], hedge_ratio: float = 0.0,
-                 hedge_cost: float = 0.0) -> Panel:
+                 hedge_cost: float = 0.0,
+                 weighting: str | None = None) -> Panel:
     """Construct the fully empirical 16-country JST panel.
 
     ``hedge_ratio`` blends a currency-hedged international equity leg into
     ``intl_eq`` (see :func:`build_hedged_international_leg`).  It deliberately
     does not affect ``available``, so every hedge ratio draws exactly the same
     blocks and the comparison in docs/08 is paired on identical history.
+
+    ``weighting`` overrides ``data.international_weighting`` for the
+    international sleeve, which is what lets ``docs/18`` build the equal- and
+    GDP-weighted panels from one code path rather than two.
     """
     data_cfg = cfg["data"]
     jst = load_jst(cfg)
@@ -621,10 +675,13 @@ def build_tier_a(cfg: Mapping[str, Any], hedge_ratio: float = 0.0,
     fx_gain = _pivot(window, "fx_gain", years, all_isos)
     infl_all = _pivot(window, "inflation", years, all_isos)
     winsor = float(data_cfg.get("international_winsor_pct", 0.0))
+    scheme = str(weighting or data_cfg["international_weighting"])
     intl_all = build_international_leg(
         usd_gross, fx_gain, infl_all,
-        weighting=data_cfg["international_weighting"],
+        weighting=scheme,
         winsor_pct=winsor,
+        wide_weight=(economy_size(window, years, all_isos)
+                     if scheme == "gdp" else None),
     )
     if hedge_ratio > 0.0:
         hedged_all = build_hedged_international_leg(
@@ -673,7 +730,7 @@ def build_tier_a(cfg: Mapping[str, Any], hedge_ratio: float = 0.0,
         inflation=inflation[:, idx],
         real_exchange_rate=rer[:, idx],
         available=available[:, idx],
-        name="observed",
+        name="observed" if scheme == "equal" else f"observed_{scheme}",
         provenance=provenance,
     )
 

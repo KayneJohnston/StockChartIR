@@ -8,6 +8,7 @@ no opinions about how the numbers were produced.
 from __future__ import annotations
 
 import logging
+import textwrap
 from pathlib import Path
 from typing import Any, Dict, Iterable, Mapping, Sequence
 
@@ -66,6 +67,11 @@ def _colour(i: int) -> str:
 
 def _marker(i: int) -> str:
     return MARKERS[i % len(MARKERS)]
+
+
+def _wrap(text: str, width: int) -> str:
+    """Soft-wrap a tick label so long strategy names do not collide."""
+    return "\n".join(textwrap.wrap(str(text), width)) or str(text)
 
 
 # ---------------------------------------------------------------------------
@@ -2179,6 +2185,103 @@ def plot_mortgage(sweep: pd.DataFrame, schedule: pd.DataFrame,
         h2, l2 = twin.get_legend_handles_labels()
         ax.legend(h1 + h2, l1 + l2, fontsize=8, loc="lower center",
                   bbox_to_anchor=(0.5, -0.34))
+
+        fig.tight_layout()
+        return _save(fig, directory, name)
+
+
+def plot_sleeve_weighting(concentration: pd.DataFrame, ranking: pd.DataFrame,
+                          moments: pd.DataFrame, directory: str | Path,
+                          name: str = "fig43_sleeve_weighting") -> Path:
+    """Whether the headline needs an equal-weighted international sleeve.
+
+    Three readings: how concentrated a GDP-weighted sleeve actually is against
+    the equal-weighted one it replaces, what that does to every strategy's
+    certainty equivalent, and whether the sleeve's own risk and correlation
+    with the home market moved enough to explain it.
+    """
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(1, 3, figsize=(16.5, 5.0))
+
+        # -- 1. concentration through time --------------------------------
+        ax = axes[0]
+        if len(concentration):
+            markets = float(concentration["markets"].max())
+            ax.plot(concentration["year"], concentration["effective_markets"],
+                    color=_colour(1), linewidth=2.0, label="GDP-weighted")
+            ax.axhline(markets, color=_colour(0), linewidth=2.0,
+                       linestyle="--", label="equal-weighted")
+            ax.fill_between(concentration["year"], 0.0,
+                            concentration["effective_markets"],
+                            color=_colour(1), alpha=0.12)
+            ax.set_ylim(0.0, markets * 1.12)
+            last = concentration.iloc[-1]
+            ax.annotate(f"{float(last['effective_markets']):.1f}",
+                        xy=(float(last["year"]),
+                            float(last["effective_markets"])),
+                        xytext=(-4, 8), textcoords="offset points",
+                        fontsize=9, ha="right", color="0.25")
+            ax.annotate(f"{markets:.0f}", xy=(float(last["year"]), markets),
+                        xytext=(-4, 6), textcoords="offset points",
+                        fontsize=9, ha="right", color="0.25")
+        ax.set_title("Effective number of markets in the sleeve")
+        ax.set_xlabel("Year")
+        ax.set_ylabel("1 / Herfindahl index")
+        ax.legend(fontsize=9, loc="lower left")
+
+        # -- 2. the headline, under both weightings -----------------------
+        ax = axes[1]
+        if len(ranking) and {"equal", "gdp"} <= set(ranking.columns):
+            order = ranking.sort_values("equal")
+            y = np.arange(len(order), dtype=float)
+            # A 2px surface gap between the paired bars, so the two schemes
+            # read as a pair rather than a stack.
+            height = 0.38
+            ax.barh(y + height / 2 + 0.012, order["equal"], height=height,
+                    color=_colour(0), label="equal-weighted")
+            ax.barh(y - height / 2 - 0.012, order["gdp"], height=height,
+                    color=_colour(1), label="GDP-weighted")
+            ax.set_yticks(y)
+            ax.set_yticklabels([_wrap(str(v), 22) for v in order["label"]],
+                               fontsize=8)
+            for yi, (a, b) in enumerate(zip(order["equal"], order["gdp"])):
+                ax.text(max(float(a), float(b)) * 1.015, yi,
+                        f"{(float(b) / float(a) - 1.0) * 100:+.1f}%",
+                        va="center", fontsize=8, color="0.25")
+            ax.set_xlim(0.0, float(max(order["equal"].max(),
+                                       order["gdp"].max())) * 1.20)
+        ax.set_title("Certainty-equivalent consumption")
+        ax.set_xlabel("CEC (annual, real, relative to age-25 income)")
+        ax.legend(fontsize=9, loc="lower right")
+
+        # -- 3. what moved in the sleeve itself ----------------------------
+        ax = axes[2]
+        if len(moments):
+            metrics = [("mean", "Mean return", 100.0),
+                       ("sd", "Volatility", 100.0),
+                       ("correlation_with_domestic", "Corr. with home", 100.0)]
+            x = np.arange(len(metrics), dtype=float)
+            width = 0.36
+            for k, scheme in enumerate(("equal", "gdp")):
+                block = moments[moments["weighting"] == scheme]
+                if not len(block):
+                    continue
+                row = block.iloc[0]
+                offset = (-1) ** (k + 1) * (width / 2 + 0.012)
+                values = [float(row[m]) * s for m, _, s in metrics]
+                bars = ax.bar(x + offset, values, width=width,
+                              color=_colour(k),
+                              label={"equal": "equal-weighted",
+                                     "gdp": "GDP-weighted"}.get(
+                                         scheme, f"{scheme}-weighted"))
+                ax.bar_label(bars, fmt="%.1f", fontsize=8, padding=2,
+                             color="0.25")
+            ax.set_xticks(x)
+            ax.set_xticklabels([label for _, label, _ in metrics], fontsize=9)
+            ax.set_ylim(0.0, None)
+        ax.set_title("The sleeve's own moments")
+        ax.set_ylabel("Percent")
+        ax.legend(fontsize=9, loc="upper left")
 
         fig.tight_layout()
         return _save(fig, directory, name)
