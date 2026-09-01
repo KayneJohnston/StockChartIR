@@ -2390,3 +2390,59 @@ def plot_panel_robustness(influence: pd.DataFrame, period: pd.DataFrame,
 
         fig.tight_layout()
         return _save(fig, directory, name)
+
+
+def plot_fees(common: pd.DataFrame, differential: pd.DataFrame,
+              anchors: pd.DataFrame, findings: Mapping[str, Any],
+              directory: str | Path, name: str = "fig45_fees") -> Path:
+    """How small a cost undoes the headline.
+
+    Left: a fee charged on every asset alike, the control. Right: a fee on
+    the international sleeve alone, which all-international pays on everything
+    and the 50/50 split pays on half — with the expense ratios a real
+    investor has actually faced marked on it.
+    """
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(1, 2, figsize=(12.6, 5.2))
+
+        for ax, frame, key, title, xlabel in (
+                (axes[0], common, "fee", "A fee on every asset alike",
+                 "Annual fee on all four sleeves (bp)"),
+                (axes[1], differential, "differential",
+                 "A fee on the international sleeve alone",
+                 "Extra annual fee on the foreign leg (bp)")):
+            if not len(frame):
+                continue
+            x = frame[key].to_numpy(dtype=float) * 1e4
+            y = frame["gap_pct"].to_numpy(dtype=float)
+            ax.plot(x, y, marker=_marker(0), color=_colour(0), linewidth=2.0,
+                    markersize=8)
+            ax.fill_between(x, 0.0, y, where=(y > 0), color=_colour(0),
+                            alpha=0.10)
+            ax.fill_between(x, 0.0, y, where=(y <= 0), color=_colour(1),
+                            alpha=0.14)
+            ax.axhline(0.0, color=_colour(1), linewidth=1.6, linestyle="--")
+            ax.set_title(title)
+            ax.set_xlabel(xlabel)
+            ax.set_ylabel("All-international over 50/50 (pp)")
+
+        # The break-even and the real-world anchors go on the right panel,
+        # where the question actually lives.
+        ax = axes[1]
+        be = float(findings.get("break_even_differential_bp", float("inf")))
+        if np.isfinite(be):
+            ax.axvline(be, color="0.35", linewidth=1.4, linestyle=":")
+            ax.annotate(f"break-even\n{be:.0f} bp", xy=(be, 0.0),
+                        xytext=(6, 18), textcoords="offset points",
+                        fontsize=9, color="0.25")
+        for k, (_, row) in enumerate(anchors.iterrows()):
+            bp = float(row["basis_points"])
+            if bp > ax.get_xlim()[1]:
+                continue
+            ax.scatter([bp], [float(row["gap_pct"])], s=90, zorder=4,
+                       color=_colour(2 + k), marker=_marker(1 + k),
+                       label=f"{str(row['label'])} ({bp:.0f} bp)")
+        ax.legend(fontsize=8, loc="upper right")
+
+        fig.tight_layout()
+        return _save(fig, directory, name)

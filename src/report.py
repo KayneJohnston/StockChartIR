@@ -6877,3 +6877,172 @@ Runtime {float(notes['elapsed_seconds']):.0f}s at {int(notes['n_paths']):,} path
 run, γ = {gamma:g}. Tables in `{cfg['run']['table_dir']}/panel_*.csv`.
 """
     return _write(path, [intro, body])
+
+
+def write_doc_20(
+    path: str | Path,
+    cfg: Mapping[str, Any],
+    frames: Mapping[str, pd.DataFrame],
+    figures: Sequence[str],
+    notes: Mapping[str, Any],
+) -> Path:
+    """What costs do to the headline, and how small a cost undoes it."""
+    common = frames["common"]
+    differential = frames["differential"]
+    anchors = frames["anchors"]
+    ranking = frames["ranking"]
+    gamma = float(notes["gamma"])
+    found = notes["verdict"]
+    base = float(found["baseline_gap_pct"])
+    be_bp = float(found["break_even_differential_bp"])
+    be_common_bp = float(found["break_even_common_bp"])
+
+    common_tbl = md_table(_compact(
+        common.assign(bp=common["fee"] * 1e4),
+        ["bp", "gap_pct"],
+        {"bp": "Fee on every asset (bp)", "gap_pct": "Lead (%)"}),
+        floatfmt="{:.2f}")
+    diff_tbl = md_table(_compact(
+        differential.assign(bp=differential["differential"] * 1e4),
+        ["bp", "gap_pct"],
+        {"bp": "Extra fee on the foreign leg (bp)", "gap_pct": "Lead (%)"}),
+        floatfmt="{:.2f}")
+    anchor_tbl = md_table(_compact(
+        anchors, ["label", "basis_points", "gap_pct"],
+        {"label": "Reference", "basis_points": "Differential (bp)",
+         "gap_pct": "Lead at that differential (%)"}), floatfmt="{:.2f}")
+    rank_col = [c for c in ranking.columns if c.startswith("cec_crra_")][0]
+    rank_tbl = md_table(_compact(
+        ranking, ["label", rank_col, "prob_ruin"],
+        {"label": "Strategy", rank_col: "CEC", "prob_ruin": "P(ruin)"}),
+        floatfmt="{:.4f}")
+
+    common_erosion = (float(common["gap_pct"].iloc[0])
+                      - float(common["gap_pct"].iloc[-1]))
+    common_top_bp = float(common["fee"].iloc[-1]) * 1e4
+    common_note = (
+        f"A fee charged on all four sleeves alike never closes the gap on "
+        f"this grid, which is the control working: a cost common to every "
+        f"strategy largely cancels out of a comparison between them. It does "
+        f"not cancel entirely -- {common_top_bp:.0f} bp on everything still "
+        f"costs {common_erosion:.2f} points of lead, because the two "
+        f"strategies accumulate different amounts of wealth for the fee to be "
+        f"charged on -- but the effect is a fraction of what the same fee "
+        f"does when it falls on the foreign leg alone."
+        if found["common_is_near_neutral"] else
+        f"A fee charged on all four sleeves alike closes the gap at "
+        f"{be_common_bp:.0f} bp. That is not what a common cost is supposed "
+        f"to do, and it means the strategies differ enough in their asset "
+        f"mix for even an even-handed fee to fall on them unequally.")
+
+    if not found["differential_closes_the_gap"]:
+        headline = (
+            f"**No differential on this grid undoes the result.** The lead "
+            f"starts at {base:.2f}% and is still positive at the top of the "
+            f"grid, so the international advantage is not fragile to fund "
+            f"costs at any level tested.")
+    elif found["below_cheapest_anchor"]:
+        headline = (
+            f"**The result does not survive realistic fund costs.** The lead "
+            f"of {base:.2f}% is cancelled by a differential of "
+            f"{be_bp:.0f} basis points -- less than the gap between a "
+            f"modern domestic and international index fund. On this evidence "
+            f"the divergence from the replicated study is inside the noise of "
+            f"what an investor pays to implement it.")
+    elif found["inside_historic_range"]:
+        headline = (
+            f"**The result survives modern fund costs and not historic "
+            f"ones.** The lead of {base:.2f}% is cancelled by a differential "
+            f"of {be_bp:.0f} basis points. That is wider than the gap "
+            f"between today's domestic and international index funds and "
+            f"narrower than what the same funds charged two decades ago, so "
+            f"whether the advantage is real for a given investor depends on "
+            f"what they can actually buy.")
+    else:
+        headline = (
+            f"**The result survives every fund cost a real investor has "
+            f"faced.** The lead of {base:.2f}% needs a differential of "
+            f"{be_bp:.0f} basis points to cancel it, wider than any "
+            f"reference expense ratio below.")
+
+    figure_list = "\n".join(f"* `{f}`" for f in figures)
+    intro = _header(
+        "20 - Fees, and the Differential That Undoes the Headline",
+        "Every return in this project is gross. Nobody earns a gross return, "
+        "and the strategies at stake hold different amounts of the expensive "
+        "sleeve.")
+
+    body = f"""
+## 1. Why a fee is not neutral here
+
+A cost common to every strategy mostly cancels out of a comparison between
+them, which is the usual justification for working in gross returns. That
+justification does not extend to this project's one divergence from the study
+it re-implements, because the two strategies at stake hold different amounts
+of the sleeve that costs more.
+
+All-international pays the international fund's expense ratio on the whole
+portfolio. The 50/50 split pays it on half. A **differential** between
+domestic and international funds therefore falls on them unequally, and it
+compounds over a sixty-eight-year lifetime.
+
+An expense ratio is levied on assets rather than on returns, so a gross real
+return `r` net of a fee `f` is `(1 + r)(1 - f) - 1` rather than `r - f`. The
+difference is second-order in one year and not in sixty-eight. Fees are
+applied to the panel before the bootstrap sees it, and `available` is left
+alone, so every fee level draws exactly the same blocks.
+
+## 2. The control: a fee on everything
+
+{common_tbl}
+
+{common_note}
+
+## 3. The question: a fee on the foreign leg alone
+
+At γ = {gamma:g} over {int(notes['n_paths']):,} lifetimes per level:
+
+{diff_tbl}
+
+{headline}
+
+## 4. Against what an investor actually pays
+
+{anchor_tbl}
+
+These expense ratios are **configured anchors, not findings**. Nothing in this
+project's data can verify them; they are here to put the swept grid on a scale
+a reader recognises. {"They bracket the break-even, which is the useful thing: it sits inside the range of costs this comparison has actually been implementable at." if found["inside_historic_range"] and not found["below_cheapest_anchor"] else "" }
+
+{f"The cheapest reference that closes the gap on its own is **{found['cheapest_anchor_that_closes_it']}**." if found["cheapest_anchor_that_closes_it"] else "No reference expense ratio on this list closes the gap on its own."}
+
+## 5. The full ranking, before any fee
+
+{rank_tbl}
+
+## 6. What this changes
+
+* The headline gap and a plausible fee differential are quantities of the
+  **same order**. That is the practical finding here, and it is not visible
+  anywhere in the gross-return tables that make up the rest of this project.
+* {"A reader implementing this at modern index-fund costs keeps most of the advantage; one paying an active international fund's fee does not." if found["inside_historic_range"] else "The advantage survives every reference cost tested, so implementation cost is not what decides this."}
+* What is **not** modelled: trading costs, spreads, taxes, platform fees, and
+  the fact that index funds did not exist for most of this sample. Before
+  roughly 1975 a diversified foreign portfolio was expensive and often
+  impossible to hold at all, so the fee grid is a sensitivity rather than a
+  history of what was available.
+
+## 7. Figures
+
+{figure_list}
+
+## 8. Reproduction
+
+```bash
+python main.py --steps 20
+```
+
+Runtime {float(notes['elapsed_seconds']):.0f}s at {int(notes['n_paths']):,} paths per
+level, γ = {gamma:g}. Tables in `{cfg['run']['table_dir']}/fee_*.csv`.
+"""
+    return _write(path, [intro, body])

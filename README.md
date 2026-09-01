@@ -98,6 +98,7 @@ is the read-through; the table below is the build.
 | [`docs/17_mortgage.md`](docs/17_mortgage.md) | How much of the house to borrow and at what age: the loan-to-value ratio solved against the domestic short rate plus a swept mortgage spread, capped at 80% |
 | [`docs/18_sleeve_weighting.md`](docs/18_sleeve_weighting.md) | Whether the headline needs an equal-weighted international sleeve, or survives five constructions: equal, real GDP, population, GDP per capita and inverse volatility |
 | [`docs/19_panel_robustness.md`](docs/19_panel_robustness.md) | Delete-one-country influence, the jackknife standard error sixteen countries actually support, and whether the ranking is stable through time |
+| [`docs/20_fees.md`](docs/20_fees.md) | What fund costs do to the headline, and how large a domestic-versus-international fee differential it takes to undo it |
 
 All fourteen are **generated** by `main.py` from live pipeline objects -- edit
 `src/report.py`, not the Markdown.
@@ -266,6 +267,33 @@ it concentrates. A single alternative weighting is not a robustness check.
 All weights are lagged, so every sleeve is one an investor could have held.
 None of them is capitalisation weighting; this brackets the answer rather than
 settling it.
+
+## Do fees undo it?
+
+Every return in this project is gross. That is fine for comparing strategies
+drawn from the same panel, and not fine for the one divergence from the
+replicated paper — because all-international pays the international fund's
+expense ratio on the whole portfolio while the 50/50 split pays it on half.
+
+`docs/20` charges the fee on the panel before the bootstrap sees it, on assets
+rather than returns — `(1+r)(1-f)-1`, which matters over sixty-eight years.
+
+| Extra annual fee on the foreign leg | Lead of all-international over 50/50 |
+|---|---|
+| 0 bp | 5.79% |
+| 5 bp (modern index funds) | 5.51% |
+| 19 bp (index funds circa 2000) | 4.75% |
+| 75 bp (an active international fund) | 1.85% |
+| **114 bp** | **0 — break-even** |
+
+**The result survives every fund cost a real investor has faced.** It takes a
+114 basis-point differential to cancel the lead, well beyond any index-fund
+pair. The erosion is real even so: each basis point costs about 0.047 points of
+lead, so an investor paying an active fund's 75 bp keeps under a third of the
+advantage.
+
+Not modelled: trading costs, spreads, taxes, platform fees, and the fact that
+index funds did not exist for most of this sample.
 
 ## Should you hedge the currency?
 
@@ -585,7 +613,7 @@ pip install numpy pandas scipy matplotlib pyyaml openpyxl pytest
 
 python main.py --quick      # ~1 min smoke run at reduced N
 python main.py              # ~1 h full run: N = 100,000 plus sweeps and searches
-python -m pytest tests/ -q  # 707 tests
+python -m pytest tests/ -q  # 730 tests
 ```
 
 Selected steps and alternative configurations:
@@ -606,6 +634,7 @@ python main.py --steps 16           # housing as a fifth asset
 python main.py --steps 17           # the mortgage on the housing sleeve
 python main.py --steps 18           # five international-sleeve weighting schemes
 python main.py --steps 19           # delete-one-country and sub-period robustness
+python main.py --steps 20           # fees, and the differential that would undo it
 python main.py --config other.yaml  # a different parameterisation
 ```
 
@@ -638,6 +667,7 @@ python main.py --config other.yaml  # a different parameterisation
 │   ├── mortgage.py       # the loan-to-value decision, solved by age
 │   ├── sleeve.py         # five international-sleeve weighting schemes
 │   ├── panel_robustness.py  # delete-one-country, jackknife, sub-periods
+│   ├── fees.py           # expense ratios, and the break-even differential
 │   ├── plots.py          # publication-quality figures
 │   └── report.py         # Markdown report generation
 ├── tests/                # 627 unit + integration tests

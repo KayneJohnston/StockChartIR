@@ -272,6 +272,7 @@ SECTION_ORDER: Tuple[str, ...] = (
     "sensitivity",
     "panel",
     "sleeve",
+    "fees",
     "hedging",
     # Can a better portfolio be found inside the same asset menu?
     "glide",
@@ -526,13 +527,17 @@ def section_introduction(ctx: Any) -> List[Flowable]:
         "preference specification and comparison discipline that everything "
         "afterwards runs through."))
     out.append(ctx.p(
-        "Sections #baseline–#hedging are the result and three ways it could "
+        "Sections #baseline–#hedging are the result and five ways it could "
         "be wrong. Section #baseline presents the baseline replication. "
         "Section #sensitivity asks whether it survives the preference and "
-        "lifecycle parameters, Section #sleeve whether it survives the way "
-        "the international sleeve is weighted — the construction our one "
-        "divergence from the replicated study most obviously depends on — and "
-        "Section #hedging whether that sleeve should be currency-hedged."))
+        "lifecycle parameters; Section #panel whether it survives the loss of "
+        "any one country, and what standard error sixteen countries actually "
+        "support; Section #sleeve whether it survives the way the "
+        "international sleeve is weighted — the construction our one "
+        "divergence from the replicated study most obviously depends on; "
+        "Section #fees whether it survives the cost of the funds that "
+        "implement it; and Section #hedging whether that sleeve should be "
+        "currency-hedged at all."))
     out.append(ctx.p(
         "Sections #glide–#leverage ask whether a better portfolio exists "
         "inside the same asset menu, by progressively relaxing what is held "
@@ -2849,6 +2854,162 @@ def _leverage_schedule_summary(schedule: pd.DataFrame) -> pd.DataFrame:
             if len(retired) else float("nan"),
             "solved_cec": float(block["solved_cec"].iloc[0])})
     return pd.DataFrame.from_records(rows)
+
+
+# ---------------------------------------------------------------------------
+# Fees
+# ---------------------------------------------------------------------------
+def section_fees(ctx: Any) -> List[Flowable]:
+    f = ctx.f
+    common = f.table("fee_common_curve")
+    diff = f.table("fee_differential_curve")
+    anchors = f.table("fee_anchors")
+
+    from src.fees import verdict
+    cfg = f.cfg
+    fee_cfg = cfg.get("fees", {})
+    pair = (str(fee_cfg.get("challenger", "international_equity")),
+            str(fee_cfg.get("incumbent", "balanced_all_equity")))
+    found = verdict(f.table("fee_common"), f.table("fee_differential"),
+                    pair, anchors)
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    n_paths = int(fee_cfg.get("n_paths", cfg["bootstrap"]["n_paths"]))
+    base = float(found["baseline_gap_pct"])
+    be_bp = float(found["break_even_differential_bp"])
+    active = anchors.loc[anchors["basis_points"].idxmax()]
+    per_bp = (abs(base - float(diff["gap_pct"].iloc[-1]))
+              / (float(diff["differential"].iloc[-1]) * 1e4))
+
+    out: List[Flowable] = [ctx.h1("#fees. Fees, and the Differential That "
+                                  "Would Undo the Headline")]
+    out.append(ctx.p(
+        "Every return in this paper is gross. Nobody earns a gross return. "
+        "The omission is defensible for a comparison between strategies drawn "
+        "from the same panel \u2014 a cost common to all of them largely "
+        "cancels \u2014 but it is not defensible for the one divergence from "
+        "the study we re-implement, because the strategies at stake hold "
+        "different amounts of the sleeve that costs more. All-international "
+        "pays the international fund's expense ratio on the whole portfolio; "
+        "the 50/50 split pays it on half. A <b>differential</b> falls on them "
+        "unequally and compounds over a sixty-eight-year lifetime."))
+    out.append(ctx.p(
+        "An expense ratio is levied on assets rather than returns, so a gross "
+        "real return <i>r</i> net of a fee <i>f</i> is "
+        "(1&nbsp;+&nbsp;<i>r</i>)(1&nbsp;\u2212&nbsp;<i>f</i>)&nbsp;\u2212"
+        "&nbsp;1 rather than <i>r</i>&nbsp;\u2212&nbsp;<i>f</i>; the "
+        "difference is second-order in one year and not in sixty-eight. Fees "
+        "are charged on the panel before the bootstrap sees it and the "
+        "availability mask is left alone, so every fee level draws the same "
+        "blocks."))
+
+    out.append(ctx.h2("#fees.1 The control: a fee on everything"))
+    out.extend(ctx.table(
+        rows_from(common.assign(bp=common["fee"] * 1e4), ["bp", "gap_pct"],
+                  ["Fee on every asset", "Lead"],
+                  {"bp": lambda v: f"{float(v):.0f} bp",
+                   "gap_pct": lambda v: f"{float(v):.2f}%"}),
+        "A fee charged on all four sleeves alike",
+        note="The control. A cost common to every strategy should largely "
+             "cancel out of a comparison between them."))
+    common_erosion = (float(common["gap_pct"].iloc[0])
+                      - float(common["gap_pct"].iloc[-1]))
+    common_top_bp = float(common["fee"].iloc[-1]) * 1e4
+    out.append(ctx.p(
+        f"The gap never closes on this grid, which is the control working as "
+        f"intended. It does not cancel entirely — {common_top_bp:.0f} bp on "
+        f"everything still costs {common_erosion:.2f} points of lead, because "
+        f"the two strategies accumulate different amounts of wealth for the "
+        f"fee to be charged on — but that is a fraction of what the same fee "
+        f"does when it falls on the foreign leg alone."
+        if found["common_is_near_neutral"] else
+        f"The gap closes at {float(found['break_even_common_bp']):.0f} bp even "
+        f"under an even-handed fee, so the strategies differ enough in asset "
+        f"mix for a common cost to fall on them unequally."))
+
+    out.append(ctx.h2("#fees.2 The question: a fee on the foreign leg alone"))
+    out.extend(ctx.table(
+        rows_from(diff.assign(bp=diff["differential"] * 1e4),
+                  ["bp", "gap_pct"],
+                  ["Extra fee on the foreign leg", "Lead"],
+                  {"bp": lambda v: f"{float(v):.0f} bp",
+                   "gap_pct": lambda v: f"{float(v):.2f}%"}),
+        f"All-international over the 50/50 split, by fee differential, at "
+        f"\u03b3 = {gamma:g}",
+        note=f"{n_paths:,} lifetimes per level. The grid runs past anything "
+             f"realistic on purpose: the distance between the break-even and "
+             f"what an investor can actually pay is the margin of safety."))
+    out.extend(ctx.table(
+        rows_from(anchors, ["label", "basis_points", "gap_pct"],
+                  ["Reference", "Differential", "Lead at that differential"],
+                  {"label": str,
+                   "basis_points": lambda v: f"{float(v):.0f} bp",
+                   "gap_pct": lambda v: f"{float(v):.2f}%"}),
+        "The lead at expense ratios an investor has actually faced",
+        note="These are configured anchors, not findings. Nothing in this "
+             "paper's data can verify them; they are here to put the swept "
+             "grid on a scale a reader recognises."))
+
+    if not found["differential_closes_the_gap"]:
+        call = (f"<b>No differential on this grid undoes the result.</b> The "
+                f"lead starts at {base:.2f}% and is still positive at the top "
+                f"of the grid.")
+    elif found["below_cheapest_anchor"]:
+        call = (f"<b>The result does not survive realistic fund costs.</b> "
+                f"The lead of {base:.2f}% is cancelled by a differential of "
+                f"{be_bp:.0f} basis points, narrower than the gap between a "
+                f"modern domestic and international index fund.")
+    elif found["inside_historic_range"]:
+        call = (f"<b>The result survives modern fund costs but not every "
+                f"historic one.</b> The lead of {base:.2f}% is cancelled by "
+                f"{be_bp:.0f} basis points, wider than today's index-fund "
+                f"differential and inside the range of what has been "
+                f"charged.")
+    else:
+        call = (f"<b>The result survives every fund cost a real investor has "
+                f"faced.</b> Cancelling a lead of {base:.2f}% takes a "
+                f"differential of {be_bp:.0f} basis points, wider than any "
+                f"reference expense ratio above \u2014 including "
+                f"{str(active['label'])} at "
+                f"{float(active['basis_points']):.0f} bp, which still leaves "
+                f"{float(active['gap_pct']):.2f}%.")
+    out.append(ctx.p(call))
+    out.append(ctx.p(
+        f"The erosion is real even so, and worth quoting. Each basis point of "
+        f"differential costs roughly {per_bp:.3f} points of lead, so an "
+        f"investor paying {float(active['basis_points']):.0f} bp over a "
+        f"domestic fund keeps {float(active['gap_pct']) / base:.0%} of the "
+        f"advantage this paper reports. Fees do not decide the question, but "
+        f"they are not free either, and nothing in the gross-return tables "
+        f"elsewhere shows that."))
+
+    out.extend(ctx.figure(
+        "fig45_fees",
+        "Left: a fee charged on every asset alike, the control. Right: a fee "
+        "on the international sleeve alone, with the break-even and the "
+        "expense ratios a real investor has faced marked on it.",
+        max_height=8.0 * cm))
+
+    out.append(ctx.h2("#fees.3 What this changes"))
+    out.extend(ctx.bullets([
+        (f"Implementation cost does not decide this comparison. The "
+         f"break-even differential of {be_bp:.0f} bp is far outside what "
+         f"index funds charge, so the ranking can be taken at face value on "
+         f"cost grounds."
+         if not found["inside_historic_range"] else
+         "Implementation cost is close enough to the break-even to matter, "
+         "so the ranking should be quoted with the fund costs assumed."),
+        "The rest of the paper works in gross returns, which is defensible "
+        "for comparisons between strategies holding the same sleeves in "
+        "different proportions and would not be for a comparison between "
+        "asset classes of different cost. No result elsewhere turns on the "
+        "latter.",
+        "What is <b>not</b> modelled: trading costs, spreads, taxes, platform "
+        "fees, and the fact that index funds did not exist for most of this "
+        "sample. Before roughly 1975 a diversified foreign portfolio was "
+        "expensive and often impossible to hold, so this is a sensitivity "
+        "rather than a history of what was available.",
+    ]))
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -6115,6 +6276,7 @@ def story(ctx: Any) -> List[Flowable]:
     parts += section_sensitivity(ctx)
     parts += section_panel(ctx)
     parts += section_sleeve(ctx)
+    parts += section_fees(ctx)
     parts += section_hedging(ctx)
     parts += section_glide(ctx)
     parts += section_allocation(ctx)

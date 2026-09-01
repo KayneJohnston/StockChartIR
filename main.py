@@ -26,6 +26,7 @@ from src import accumulation as acc
 from src import allocation as al
 from src import bootstrap as bs
 from src import data_loader as dl
+from src import fees as fee
 from src import glidepath as gp
 from src import hedging as hg
 from src import housing as hsg
@@ -108,6 +109,10 @@ def _apply_quick(cfg: Dict[str, Any]) -> Dict[str, Any]:
         cfg["mortgage"]["rounds"] = 1
     if "sleeve" in cfg:
         cfg["sleeve"]["n_paths"] = 2000
+    if "fees" in cfg:
+        cfg["fees"]["n_paths"] = 2000
+        cfg["fees"]["common_grid"] = [0.0, 0.005]
+        cfg["fees"]["differential_grid"] = [0.0, 0.002, 0.005]
     if "panel_robustness" in cfg:
         cfg["panel_robustness"]["n_paths"] = 1000
         cfg["panel_robustness"]["seeds"] = [101, 202]
@@ -2487,6 +2492,69 @@ def step19_panel(cfg: Dict[str, Any],
     return state
 
 
+# ---------------------------------------------------------------------------
+# Step 20
+# ---------------------------------------------------------------------------
+def step20_fees(cfg: Dict[str, Any],
+                state: Dict[str, Any]) -> Dict[str, Any]:
+    """What costs do to the headline, and how small a cost undoes it."""
+    fee_cfg = cfg.get("fees", {})
+    if not fee_cfg.get("enabled", False):
+        LOGGER.info("fee study disabled; skipping step 20")
+        return state
+    LOGGER.info("=== STEP 20: fees, and the differential that undoes it ===")
+    started = time.perf_counter()
+
+    spec = state.get("spec") or lc.spec_from_config(cfg)
+    strategies = state.get("strategies") or lc.build_strategies(cfg, spec)
+    n_paths = int(fee_cfg.get("n_paths", cfg["bootstrap"]["n_paths"]))
+    pair = (str(fee_cfg.get("challenger", "international_equity")),
+            str(fee_cfg.get("incumbent", "balanced_all_equity")))
+
+    def summarise(panel: dl.Panel, paths: int) -> pd.DataFrame:
+        return _run_variant(cfg, panel, spec, strategies, paths)
+
+    panel = state.get("panel") or dl.build_panel(cfg)
+    common_grid = [float(v) for v in fee_cfg["common_grid"]]
+    diff_grid = [float(v) for v in fee_cfg["differential_grid"]]
+
+    common = fee.sweep_common(panel, summarise, n_paths, common_grid)
+    differential = fee.sweep_differential(panel, summarise, n_paths, diff_grid)
+    common_curve = fee.gap_curve(common, "fee", pair)
+    diff_curve = fee.gap_curve(differential, "differential", pair)
+    anchors = fee.anchor_table(diff_curve, "differential")
+    findings = fee.verdict(common, differential, pair, anchors)
+    LOGGER.info("fee break-even: common %.0f bp, international differential "
+                "%.1f bp", findings["break_even_common_bp"],
+                findings["break_even_differential_bp"])
+
+    tables = cfg["run"]["table_dir"]
+    for frame, name in ((common, "fee_common"),
+                        (differential, "fee_differential"),
+                        (common_curve, "fee_common_curve"),
+                        (diff_curve, "fee_differential_curve"),
+                        (anchors, "fee_anchors")):
+        if len(frame):
+            _save_table(frame, tables, name)
+
+    figures = [str(plots.plot_fees(common_curve, diff_curve, anchors,
+                                   findings, cfg["run"]["figure_dir"]))]
+
+    elapsed = time.perf_counter() - started
+    rp.write_doc_20(
+        Path("docs") / "20_fees.md", cfg,
+        {"common": common_curve, "differential": diff_curve,
+         "anchors": anchors,
+         "ranking": fee.ranking_at(differential, "differential",
+                                   diff_grid[0])},
+        figures, {"elapsed_seconds": elapsed, "n_paths": n_paths,
+                  "gamma": float(cfg["utility"]["baseline_risk_aversion"]),
+                  "verdict": findings, "pair": pair})
+    LOGGER.info("docs/20 written (%.0fs)", elapsed)
+    state["fee_curve"] = diff_curve
+    return state
+
+
 STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
          4: step4_report, 5: step5_sensitivity, 6: step6_spending,
          7: step7_glide_path, 8: step8_hedging, 9: step9_retirement_timing,
@@ -2494,11 +2562,12 @@ STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
          12: step12_allocation, 13: step13_leverage,
          14: step14_provenance, 15: step15_valuation,
          16: step16_housing, 17: step17_mortgage,
-         18: step18_sleeve, 19: step19_panel}
+         18: step18_sleeve, 19: step19_panel,
+         20: step20_fees}
 
 
 def run(config_path: str = "config.yaml",
-        steps: Sequence[int] = tuple(range(1, 20)),
+        steps: Sequence[int] = tuple(range(1, 21)),
         quick: bool = False) -> Dict[str, Any]:
     """Execute the pipeline and return the accumulated state."""
     cfg = dl.load_config(config_path)
@@ -2528,8 +2597,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--steps", nargs="+", type=int,
-                        default=list(range(1, 20)),
-                        choices=list(range(1, 20)))
+                        default=list(range(1, 21)),
+                        choices=list(range(1, 21)))
     parser.add_argument("--quick", action="store_true",
                         help="small N for smoke tests")
     parser.add_argument("--verbose", action="store_true")

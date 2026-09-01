@@ -719,3 +719,20 @@ panel_robustness:
   n_paths: 100000
   seeds: [101, 202, 303]
   windows: [1950, 1970, 1990, 2020]
+
+# What costs do to the headline, and how small an international fee
+# differential undoes it. See docs/20.
+fees:
+  enabled: true
+  n_paths: 100000
+  challenger: international_equity
+  incumbent: balanced_all_equity
+  # A fee charged on every asset alike, as a control.
+  common_grid: [0.0, 0.0010, 0.0025, 0.0050, 0.0075, 0.0100]
+  # An extra fee on the international sleeve alone. This is the question:
+  # all-international pays it on everything, 50/50 on half.
+  # Extended past anything realistic on purpose: the break-even is worth
+  # measuring even when it sits far outside what an investor could pay,
+  # because the distance is the margin of safety.
+  differential_grid: [0.0, 0.0005, 0.0010, 0.0015, 0.0020, 0.0030, 0.0050,
+                      0.0075, 0.0100, 0.0150, 0.0200]
