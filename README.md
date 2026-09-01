@@ -59,6 +59,15 @@ the paper cannot drift away from the pipeline that produced it. See
 
 ## Documentation
 
+The `docs/` files are numbered by **pipeline step** — `docs/13` is what
+`python main.py --steps 13` writes — which is the order the work was built in,
+not the order it is best read in. The paper reorders it: the headline first,
+then everything that tests whether the headline holds, then the searches for a
+better portfolio, then a wider asset menu, then the levers outside the
+portfolio in the order a life meets them. `paper/lifecycle_asset_allocation.pdf`
+is the read-through; the table below is the build.
+
+
 | Document | Contents |
 | --- | --- |
 | [`docs/01_country_dataset_and_sources.md`](docs/01_country_dataset_and_sources.md) | Data lineage, source mapping, real-return construction, per-country summary statistics, coverage matrices, market-disruption handling |
@@ -184,6 +193,122 @@ withdrawal rate that holds ruin probability to 5%:
 The 4% rule was calibrated on US history — exactly the hindsight the paper
 removes, and removing it costs more than a percentage point of retirement
 income.
+
+## Does the headline need an equal-weighted foreign sleeve?
+
+The international leg everywhere in this project is a leave-one-out **equal
+weighting** across the other fifteen markets. That is a more diversified object
+than any index a person could have bought — it holds as much Portugal as it
+holds the United States — and the one place this work diverges from the
+replicated paper depends on exactly how much diversification that sleeve
+delivers. So `docs/18` rebuilds the panel under five constructions and re-runs
+the headline through the same summariser each time.
+
+| Weighting | Tilts towards | Effective markets | All-intl over 50/50 |
+|---|---|---|---|
+| Real GDP | large economies | 4.6 | **+3.71%** |
+| Population | populous countries | 6.3 | +4.36% |
+| Inverse volatility | historically stable markets | 13.8 | +4.41% |
+| GDP per capita | rich countries | 14.1 | **+6.75%** |
+| Equal-weighted | nothing | 15.7 | +5.79% |
+
+The ordering survives all five; the harshest, real-GDP weighting, leaves 64% of
+the equal-weighted gap. Two things are worth noting against the easy reading.
+Equal weighting is **not** the construction kindest to the finding — GDP per
+capita gives a larger gap. And concentration is not a sufficient statistic: the
+gap correlates +0.75 with the effective number of markets, but the two schemes
+that barely concentrate the sleeve still span 2.34 of the 3.04 total points
+between them, so *what* a scheme tilts towards matters about as much as how far
+it concentrates. A single alternative weighting is not a robustness check.
+
+All weights are lagged, so every sleeve is one an investor could have held.
+None of them is capitalisation weighting; this brackets the answer rather than
+settling it.
+
+## Should you hedge the currency?
+
+`docs/08` splits the international sleeve into its two exposures — the foreign
+*asset* return and the foreign *currency* — by building a covered-interest-parity
+hedged leg, and sweeps the hedge ratio against an annual holding cost. Every
+ratio is evaluated on **literally the same simulated lives**: the hedge never
+changes which country-years are usable, and the sweep reuses one set of drawn
+(country, calendar) indices, re-reading only the international leg.
+
+| Hedge ratio | CEC gain at zero cost | Break-even annual cost |
+| --- | --- | --- |
+| 25% | -0.13% | never worth it |
+| 50% | -1.02% | never worth it |
+| 75% | -2.43% | never worth it |
+| 100% | -4.24% | never worth it |
+
+**Hedging is not worth doing at any ratio, even free.** Every hedge ratio
+tested loses certainty-equivalent consumption before a single basis point of
+cost is charged, and the loss grows monotonically with the ratio. There is no
+break-even cost to quote because there is no cost low enough: the decision is
+settled at zero.
+
+**Why, and it isn't the usual story.** Hedging does cut the standalone
+volatility of the foreign sleeve — but not monotonically: volatility bottoms
+out at a 50% hedge (18.48%, against 21.69% unhedged) and rises again toward a
+full hedge (21.17%).
+In *real* terms, foreign currency partly hedges domestic inflation, and
+hedging removes that offset. Meanwhile hedging raises the correlation between
+the foreign sleeve and the home market, from 0.43 unhedged to a peak of 0.52
+at a half hedge: currency movement is part of what makes foreign equity a
+*diversifier* rather than a second helping of the same risk. Correlation with
+domestic inflation moves the other way, from -0.04 to -0.28, so hedging trades
+away an inflation offset the unhedged sleeve provides for free.
+
+The second effect wins. "Hedging reduces risk" is true of the sleeve in
+isolation and false of the portfolio holding it — which is why every ratio
+loses even when the hedge is free. (The conventional
+advice to hedge foreign *bonds* survives untouched — this tests equities only.)
+
+## The optimal glide path
+
+`docs/07` stops testing glide paths and solves for one. Equity share gets a
+free parameter at **every age** — 68 of them, no smoothness imposed — plus the
+domestic split on five-year bands, optimised by coordinate ascent under common
+random numbers.
+
+**There is almost no glide.** The unconstrained optimum is 100% equity at
+every age before retirement and ~96% after, at every risk aversion from γ=2
+to γ=10. It is not a declining path, not a rising one, and not a U.
+
+| Strategy | CEC (γ=5) | Gap to optimum |
+| --- | --- | --- |
+| Free-form optimal (68 free parameters) | 1.0528 | — |
+| Parametric optimal (6 free knots) | 1.0490 | −0.35% |
+| **Static 100% international equity** | **1.0415** | **−1.07%** |
+| 50/50 all-equity | 0.9952 | −5.47% |
+| Industry target-date glide path | 0.9278 | −11.87% |
+| 60/40 | 0.8672 | −17.62% |
+
+That third row is the finding. Solving a 68-dimensional allocation problem
+beats the simplest possible portfolio by **one percent** of lifetime
+consumption. Almost all the available value is in the *level* of equity
+exposure and the international split; almost none is in its age profile.
+
+**The one real feature is a dip at the retirement date.** Under the 4% rule
+the solved schedule drops to 70% equity at exactly age 63 and recovers by 68 —
+a 29pp dip. That is not the investment problem talking, it is the withdrawal
+rule: the 4% rule sets thirty years of spending as a fraction of wealth on one
+date, so wealth at 63 is an anchor worth protecting. Re-solving under a
+percent-of-portfolio rule or a life-expectancy rule, neither of which anchors
+on any single date, the dip vanishes entirely and the schedule is flat at
+100%.
+
+So the practical rule is the opposite of what target-date funds do: *if your
+withdrawal policy anchors on your balance at one date, de-risk briefly around
+that date; if it does not, do not de-risk at all.*
+
+Two guards against over-reading the solved shape. Restarting the search from
+flat schedules at 20%, 60% and 100% equity converges to the same certainty
+equivalent within 0.013%. And forcing each age back to 100% equity one at a
+time shows **54 of 68 ages cost less than a basis point** — several are
+negative. Only the ages at and just after retirement clear one basis point, so
+the rest of the plotted line is search noise on a flat objective, not
+structure.
 
 ## When to save, and on what
 
@@ -375,91 +500,6 @@ equivalent is dominated by exactly that tail, so the model was rewarding early
 retirement for reaching the safety net sooner. Adding a symmetric
 working-income floor cut the apparent premium by ~60%. `docs/09` section 2
 documents it in full.
-
-## The optimal glide path
-
-`docs/07` stops testing glide paths and solves for one. Equity share gets a
-free parameter at **every age** — 68 of them, no smoothness imposed — plus the
-domestic split on five-year bands, optimised by coordinate ascent under common
-random numbers.
-
-**There is almost no glide.** The unconstrained optimum is 100% equity at
-every age before retirement and ~96% after, at every risk aversion from γ=2
-to γ=10. It is not a declining path, not a rising one, and not a U.
-
-| Strategy | CEC (γ=5) | Gap to optimum |
-| --- | --- | --- |
-| Free-form optimal (68 free parameters) | 1.0528 | — |
-| Parametric optimal (6 free knots) | 1.0490 | −0.35% |
-| **Static 100% international equity** | **1.0415** | **−1.07%** |
-| 50/50 all-equity | 0.9952 | −5.47% |
-| Industry target-date glide path | 0.9278 | −11.87% |
-| 60/40 | 0.8672 | −17.62% |
-
-That third row is the finding. Solving a 68-dimensional allocation problem
-beats the simplest possible portfolio by **one percent** of lifetime
-consumption. Almost all the available value is in the *level* of equity
-exposure and the international split; almost none is in its age profile.
-
-**The one real feature is a dip at the retirement date.** Under the 4% rule
-the solved schedule drops to 70% equity at exactly age 63 and recovers by 68 —
-a 29pp dip. That is not the investment problem talking, it is the withdrawal
-rule: the 4% rule sets thirty years of spending as a fraction of wealth on one
-date, so wealth at 63 is an anchor worth protecting. Re-solving under a
-percent-of-portfolio rule or a life-expectancy rule, neither of which anchors
-on any single date, the dip vanishes entirely and the schedule is flat at
-100%.
-
-So the practical rule is the opposite of what target-date funds do: *if your
-withdrawal policy anchors on your balance at one date, de-risk briefly around
-that date; if it does not, do not de-risk at all.*
-
-Two guards against over-reading the solved shape. Restarting the search from
-flat schedules at 20%, 60% and 100% equity converges to the same certainty
-equivalent within 0.013%. And forcing each age back to 100% equity one at a
-time shows **54 of 68 ages cost less than a basis point** — several are
-negative. Only the ages at and just after retirement clear one basis point, so
-the rest of the plotted line is search noise on a flat objective, not
-structure.
-
-## Should you hedge the currency?
-
-`docs/08` splits the international sleeve into its two exposures — the foreign
-*asset* return and the foreign *currency* — by building a covered-interest-parity
-hedged leg, and sweeps the hedge ratio against an annual holding cost. Every
-ratio is evaluated on **literally the same simulated lives**: the hedge never
-changes which country-years are usable, and the sweep reuses one set of drawn
-(country, calendar) indices, re-reading only the international leg.
-
-| Hedge ratio | CEC gain at zero cost | Break-even annual cost |
-| --- | --- | --- |
-| 25% | -0.13% | never worth it |
-| 50% | -1.02% | never worth it |
-| 75% | -2.43% | never worth it |
-| 100% | -4.24% | never worth it |
-
-**Hedging is not worth doing at any ratio, even free.** Every hedge ratio
-tested loses certainty-equivalent consumption before a single basis point of
-cost is charged, and the loss grows monotonically with the ratio. There is no
-break-even cost to quote because there is no cost low enough: the decision is
-settled at zero.
-
-**Why, and it isn't the usual story.** Hedging does cut the standalone
-volatility of the foreign sleeve — but not monotonically: volatility bottoms
-out at a 50% hedge (18.48%, against 21.69% unhedged) and rises again toward a
-full hedge (21.17%).
-In *real* terms, foreign currency partly hedges domestic inflation, and
-hedging removes that offset. Meanwhile hedging raises the correlation between
-the foreign sleeve and the home market, from 0.43 unhedged to a peak of 0.52
-at a half hedge: currency movement is part of what makes foreign equity a
-*diversifier* rather than a second helping of the same risk. Correlation with
-domestic inflation moves the other way, from -0.04 to -0.28, so hedging trades
-away an inflation offset the unhedged sleeve provides for free.
-
-The second effect wins. "Hedging reduces risk" is true of the sleeve in
-isolation and false of the portfolio holding it — which is why every ratio
-loses even when the hedge is free. (The conventional
-advice to hedge foreign *bonds* survives untouched — this tests equities only.)
 
 ## Spending rules
 

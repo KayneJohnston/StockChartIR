@@ -9,6 +9,8 @@ paper rather than silently contradict it.
 
 from __future__ import annotations
 
+import re
+
 import datetime as dt
 from typing import Any, Callable, Dict, List, Sequence
 
@@ -239,6 +241,71 @@ def contents(ctx: Any) -> List[Flowable]:
 
 
 # ---------------------------------------------------------------------------
+# Section numbering
+# ---------------------------------------------------------------------------
+#: Reading order of the paper's numbered sections. This tuple is the single
+#: source of truth: headings and cross-references are written as ``#key``
+#: tokens (``#housing`` for the section number, ``#housing.2`` for a
+#: subsection) and resolved against it at build time, so reordering the paper
+#: means editing this tuple and the matching block in :func:`story` -- and
+#: nothing else. Hand-numbered references were how a reference came to point
+#: at the wrong heading twice in this project's history; the token cannot.
+SECTION_ORDER: Tuple[str, ...] = (
+    "introduction",
+    "background",
+    "data",
+    "methods",
+    # The result, and everything that tests whether it holds.
+    "baseline",
+    "sensitivity",
+    "sleeve",
+    "hedging",
+    # Can a better portfolio be found inside the same asset menu?
+    "glide",
+    "allocation",
+    "leverage",
+    # Widening the menu.
+    "housing",
+    "mortgage",
+    # When you live, and what you do about it -- in lifecycle order.
+    "valuation",
+    "saving",
+    "accumulation",
+    "retirement",
+    "spending",
+    # Closing.
+    "discussion",
+    "limitations",
+    "conclusion",
+)
+
+_SECTION_NUMBER: Dict[str, int] = {
+    key: i + 1 for i, key in enumerate(SECTION_ORDER)}
+
+#: Matches ``#key``, ``#key.3`` and ``#key.3.1``. A dot is only consumed when
+#: a digit follows it, so ``#glide. Solving for...`` in a heading resolves
+#: cleanly rather than swallowing the sentence.
+SECTION_TOKEN = re.compile(r"#([a-z_]+)((?:\.\d+)*)")
+
+
+def section_number(key: str) -> int:
+    """The number this section carries in the current reading order."""
+    try:
+        return _SECTION_NUMBER[key]
+    except KeyError:                       # pragma: no cover - author error
+        raise KeyError(
+            f"unknown section {key!r}; SECTION_ORDER has "
+            f"{sorted(_SECTION_NUMBER)}") from None
+
+
+def resolve_sections(text: str) -> str:
+    """Replace every ``#key`` token in ``text`` with its section number."""
+    def swap(match: "re.Match[str]") -> str:
+        return f"{section_number(match.group(1))}{match.group(2)}"
+    return SECTION_TOKEN.sub(swap, text)
+
+
+# ---------------------------------------------------------------------------
 # 1. Introduction
 # ---------------------------------------------------------------------------
 def section_introduction(ctx: Any) -> List[Flowable]:
@@ -254,7 +321,7 @@ def section_introduction(ctx: Any) -> List[Flowable]:
     n_criteria = int(dominance["criteria"].iloc[0])
     n_won = int(dominance["criteria_won"].iloc[0])
 
-    out: List[Flowable] = [ctx.h1("1. Introduction")]
+    out: List[Flowable] = [ctx.h1("#introduction. Introduction")]
     out.append(ctx.p(
         "The default investment vehicle of the modern retirement system is the "
         "target-date fund. It embodies a single, rarely-examined proposition: "
@@ -291,7 +358,7 @@ def section_introduction(ctx: Any) -> List[Flowable]:
         "them out, several of which produce results that run against the "
         "intuition that motivated them."))
 
-    out.append(ctx.h2("1.1 What we find"))
+    out.append(ctx.h2("#introduction.1 What we find"))
     out.append(ctx.p(
         f"<b>The replication succeeds.</b> On a {p['n_countries']}-country "
         f"panel covering {p['first_year']}–{p['last_year']} "
@@ -389,7 +456,7 @@ def section_introduction(ctx: Any) -> List[Flowable]:
         "portfolio but the cost at which it stops belonging, and that number "
         "is small enough that a real owner's costs are decisive."))
 
-    out.append(ctx.h2("1.2 What is new here"))
+    out.append(ctx.h2("#introduction.2 What is new here"))
     out.append(ctx.p(
         "Relative to the paper being replicated, this study contributes a "
         "methodological discipline and thirteen substantive extensions. The "
@@ -438,22 +505,39 @@ def section_introduction(ctx: Any) -> List[Flowable]:
         "competing state variables and their pairwise combination.",
     ]))
 
-    out.append(ctx.h2("1.3 Roadmap"))
+    out.append(ctx.h2("#introduction.3 Roadmap"))
     out.append(ctx.p(
-        "Section 2 places the exercise in the literature. Section 3 documents "
-        "the panel and its construction. Section 4 sets out the bootstrap, the "
-        "lifecycle model, the preference specification and the comparison "
-        "discipline. Section 5 presents the baseline replication and Section 6 "
-        "its sensitivity. Sections 7 through 17 present the thirteen extensions "
-        "in order of increasing distance from the original design, ending with "
-        "three that relax assumptions the model itself makes: that a "
-        "lifetime's starting valuation is irrelevant (Section 15), that the "
-        "opportunity set contains no housing (Section 16), and that the house "
-        "is owned outright (Section 17). Section 18 asks whether the "
-        "headline survives an international sleeve weighted by economy size "
-        "rather than equally. Section 19 "
-        "discusses what the results collectively imply, Section 20 states the "
-        "limitations candidly, and Section 21 concludes. Four appendices give "
+        "The paper is organised so that each block earns the right to the "
+        "next. Sections #background–#methods set up: the literature, the "
+        "panel and its construction, and the bootstrap, lifecycle model, "
+        "preference specification and comparison discipline that everything "
+        "afterwards runs through."))
+    out.append(ctx.p(
+        "Sections #baseline–#hedging are the result and three ways it could "
+        "be wrong. Section #baseline presents the baseline replication. "
+        "Section #sensitivity asks whether it survives the preference and "
+        "lifecycle parameters, Section #sleeve whether it survives the way "
+        "the international sleeve is weighted — the construction our one "
+        "divergence from the replicated study most obviously depends on — and "
+        "Section #hedging whether that sleeve should be currency-hedged."))
+    out.append(ctx.p(
+        "Sections #glide–#leverage ask whether a better portfolio exists "
+        "inside the same asset menu, by progressively relaxing what is held "
+        "fixed: the shape of the glide path (Section #glide), then every "
+        "weight at every age (Section #allocation), then the long-only "
+        "constraint itself (Section #leverage). Sections #housing–#mortgage "
+        "widen the menu instead, adding the asset most households actually "
+        "hold — housing owned outright (Section #housing), then mortgaged "
+        "(Section #mortgage)."))
+    out.append(ctx.p(
+        "Sections #valuation–#spending leave the portfolio alone and search "
+        "the rest of the plan, in the order a life meets it: the valuation "
+        "you start at (Section #valuation), how much you save "
+        "(Section #saving) and what that saving should respond to "
+        "(Section #accumulation), when you stop (Section #retirement), and "
+        "how you draw down (Section #spending). Section #discussion draws the "
+        "results together, Section #limitations states the limitations "
+        "candidly, and Section #conclusion concludes. Four appendices give "
         "the full parameter set, the country panel, supplementary tables and "
         "the reproduction instructions."))
     return out
@@ -464,8 +548,8 @@ def section_introduction(ctx: Any) -> List[Flowable]:
 # ---------------------------------------------------------------------------
 def section_background(ctx: Any) -> List[Flowable]:
     f = ctx.f
-    out: List[Flowable] = [ctx.h1("2. Background and Related Work")]
-    out.append(ctx.h2("2.1 The theoretical case for the glide path"))
+    out: List[Flowable] = [ctx.h1("#background. Background and Related Work")]
+    out.append(ctx.h2("#background.1 The theoretical case for the glide path"))
     out.append(ctx.p(
         "The canonical result is negative: in the Samuelson–Merton framework "
         "with constant relative risk aversion, i.i.d. returns and no labour "
@@ -492,7 +576,7 @@ def section_background(ctx: Any) -> List[Flowable]:
         "return distribution looks like — which is where the argument this "
         "paper reproduces enters."))
 
-    out.append(ctx.h2("2.2 The empirical challenge"))
+    out.append(ctx.h2("#background.2 The empirical challenge"))
     out.append(ctx.p(
         "Almost all of the simulation evidence used to calibrate glide paths "
         "draws returns from a parametric distribution fitted to a single "
@@ -529,7 +613,7 @@ def section_background(ctx: Any) -> List[Flowable]:
         "rather than a couple, and a deterministic horizon rather than "
         "random longevity."))
 
-    out.append(ctx.h2("2.3 The data source"))
+    out.append(ctx.h2("#background.3 The data source"))
     out.append(ctx.p(
         "The underlying return data come from the Jordà–Schularick–Taylor "
         "Macrohistory Database and the associated \"Rate of Return on "
@@ -543,10 +627,10 @@ def section_background(ctx: Any) -> List[Flowable]:
     out.append(ctx.p(
         f"It is also the binding constraint on this study: it carries complete "
         f"equity, bond and bill total returns for {f.panel['n_tier_a']} "
-        f"countries, and that set is our panel. Section 3.2 describes it and "
-        f"Section 20.1 sets out what its breadth costs."))
+        f"countries, and that set is our panel. Section #data.2 describes it and "
+        f"Section #limitations.1 sets out what its breadth costs."))
 
-    out.append(ctx.h2("2.4 Adjacent literatures this paper touches"))
+    out.append(ctx.h2("#background.4 Adjacent literatures this paper touches"))
     out.extend(ctx.bullets([
         "<b>Bootstrap inference for dependent data.</b> The sampling scheme "
         "here is a stationary block bootstrap in the sense of Politis and "
@@ -555,19 +639,19 @@ def section_background(ctx: Any) -> List[Flowable]:
         "<b>Safe withdrawal rates.</b> The four-percent convention descends "
         "from Bengen (1994) and the Trinity study (Cooley, Hubbard and Walz, "
         "1998), both of which are US-only and historical-sequence based. "
-        "Section 5.4 re-derives the sustainable rate on this panel.",
+        "Section #baseline.4 re-derives the sustainable rate on this panel.",
         "<b>Dynamic withdrawal policy.</b> Guyton and Klinger (2006) "
         "guardrails and the actuarial/amortisation family are represented in "
-        "the spending-rule comparison of Section 7.",
+        "the spending-rule comparison of Section #spending.",
         "<b>Bequest motives.</b> The utility specification uses the shifted "
         "power form of De Nardi (2004), which is what allows a zero terminal "
         "balance to be evaluated at all under high risk aversion.",
-        "<b>Sequence-of-returns risk.</b> Section 12 formalises the folk "
+        "<b>Sequence-of-returns risk.</b> Section #retirement formalises the folk "
         "observation that the decade around retirement dominates, and prices "
         "the option value of choosing when to stop working.",
         "<b>Lifecycle leverage.</b> Ayres and Nalebuff (2010) argue that a "
         "young investor should borrow to spread market exposure evenly across "
-        "a lifetime. Section 10 relaxes the long-only constraint and prices "
+        "a lifetime. Section #leverage relaxes the long-only constraint and prices "
         "that argument against the cost of credit.",
     ]))
     return out
@@ -591,8 +675,8 @@ def section_data(ctx: Any) -> List[Flowable]:
     gaps = f.table("panel_structural_gaps")
     cfg = f.cfg
 
-    out: List[Flowable] = [ctx.h1("3. Data")]
-    out.append(ctx.h2("3.1 What the panel is"))
+    out: List[Flowable] = [ctx.h1("#data. Data")]
+    out.append(ctx.h2("#data.1 What the panel is"))
     out.append(ctx.p(
         f"The panel is an annual, country-by-year matrix of five real series — "
         f"domestic equity, international equity, long-term government bonds, "
@@ -631,7 +715,7 @@ def section_data(ctx: Any) -> List[Flowable]:
         "is precisely the period a survivorship-prone sample would drop.",
         max_height=11.5 * cm))
 
-    out.append(ctx.h2("3.2 The country set"))
+    out.append(ctx.h2("#data.2 The country set"))
     out.append(ctx.p(
         f"The Jordà–Schularick–Taylor database carries complete, independently "
         f"sourced equity, bond and bill total returns for {p['n_tier_a']} "
@@ -645,17 +729,17 @@ def section_data(ctx: Any) -> List[Flowable]:
         f"databases such as Global Financial Data and Dimson–Marsh–Staunton, "
         f"which are proprietary and not redistributable. Working from openly "
         f"licensed sources, {p['n_tier_a']} is the extent of the recorded "
-        f"evidence, and Section 3.6.1 reports what the excluded countries do "
+        f"evidence, and Section #data.6.1 reports what the excluded countries do "
         f"carry."))
     out.append(ctx.p(
-        f"That breadth is the paper's principal limitation and Section 20.1 "
+        f"That breadth is the paper's principal limitation and Section #limitations.1 "
         f"develops it. Its most direct consequence is on the international "
         f"leg, which is a leave-one-out average and therefore spans "
         f"{p['n_tier_a'] - 1} foreign markets, all advanced economies with "
         f"long histories. Every statement here about international "
         f"diversification is a statement about that set."))
 
-    out.append(ctx.h2("3.3 Constructing the international leg"))
+    out.append(ctx.h2("#data.3 Constructing the international leg"))
     out.append(ctx.p(
         "An investor in country <i>i</i> holding \"international equity\" does "
         "not hold a global index that includes their own market. For each "
@@ -696,7 +780,7 @@ def section_data(ctx: Any) -> List[Flowable]:
              "B repeats this with excess kurtosis.",
         font_size=7.0))
 
-    out.append(ctx.h2("3.4 Cross-asset structure"))
+    out.append(ctx.h2("#data.4 Cross-asset structure"))
     out.append(ctx.p(
         f"The correlation structure the bootstrap must preserve is reported "
         f"below. Domestic and international equity correlate at "
@@ -735,7 +819,7 @@ def section_data(ctx: Any) -> List[Flowable]:
              "draws would dominate the terminal wealth of any lifetime that "
              "contained it."))
 
-    out.append(ctx.h2("3.5 Market disruptions and the survivorship question"))
+    out.append(ctx.h2("#data.5 Market disruptions and the survivorship question"))
     out.append(ctx.p(
         f"There are {len(gaps)} contiguous runs of missing data across the "
         f"countries of the panel, concentrated in the two world wars. The treatment "
@@ -752,8 +836,8 @@ def section_data(ctx: Any) -> List[Flowable]:
         "side of it but never across it. The consequence is that the sampler "
         "is <i>less</i> able to draw from countries with disrupted histories "
         "at long block lengths, which we quantify rather than assume: the "
-        "run-length admissibility statistics are reported in Section 4.1."))
-    out.append(ctx.h2("3.6 Auditing the data"))
+        "run-length admissibility statistics are reported in Section #methods.1."))
+    out.append(ctx.h2("#data.6 Auditing the data"))
     out.append(ctx.p(
         "The database is used here through a redistributed copy rather than "
         "obtained from its compilers, which deserves more scepticism than a "
@@ -761,7 +845,7 @@ def section_data(ctx: Any) -> List[Flowable]:
         "test it does not pass, and describes three bodies of recorded data "
         "that sit in the sources and stay out of the model."))
 
-    out.append(ctx.h3("3.6.1 Why the panel stops at sixteen"))
+    out.append(ctx.h3("#data.6.1 Why the panel stops at sixteen"))
     out.append(ctx.p(
         "The boundary is set by equity. Four countries outside the panel do "
         "carry recorded interest-rate histories: long-term yields and short "
@@ -801,7 +885,7 @@ def section_data(ctx: Any) -> List[Flowable]:
 
     hs = pr.get("housing", {})
     if hs.get("countries"):
-        out.append(ctx.h3("3.6.2 The fourth asset class"))
+        out.append(ctx.h3("#data.6.2 The fourth asset class"))
         out.append(ctx.p(
             f"The macro file carries a fourth asset the source project "
             f"measured: <b>housing total returns</b>, empirical for all "
@@ -810,7 +894,7 @@ def section_data(ctx: Any) -> List[Flowable]:
             f"({hs['first_year']}–{hs['last_year']}). It is held out of the "
             f"headline results, which use the same four-asset set as the paper "
             f"being replicated, and audited here so the reason is visible "
-            f"rather than assumed. Section 16 then puts it into the "
+            f"rather than assumed. Section #housing then puts it into the "
             f"opportunity set and prices it."))
         out.extend(ctx.table(
             rows_from(hs["frame"],
@@ -859,7 +943,7 @@ def section_data(ctx: Any) -> List[Flowable]:
             "national housing stock, with no transaction costs, no vacancy, no "
             "maintenance and none of the single-property concentration a real "
             "household bears. Adopting it as a fourth sleeve at face value "
-            "would therefore overstate what a household can buy. Section 16 "
+            "would therefore overstate what a household can buy. Section #housing "
             "adds it anyway, but only after de-smoothing it and charging an "
             "explicit annual holding cost — and it is the size of that cost, "
             "not the raw return, that decides the answer."))
@@ -870,12 +954,12 @@ def section_data(ctx: Any) -> List[Flowable]:
             "for that country's domestic equity. Right: the lag-one "
             "autocorrelation that does the work. De-smoothing closes part of "
             "the volatility gap and not all of it, which is why the holding "
-            "cost of Section 16 has to carry the rest of the argument.",
+            "cost of Section #housing has to carry the rest of the argument.",
             max_height=8.5 * cm))
 
     wg = pr.get("wages", {})
     if wg.get("countries"):
-        out.append(ctx.h3("3.6.3 The series that bears on our income model"))
+        out.append(ctx.h3("#data.6.3 The series that bears on our income model"))
         out.append(ctx.p(
             f"The same file carries a nominal wage index for all "
             f"{wg['countries']} of its countries, including the two with no "
@@ -929,7 +1013,7 @@ def section_data(ctx: Any) -> List[Flowable]:
             f"worker alive then lived through them, and note that excluding "
             f"them only widens the gap we are about to describe."))
         out.append(ctx.p(
-            f"<b>Our income profile has no term for it.</b> Section 4.3 sets "
+            f"<b>Our income profile has no term for it.</b> Section #methods.3 sets "
             f"real labour income as a deterministic hump peaking at age "
             f"{wg['model_peak_age']:.0f} at "
             f"{f2(wg['model_peak_multiple'], 2)}× starting income and ending "
@@ -957,7 +1041,8 @@ def section_data(ctx: Any) -> List[Flowable]:
             "standard lifecycle argument — so having less of it <i>weakens</i> "
             "the case for holding equity when young. The bias runs against our "
             "conclusion rather than toward it, as most of the known biases "
-            "here do. The effect on the savings analysis of Sections 12 and 13 "
+            "here do. The effect on the savings analysis of Sections #saving and "
+            "#accumulation "
             "is genuinely ambiguous, because faster income growth raises both "
             "what a given savings rate accumulates and the consumption it must "
             "replace, and this audit does not resolve it. Re-estimating the "
@@ -965,7 +1050,7 @@ def section_data(ctx: Any) -> List[Flowable]:
             "we record it as a quantified limitation rather than apply it "
             "silently."))
 
-    out.append(ctx.h3("3.6.4 Is the source we kept genuine?"))
+    out.append(ctx.h3("#data.6.4 Is the source we kept genuine?"))
     out.append(ctx.p(
         "The workbook was obtained from a redistributed copy rather than "
         "downloaded from the compilers, so it is audited rather than "
@@ -997,7 +1082,7 @@ def section_data(ctx: Any) -> List[Flowable]:
         f"everywhere to machine precision would be one whose components had "
         f"been back-solved from its totals."))
 
-    out.append(ctx.h3("3.6.5 One finding that does not pass"))
+    out.append(ctx.h3("#data.6.5 One finding that does not pass"))
     out.append(ctx.p(
         f"The last five years of every equity series are smoother than that "
         f"country's own history. <b>All {pr['tail_smoother']} of "
@@ -1052,10 +1137,10 @@ def section_methods(ctx: Any) -> List[Flowable]:
     lc = cfg["lifecycle"]
     ut = cfg["utility"]
 
-    out: List[Flowable] = [ctx.h1("4. Methodology")]
+    out: List[Flowable] = [ctx.h1("#methods. Methodology")]
 
     # -- 4.1 bootstrap ----------------------------------------------------
-    out.append(ctx.h2("4.1 The cross-country stationary block bootstrap"))
+    out.append(ctx.h2("#methods.1 The cross-country stationary block bootstrap"))
     out.append(ctx.p(
         f"A simulated lifetime is {int(cfg['bootstrap']['horizon_years'])} "
         f"years long and is assembled from contiguous blocks of history. The "
@@ -1194,7 +1279,7 @@ def section_methods(ctx: Any) -> List[Flowable]:
         max_height=8.0 * cm))
 
     # -- 4.2 lifecycle ----------------------------------------------------
-    out.append(ctx.h2("4.2 The lifecycle model"))
+    out.append(ctx.h2("#methods.2 The lifecycle model"))
     out.append(ctx.p(
         f"A simulated investor begins work at age {int(lc['age_start'])}, "
         f"retires at {int(lc['age_retire'])} and dies at "
@@ -1231,7 +1316,7 @@ def section_methods(ctx: Any) -> List[Flowable]:
         f"{float(lc['income']['transitory_shock_sd']):.2f}. The permanent "
         f"shock is a cumulative sum, so income dispersion widens over a "
         f"career; the transitory shock is i.i.d. The profile is an age effect "
-        f"and carries no economy-wide wage growth; Section 3.6.3 measures what "
+        f"and carries no economy-wide wage growth; Section #data.6.3 measures what "
         f"that leaves out and which way it biases the result."))
     out.append(ctx.p(
         f"The social-security benefit uses the US primary-insurance-amount "
@@ -1278,7 +1363,7 @@ def section_methods(ctx: Any) -> List[Flowable]:
         max_height=7.5 * cm))
 
     # -- 4.3 preferences --------------------------------------------------
-    out.append(ctx.h2("4.3 Preferences and the certainty equivalent"))
+    out.append(ctx.h2("#methods.3 Preferences and the certainty equivalent"))
     out.append(ctx.p(
         "Strategies are ranked by certainty-equivalent consumption: the "
         "constant, riskless consumption stream that would leave the investor "
@@ -1312,7 +1397,7 @@ def section_methods(ctx: Any) -> List[Flowable]:
         f"{{{', '.join(f'{v:g}' for v in ut['epstein_zin_ies'])}}}. Under CRRA "
         f"these two are locked together at ψ = 1/γ, and a reader is entitled "
         f"to ask whether the result is being driven by the intertemporal "
-        f"channel rather than the risk channel. Section 6.2 shows it is not."))
+        f"channel rather than the risk channel. Section #sensitivity.2 shows it is not."))
     out.append(ctx.p(
         f"One further specification choice deserves emphasis. Utility is "
         f"evaluated over the <b>{ut['consumption_window']}</b> window rather "
@@ -1322,11 +1407,12 @@ def section_methods(ctx: Any) -> List[Flowable]:
         f"including it adds a large constant to every strategy's utility and "
         f"compresses the differences that the exercise is about. Where a "
         f"policy <i>does</i> change working-life consumption — the retirement "
-        f"timing and savings-rate studies of Sections 12 to 14 — we switch to "
+        f"timing and savings-rate studies of Sections #valuation to #retirement "
+        f"— we switch to "
         f"the whole-lifetime window and say so explicitly."))
 
     # -- 4.4 comparison discipline ---------------------------------------
-    out.append(ctx.h2("4.4 The comparison discipline"))
+    out.append(ctx.h2("#methods.4 The comparison discipline"))
     out.append(ctx.p(
         "Most of the extensions in this paper compare policies that differ in "
         "more than one way at once, and the arithmetic of a certainty "
@@ -1355,15 +1441,15 @@ def section_methods(ctx: Any) -> List[Flowable]:
         "the analysis rerun.",
     ]))
     out.append(ctx.p(
-        "These are not stylistic preferences. Section 12 reports a result that "
+        "These are not stylistic preferences. Section #retirement reports a result that "
         "fell by roughly sixty percent when a matched baseline replaced an "
-        "unmatched one, Section 8 reports apparent glide-path structure that "
-        "the deviation profile dissolved, and Section 14 reports a functional-"
+        "unmatched one, Section #glide reports apparent glide-path structure that "
+        "the deviation profile dissolved, and Section #accumulation reports a functional-"
         "form ranking that reversed its interpretation once the grid-edge "
         "check was applied."))
 
     # -- 4.5 implementation ----------------------------------------------
-    out.append(ctx.h2("4.5 Implementation and verification"))
+    out.append(ctx.h2("#methods.5 Implementation and verification"))
     out.append(ctx.p(
         f"The model is implemented in Python with NumPy and pandas. "
         f"Portfolio returns for a whole cohort are formed as a batched matrix "
@@ -1422,14 +1508,14 @@ def section_baseline(ctx: Any) -> List[Flowable]:
     dom = f.strategy_row("domestic_equity")
     intl = f.strategy_row("international_equity")
 
-    out: List[Flowable] = [ctx.h1("5. Baseline Results")]
+    out: List[Flowable] = [ctx.h1("#baseline. Baseline Results")]
     out.append(ctx.p(
         f"All results in this section use 100,000 simulated lifetimes per "
         f"strategy, drawn from the same bootstrap sample so that strategies "
         f"face identical market histories. Certainty equivalents are over the "
-        f"retirement window, for the reason given in Section 4.3."))
+        f"retirement window, for the reason given in Section #methods.3."))
 
-    out.append(ctx.h2("5.1 The headline comparison"))
+    out.append(ctx.h2("#baseline.1 The headline comparison"))
     out.extend(ctx.table(
         rows_from(head.assign(label=head["strategy"].map(LABELS)),
                   ["label", "cec_crra_gamma2", "cec_crra_gamma5",
@@ -1482,7 +1568,7 @@ def section_baseline(ctx: Any) -> List[Flowable]:
         "does not close within the range tested.",
         max_height=8.0 * cm))
 
-    out.append(ctx.h2("5.2 The mechanism is international, not equity"))
+    out.append(ctx.h2("#baseline.2 The mechanism is international, not equity"))
     out.append(ctx.p(
         f"Domestic equity alone is <i>not</i> the winning strategy. Its "
         f"certainty equivalent at γ = {gamma:g} is "
@@ -1532,7 +1618,7 @@ def section_baseline(ctx: Any) -> List[Flowable]:
         "in the shortfall statistics.",
         max_height=8.5 * cm))
 
-    out.append(ctx.h2("5.3 Distributional dominance"))
+    out.append(ctx.h2("#baseline.3 Distributional dominance"))
     out.append(ctx.p(
         f"A certainty equivalent is a single scalar and can hide a strategy "
         f"that wins on average while losing where it matters. We therefore "
@@ -1567,7 +1653,7 @@ def section_baseline(ctx: Any) -> List[Flowable]:
         "with low medians.",
         max_height=8.0 * cm))
 
-    out.append(ctx.h2("5.4 Sustainable withdrawal rates"))
+    out.append(ctx.h2("#baseline.4 Sustainable withdrawal rates"))
     out.append(ctx.p(
         "The four-percent rule is the most widely used number in retirement "
         "planning. It comes from US historical sequences and it does not "
@@ -1608,7 +1694,7 @@ def section_baseline(ctx: Any) -> List[Flowable]:
         "used to define the sustainable rate.",
         max_height=8.0 * cm))
 
-    out.append(ctx.h2("5.5 How the countries are drawn"))
+    out.append(ctx.h2("#baseline.5 How the countries are drawn"))
     out.append(ctx.p(
         f"Two choices in the sampler decide how the cross-section enters a "
         f"simulated life, and neither is obviously right. A lifetime's "
@@ -1658,7 +1744,7 @@ def section_sensitivity(ctx: Any) -> List[Flowable]:
     n_dimensions = int(tornado["dimension"].nunique())
     reversals = int(tornado["settings_lost"].sum())
 
-    out: List[Flowable] = [ctx.h1("6. Sensitivity Analysis")]
+    out: List[Flowable] = [ctx.h1("#sensitivity. Sensitivity Analysis")]
     out.append(ctx.p(
         f"The headline is one point in a large parameter space. This section "
         f"sweeps that space along equity share, domestic share, risk "
@@ -1679,7 +1765,7 @@ def section_sensitivity(ctx: Any) -> List[Flowable]:
         f"reports the range of the advantage rather than its point estimate "
         f"so the reader can see how much room there is."))
 
-    out.append(ctx.h2("6.1 Tornado analysis"))
+    out.append(ctx.h2("#sensitivity.1 Tornado analysis"))
     out.append(ctx.p(
         "A tornado analysis varies one parameter at a time across its whole "
         "plausible range, holding everything else at baseline, and records "
@@ -1742,7 +1828,7 @@ def section_sensitivity(ctx: Any) -> List[Flowable]:
         "rises but do not overtake them within the tested range.",
         max_height=8.0 * cm))
 
-    out.append(ctx.h2("6.2 Allocation sweeps and the corner solution"))
+    out.append(ctx.h2("#sensitivity.2 Allocation sweeps and the corner solution"))
     out.append(ctx.p(
         "Sweeping the equity share continuously rather than testing discrete "
         "strategies asks a sharper question: is the optimum interior?"))
@@ -1756,7 +1842,7 @@ def section_sensitivity(ctx: Any) -> List[Flowable]:
                    "prob_ruin_at_optimum": lambda v: pc(v, 1)}),
         "Optimal equity share by risk aversion",
         note="The optimum is at the corner for every risk aversion tested. "
-             "Section 8 asks the same question of the full age-by-asset "
+             "Section #glide asks the same question of the full age-by-asset "
              "schedule and reaches the same answer."))
     out.extend(ctx.table(
         rows_from(dom_opt, ["risk_aversion", "optimal_domestic_share",
@@ -1793,7 +1879,7 @@ def section_sensitivity(ctx: Any) -> List[Flowable]:
         "weight.",
         max_height=8.0 * cm))
 
-    out.append(ctx.h2("6.3 Separating risk aversion from intertemporal substitution"))
+    out.append(ctx.h2("#sensitivity.3 Separating risk aversion from intertemporal substitution"))
     out.append(ctx.p(
         f"Under CRRA, γ and the elasticity of intertemporal substitution are "
         f"the same parameter inverted, so a sceptic can reasonably ask whether "
@@ -1808,7 +1894,7 @@ def section_sensitivity(ctx: Any) -> List[Flowable]:
         f"and never reverses. The result is a risk result, not a substitution "
         f"result."))
 
-    out.append(ctx.h2("6.4 Planning parameters"))
+    out.append(ctx.h2("#sensitivity.4 Planning parameters"))
     out.append(ctx.p(
         "Retirement age, longevity, savings rate, withdrawal rate and "
         "social-security design are the levers an individual actually "
@@ -1847,7 +1933,7 @@ def section_spending(ctx: Any) -> List[Flowable]:
     top = best.iloc[0]
     top_nb = best.sort_values(col_nb, ascending=False).iloc[0]
 
-    out: List[Flowable] = [ctx.h1("7. Retirement Spending Rules")]
+    out: List[Flowable] = [ctx.h1("#spending. Retirement Spending Rules")]
     out.append(ctx.p(
         f"The baseline draws down the portfolio with a constant real "
         f"withdrawal — the four-percent rule and its variants. That is one "
@@ -1924,7 +2010,7 @@ def section_spending(ctx: Any) -> List[Flowable]:
         "histories. The adaptive rules trade a smooth path for a solvent one.",
         max_height=8.5 * cm))
 
-    out.append(ctx.h2("7.1 The bequest pivot"))
+    out.append(ctx.h2("#spending.1 The bequest pivot"))
     out.append(ctx.p(
         f"The ranking is not invariant to the bequest motive, and this is the "
         f"most interesting finding in the section. With the bequest weight "
@@ -1966,9 +2052,10 @@ def section_glide(ctx: Any) -> List[Flowable]:
     dev = deviation[deviation["risk_aversion"] == gamma]
     material = dev[dev["cost_of_forcing_bp"].abs() > 1.0]
 
-    out: List[Flowable] = [ctx.h1("8. Solving for the Optimal Glide Path")]
+    out: List[Flowable] = [ctx.h1("#glide. Solving for the Optimal Glide Path")]
     out.append(ctx.p(
-        "Sections 5 and 6 compare a handful of candidate allocation "
+        "Sections #baseline and #sensitivity compare a handful of candidate "
+        "allocation "
         "schedules. That is a test, not an answer. This section solves the "
         "problem directly: what equity share should the investor hold at each "
         "of the 68 ages, if the schedule is free to be anything at all?"))
@@ -2010,7 +2097,7 @@ def section_glide(ctx: Any) -> List[Flowable]:
         "the corner; it is not a glide path.",
         max_height=8.5 * cm))
 
-    out.append(ctx.h2("8.1 How much of the solved structure is real?"))
+    out.append(ctx.h2("#glide.1 How much of the solved structure is real?"))
     out.append(ctx.p(
         f"A solved schedule always looks structured. The deviation profile "
         f"tests whether it is: each age's solved weight is reset to a neutral "
@@ -2033,7 +2120,7 @@ def section_glide(ctx: Any) -> List[Flowable]:
         "portfolio is small; the advantage over the glide path is not.",
         max_height=8.0 * cm))
 
-    out.append(ctx.h2("8.2 Anchoring the glide to the retirement date"))
+    out.append(ctx.h2("#glide.2 Anchoring the glide to the retirement date"))
     out.append(ctx.p(
         "A natural objection is that the search is unconstrained and real "
         "target-date funds are anchored to a retirement date. We therefore "
@@ -2095,9 +2182,9 @@ def section_allocation(ctx: Any) -> List[Flowable]:
                   else "a rise" if delta_equity > 0.02
                   else "which is to say it is flat")
 
-    out: List[Flowable] = [ctx.h1("9. The Whole Allocation, Solved")]
+    out: List[Flowable] = [ctx.h1("#allocation. The Whole Allocation, Solved")]
     out.append(ctx.p(
-        "Section 8 solves for the equity share at every age and for the "
+        "Section #glide solves for the equity share at every age and for the "
         "domestic split on five-year bands, and finds the optimum sits at or "
         "near the all-equity corner. But it holds the fixed-income sleeve at a "
         "fixed 70/30 bond/bill mix. That restriction was made for search cost, "
@@ -2113,7 +2200,7 @@ def section_allocation(ctx: Any) -> List[Flowable]:
         f"compete freely at every age, subject only to non-negativity and to "
         f"summing to one."))
 
-    out.append(ctx.h2("9.1 The search"))
+    out.append(ctx.h2("#allocation.1 The search"))
     out.append(ctx.p(
         "Under common random numbers the objective is a deterministic function "
         "of the schedule, so a search over one age at a time is exact for that "
@@ -2134,7 +2221,7 @@ def section_allocation(ctx: Any) -> List[Flowable]:
         "local move there; exchanges that would drive a weight negative are "
         "dropped rather than clipped, so every candidate evaluated is "
         "feasible. Both stages accept a move only if it clears a relative "
-        "improvement threshold, for the reason given in Section 4.4."))
+        "improvement threshold, for the reason given in Section #methods.4."))
     out.extend(ctx.table(
         rows_from(convergence[np.isclose(convergence["risk_aversion"], gamma)],
                   ["stage", "sweep", "cec", "gain_pct", "evaluations"],
@@ -2148,7 +2235,7 @@ def section_allocation(ctx: Any) -> List[Flowable]:
              "moves the objective by a fraction of a percent. That pattern is "
              "itself informative — the surface has a broad flat top."))
 
-    out.append(ctx.h2("9.2 The solved schedule"))
+    out.append(ctx.h2("#allocation.2 The solved schedule"))
     out.extend(ctx.table(
         rows_from(base.iloc[::max(len(base) // 12, 1)],
                   ["age", "phase"] + assets + ["equity"],
@@ -2182,13 +2269,13 @@ def section_allocation(ctx: Any) -> List[Flowable]:
     out.append(ctx.p(
         f"<b>The fixed-income sleeve is barely used at any age.</b> That is "
         f"the direct answer to the question this section exists to ask: the "
-        f"70/30 bond/bill split Section 8 imposed was fixing the composition "
+        f"70/30 bond/bill split Section #glide imposed was fixing the composition "
         f"of something the optimiser does not want to hold in the first place, "
         f"so the restriction was not binding. Freeing it buys "
         f"{a['lead_pct']:.2f}% over the best fixed benchmark."))
     out.append(ctx.p(
-        f"The domestic/international split carries the same caveat as Section "
-        f"6.2 and should not be read as advice. The international leg in this "
+        f"The domestic/international split carries the same caveat as "
+        f"Section #sensitivity.2 and should not be read as advice. The international leg in this "
         f"model is a {f.panel['n_tier_a'] - 1}-country leave-one-out average, "
         f"better diversified than "
         f"any tradeable international index and available to no individual "
@@ -2205,7 +2292,7 @@ def section_allocation(ctx: Any) -> List[Flowable]:
         "scale with one basis point marked.",
         max_height=8.5 * cm))
 
-    out.append(ctx.h2("9.3 Against the benchmarks"))
+    out.append(ctx.h2("#allocation.3 Against the benchmarks"))
     out.extend(ctx.table(
         rows_from(block, ["strategy", "cec", "gap_to_best_pct"],
                   ["Schedule", "CEC", "Gap to best (%)"],
@@ -2215,7 +2302,7 @@ def section_allocation(ctx: Any) -> List[Flowable]:
                    "gap_to_best_pct": lambda v: f2(v, 2)}),
         f"Solved and benchmark schedules at risk aversion {gamma:g}",
         note="\"Full simplex optimal\" is this section's solution. The "
-             "comparison also includes the schedules solved in Section 8 under "
+             "comparison also includes the schedules solved in Section #glide under "
              "the 70/30 restriction, where those are available."))
     out.append(ctx.p(
         f"The solved schedule leads the best fixed benchmark "
@@ -2226,12 +2313,12 @@ def section_allocation(ctx: Any) -> List[Flowable]:
         f"It is <b>small</b>. Freeing {a['free_parameters']} parameters and "
         f"searching them properly buys a fraction of what switching from a "
         f"target-date glide path to a fixed all-equity portfolio buys in "
-        f"Section 5. The allocation decision has a broad flat top, and almost "
+        f"Section #baseline. The allocation decision has a broad flat top, and almost "
         f"all of its value is captured by the first choice — whether to hold "
         f"diversified equity at all — rather than by any refinement of it."))
     out.append(ctx.p(
         "It is also <b>still not a glide path</b>. The unrestricted solution "
-        "differs from the restricted ones of Section 8 in the composition of a "
+        "differs from the restricted ones of Section #glide in the composition of a "
         "sleeve that carries almost no weight, not in the age profile of the "
         "equity share. Two independent searches over different parameter "
         "spaces reach the same shape, which is a stronger statement than "
@@ -2261,7 +2348,7 @@ def section_allocation(ctx: Any) -> List[Flowable]:
                          ["cost_of_resetting_bp"].mean())
     concentrated = window_share > 2.5 * window_years
 
-    out.append(ctx.h2("9.4 Where the allocation decision actually matters"))
+    out.append(ctx.h2("#allocation.4 Where the allocation decision actually matters"))
     out.append(ctx.p(
         f"A solved schedule always looks structured, and this one looks more "
         f"structured than the equity-share solve because it has three "
@@ -2271,7 +2358,7 @@ def section_allocation(ctx: Any) -> List[Flowable]:
         f"points. Of the {len(dev)} ages, <b>{a['n_material_ages']}</b> move "
         f"the objective by more than a single basis point."))
     out.append(ctx.p(
-        "That is a very different picture from Section 8, where most ages were "
+        "That is a very different picture from Section #glide, where most ages were "
         "worth nothing at all, and it is worth reading carefully rather than "
         "assuming either conclusion."))
     out.extend(ctx.table(
@@ -2292,7 +2379,7 @@ def section_allocation(ctx: Any) -> List[Flowable]:
         f"itself — at {float(peak['cost_of_resetting_bp']):.1f} basis points, "
         f"and the ten years from {retire_age - 2} to {retire_age + 7} carry "
         f"{window_share:.0f}% of the total cost while being {window_years:.0f}% "
-        f"of the lifecycle. That is the sequence-of-returns window Section 12 "
+        f"of the lifecycle. That is the sequence-of-returns window Section #retirement "
         f"identifies from a completely different direction, arrived at here "
         f"through the allocation rather than through the retirement date: what "
         f"you hold matters most in the years when the portfolio is largest and "
@@ -2316,7 +2403,7 @@ def section_allocation(ctx: Any) -> List[Flowable]:
         f"around retirement and used the lifecycle average everywhere else "
         f"would give up a few basis points."))
 
-    out.append(ctx.h2("9.5 Is this a local optimum?"))
+    out.append(ctx.h2("#allocation.5 Is this a local optimum?"))
     out.append(ctx.p(
         "Coordinate ascent cannot escape a local optimum in principle. "
         "Re-solving from three different corners of the simplex — an equal "
@@ -2358,7 +2445,7 @@ def section_leverage(ctx: Any) -> List[Flowable]:
     except FileNotFoundError:
         schedule = pd.DataFrame()
 
-    out: List[Flowable] = [ctx.h1("10. Borrowing to Invest")]
+    out: List[Flowable] = [ctx.h1("#leverage. Borrowing to Invest")]
     out.append(ctx.p(
         "Every allocation in this paper so far is long-only and fully "
         "invested: the weights are non-negative and sum to one. That is a "
@@ -2379,12 +2466,12 @@ def section_leverage(ctx: Any) -> List[Flowable]:
         "the negative does not generalise as far as it first appears. What is "
         "levered here is the <i>whole portfolio</i>: the ratio scales every "
         "weight at once. Borrowing aimed at a single asset is a different "
-        "policy with a different answer, and Section 17.5 gives it — at the "
+        "policy with a different answer, and Section #mortgage.5 gives it — at the "
         "same borrowing cost, a mortgage on one sleeve is worth several times "
         "what scaling everything is worth. Read what follows as a verdict on "
         "margin, not on debt."))
 
-    out.append(ctx.h2("10.1 Mechanics, stated rather than buried"))
+    out.append(ctx.h2("#leverage.1 Mechanics, stated rather than buried"))
     out.append(ctx.p(
         "An allocation <i>x</i> over the four assets sums to one. A leverage "
         "ratio <i>L</i> means holding <i>L</i> units of that sleeve per unit "
@@ -2410,11 +2497,11 @@ def section_leverage(ctx: Any) -> List[Flowable]:
         "the leverage ratio, exactly as every unlevered strategy here is "
         "rebalanced to maintain its weights."))
 
-    out.append(ctx.h2("10.2 Optimal leverage by the price of credit"))
+    out.append(ctx.h2("#leverage.2 Optimal leverage by the price of credit"))
     out.append(ctx.p(
         "For each borrowing spread we search jointly over the leverage ratio "
         "and the allocation, taking the allocation from the same coarse "
-        "simplex lattice Section 9 uses. The optimum is therefore a leverage "
+        "simplex lattice Section #allocation uses. The optimum is therefore a leverage "
         "ratio <i>and</i> the portfolio that goes with it, rather than a "
         "leverage ratio bolted onto a portfolio chosen elsewhere."))
     out.extend(ctx.table(
@@ -2475,7 +2562,7 @@ def section_leverage(ctx: Any) -> List[Flowable]:
         f"{lv['negligible_spread']:.2%}</b>, well before it reaches zero. Over "
         f"most of the plausible range of borrowing costs, leverage on this "
         f"panel is not so much <i>harmful</i> as <i>pointless</i>: it takes on "
-        f"the tail risk documented in Section 10.3 in exchange for a gain that "
+        f"the tail risk documented in Section #leverage.3 in exchange for a gain that "
         f"rounds to nothing."))
     out.extend(ctx.figure(
         "fig36_leverage_surface",
@@ -2484,7 +2571,7 @@ def section_leverage(ctx: Any) -> List[Flowable]:
         "annotated with what it is worth.",
         max_height=8.0 * cm))
 
-    out.append(ctx.h2("10.3 What leverage does to the shape of the outcome"))
+    out.append(ctx.h2("#leverage.3 What leverage does to the shape of the outcome"))
     out.append(ctx.p(
         "A certainty equivalent alone cannot show what borrowing does to the "
         "distribution, and the distribution is the whole argument."))
@@ -2525,7 +2612,7 @@ def section_leverage(ctx: Any) -> List[Flowable]:
         "including the ones where the leverage did not help."))
     out.append(ctx.p(
         "The limited-liability clip never binds anywhere in this study, so the "
-        "generous assumption of Section 10.1 is doing no work: the levered "
+        "generous assumption of Section #leverage.1 is doing no work: the levered "
         "portfolios lose heavily in the left tail without ever being wiped out "
         "outright. A model with forced liquidation at a margin threshold "
         "rather than at zero would like leverage less than this one does."
@@ -2535,7 +2622,7 @@ def section_leverage(ctx: Any) -> List[Flowable]:
         f"levered investor would have been liquidated rather than merely "
         f"marked down. It binds only on the high ratios and only when the "
         f"allocation is held fixed rather than re-optimised, which is why the "
-        f"sweep of Section 10.2 shows none: there the optimiser retreats into "
+        f"sweep of Section #leverage.2 shows none: there the optimiser retreats into "
         f"bonds and bills precisely to avoid it. Where it does bind, the "
         f"certainty equivalents overstate what leverage is worth by an amount "
         f"this model cannot price."))
@@ -2556,7 +2643,7 @@ def section_leverage(ctx: Any) -> List[Flowable]:
             if len(free_dec) else pd.Series(dtype=float)
         monotone = bool(len(working_dec) > 1
                         and (np.diff(working_dec.to_numpy()) <= 1e-9).all())
-        out.append(ctx.h2("10.4 Should leverage decline with age?"))
+        out.append(ctx.h2("#leverage.4 Should leverage decline with age?"))
         out.append(ctx.p(
             "Ayres and Nalebuff (2010) argue that a young investor's financial "
             "balance is small relative to the lifetime saving still to come, "
@@ -2650,7 +2737,7 @@ def section_leverage(ctx: Any) -> List[Flowable]:
             gap = bool(len(realistic)
                        and (realistic["constant"] <= 0.05).all()
                        and (realistic["two_level"] > 0.05).all())
-            out.append(ctx.h2("10.4.1 Is the shape real, or 68 parameters of "
+            out.append(ctx.h2("#leverage.4.1 Is the shape real, or 68 parameters of "
                               "overfit?"))
             out.append(ctx.p(
                 "The schedule above is solved and scored on the same paths, "
@@ -2702,7 +2789,7 @@ def section_leverage(ctx: Any) -> List[Flowable]:
                 "solve gains, it is not coming from the declining shape, and "
                 "should be read as optimisation gain."))
 
-    out.append(ctx.h2("10.5 What this changes"))
+    out.append(ctx.h2("#leverage.5 What this changes"))
     out.extend(ctx.bullets([
         f"A <b>constant</b> leverage ratio is not free money. It is worth "
         f"{lv['value_at_zero_spread']:+.2f}% when credit is free, breaks even "
@@ -2710,7 +2797,7 @@ def section_leverage(ctx: Any) -> List[Flowable]:
         f"tenth of a percent from {lv['negligible_spread']:.2%} upward — which "
         f"covers most of the range a household actually borrows in.",
         "That verdict does <b>not</b> carry over to a <b>declining</b> ratio, "
-        "which is what Ayres and Nalebuff actually prescribe. Section 10.4.1 "
+        "which is what Ayres and Nalebuff actually prescribe. Section #leverage.4.1 "
         "prices the two separately on the same paths, and the declining policy "
         "is worth more at every spread tested — so the familiar null result "
         "from levered-portfolio backtests is in part an artefact of holding "
@@ -2763,7 +2850,7 @@ def section_hedging(ctx: Any) -> List[Flowable]:
     full = breakeven[breakeven["hedge_ratio"] == 1.00].iloc[0]
     free = optimal[optimal["hedge_cost"] == 0.0].iloc[0]
 
-    out: List[Flowable] = [ctx.h1("11. Currency Hedging the International Leg")]
+    out: List[Flowable] = [ctx.h1("#hedging. Currency Hedging the International Leg")]
     out.append(ctx.p(
         "The international leg of the headline strategy is unhedged: a "
         "domestic investor holding it bears both foreign equity risk and "
@@ -2860,7 +2947,7 @@ def section_retirement(ctx: Any) -> List[Flowable]:
     best = cond.loc[cond["value_of_conditioning_pct"].idxmax()]
     unfloored = conditioning[conditioning["working_income_floor"] == 0.0]
 
-    out: List[Flowable] = [ctx.h1("12. Endogenous Retirement Timing")]
+    out: List[Flowable] = [ctx.h1("#retirement. Endogenous Retirement Timing")]
     out.append(ctx.p(
         "Every result so far retires the investor on a birthday. Real people "
         "do not. They retire when the balance looks big enough — which means, "
@@ -2875,7 +2962,7 @@ def section_retirement(ctx: Any) -> List[Flowable]:
         "how much of the outcome the decade around the retirement date "
         "explains."))
 
-    out.append(ctx.h2("12.1 A wealth trigger against a date"))
+    out.append(ctx.h2("#retirement.1 A wealth trigger against a date"))
     out.append(ctx.p(
         f"Utility here is evaluated over the whole lifetime rather than the "
         f"retirement window, because a rule that retires people early buys "
@@ -2936,7 +3023,7 @@ def section_retirement(ctx: Any) -> List[Flowable]:
         f"numbers are reported because the difference between them is a model "
         f"artefact we found and removed, not a result."))
 
-    out.append(ctx.h2("12.2 The retirement-date lottery"))
+    out.append(ctx.h2("#retirement.2 The retirement-date lottery"))
     out.append(ctx.p(
         f"How much of a retirement outcome is decided by when you happened to "
         f"be born? We regress the outcome on the annualised real portfolio "
@@ -3013,12 +3100,14 @@ def section_saving(ctx: Any) -> List[Flowable]:
     peak = frontier.loc[frontier[f"cec_gamma{gamma:g}"].idxmax()]
     material = deviation[deviation["cost_of_resetting_bp"].abs() > 1.0]
 
-    out: List[Flowable] = [ctx.h1("13. Conditioning the Savings Rate")]
+    out: List[Flowable] = [ctx.h1("#saving. Conditioning the Savings Rate")]
     out.append(ctx.p(
-        "Section 12 found that conditioning <i>when</i> you stop working on "
-        "your financial position is worth something. This section asks the "
-        "accumulation-side mirror: should the savings rate vary over a career, "
-        "and should it respond to the portfolio?"))
+        "The sections above search the portfolio. This one and the three that "
+        "follow leave it alone and search the rest of the plan instead, in the "
+        "order a life meets them: how much you save, what signal that saving "
+        "should respond to, when you stop, and how you draw down. The first "
+        "question is whether the savings rate should vary over a career at "
+        "all, and whether it should respond to the portfolio."))
     out.append(ctx.p(
         "Two quite different things could make the rate vary, and a comparison "
         "that does not separate them will credit the wrong one. <b>Shape</b> "
@@ -3030,7 +3119,7 @@ def section_saving(ctx: Any) -> List[Flowable]:
         "the second is what \"you should have six times salary by fifty\" is "
         "reaching for."))
 
-    out.append(ctx.h2("13.1 A caveat that has to come first"))
+    out.append(ctx.h2("#saving.1 A caveat that has to come first"))
     out.append(ctx.p(
         f"The model cannot identify the savings <i>level</i>. Swept "
         f"continuously, the certainty equivalent peaks at a constant rate of "
@@ -3053,7 +3142,7 @@ def section_saving(ctx: Any) -> List[Flowable]:
         f"rate fixed. Everything below pins the career-average savings rate at "
         f"{pc(target_mean, 0)} and asks only when, and on what, to save it."))
 
-    out.append(ctx.h2("13.2 Shape: when should you save?"))
+    out.append(ctx.h2("#saving.2 Shape: when should you save?"))
     out.append(ctx.p(
         "We solve for a free savings rate at each of the 38 working years by "
         "coordinate ascent over a per-age multiplier, renormalising after "
@@ -3086,12 +3175,12 @@ def section_saving(ctx: Any) -> List[Flowable]:
         "reader is; what it can say is that both beat a flat rate and that "
         "getting the shape right matters more the more risk-averse you are."))
     out.append(ctx.p(
-        f"Unlike the glide path of Section 8, this structure is real. The "
+        f"Unlike the glide path of Section #glide, this structure is real. The "
         f"deviation profile shows {len(material)} of {len(deviation)} working "
         f"years moving the objective by more than a basis point when reset to "
         f"the career average."))
 
-    out.append(ctx.h2("13.3 Conditioning: your position beats the market's direction"))
+    out.append(ctx.h2("#saving.3 Conditioning: your position beats the market's direction"))
     out.append(ctx.p(
         "Layered on top of the solved shape, and scored against a constant "
         "rate interpolated at each rule's own realised career average, we test "
@@ -3126,7 +3215,7 @@ def section_saving(ctx: Any) -> List[Flowable]:
         "The interpretation is that a bad market year is a poor proxy for "
         "being behind. Wealth relative to an age-appropriate target is the "
         "sufficient statistic; the market's recent direction is a noisy "
-        "shadow of it. Section 14 takes this apart in detail and finds that "
+        "shadow of it. Section #accumulation takes this apart in detail and finds that "
         "even this reading needs qualifying."))
     out.extend(ctx.figure(
         "fig25_savings_rate",
@@ -3135,10 +3224,11 @@ def section_saving(ctx: Any) -> List[Flowable]:
         "against conditioning on returns.",
         max_height=8.5 * cm))
 
-    out.append(ctx.h2("13.4 Do the savings and retirement gains add?"))
+    out.append(ctx.h2("#saving.4 Do the savings and retirement gains add?"))
     out.append(ctx.p(
-        "Section 12 conditions the retirement date on the portfolio; this "
-        "section conditions the savings rate on it. A natural question is "
+        "Section #retirement below conditions the retirement date on the "
+        "portfolio; this section conditions the savings rate on it. A natural "
+        "question is "
         "whether an investor should do both."))
     out.extend(ctx.table(
         rows_from(combined, ["variant", f"cec_gamma{gamma:g}",
@@ -3246,9 +3336,9 @@ def section_accumulation(ctx: Any) -> List[Flowable]:
                                    feas, windows, by_gamma, by_strategy,
                                    by_income))
 
-    out: List[Flowable] = [ctx.h1("14. The Accumulation Signal, Decomposed")]
+    out: List[Flowable] = [ctx.h1("#accumulation. The Accumulation Signal, Decomposed")]
     out.append(ctx.p(
-        f"Section 13 established that conditioning the savings rate on the "
+        f"Section #saving established that conditioning the savings rate on the "
         f"funded ratio is worth roughly three percent of certainty-equivalent "
         f"consumption. That result rests on five choices that were made once "
         f"and never varied: the gap was measured in income multiples, the "
@@ -3275,7 +3365,7 @@ def section_accumulation(ctx: Any) -> List[Flowable]:
         f"contribution."))
 
     # -- 12.1 functional form --------------------------------------------
-    out.append(ctx.h2("14.1 Which units is \"behind\" measured in?"))
+    out.append(ctx.h2("#accumulation.1 Which units is \"behind\" measured in?"))
     out.append(ctx.p(
         "Being \"two times salary short\" means something entirely different "
         "at 30 and at 60, because the target itself grows from roughly nothing "
@@ -3330,7 +3420,7 @@ def section_accumulation(ctx: Any) -> List[Flowable]:
         max_height=8.5 * cm))
 
     # -- 12.2 asymmetry ---------------------------------------------------
-    out.append(ctx.h2("14.2 Catching up and easing off are separate policies"))
+    out.append(ctx.h2("#accumulation.2 Catching up and easing off are separate policies"))
     out.append(ctx.p(
         "A symmetric rule does two things at once: it saves more when behind "
         "and less when ahead. There is no reason those should carry the same "
@@ -3386,14 +3476,14 @@ def section_accumulation(ctx: Any) -> List[Flowable]:
         max_height=8.5 * cm))
 
     # -- 12.3 implementable version ---------------------------------------
-    out.append(ctx.h2("14.3 The version a person could actually follow"))
+    out.append(ctx.h2("#accumulation.3 The version a person could actually follow"))
     out.append(ctx.p(
         "A continuous response asks for a freshly computed contribution rate "
-        "every year. Section 7 found that coarse guardrail rules give up "
-        "surprisingly little on the spending side; the accumulation-side "
-        "analogue is to check once a year and move the contribution by a fixed "
-        "step only if the funded ratio is more than a dead band away from "
-        "target."))
+        "every year. Section #spending finds that coarse guardrail rules give "
+        "up surprisingly little on the spending side, and the "
+        "accumulation-side analogue is the same idea run forwards: check once "
+        "a year and move the contribution by a fixed step only if the funded "
+        "ratio is more than a dead band away from target."))
     out.extend(ctx.table(
         rows_from(bands.sort_values(V, ascending=False)
                   .assign(net=bands[V] - shape_value),
@@ -3422,7 +3512,7 @@ def section_accumulation(ctx: Any) -> List[Flowable]:
         f"the trade most savers should take."))
 
     # -- 12.4 target ------------------------------------------------------
-    out.append(ctx.h2("14.4 Does the target have to be right?"))
+    out.append(ctx.h2("#accumulation.4 Does the target have to be right?"))
     out.append(ctx.p(
         "The target is the weakest link in the construction: it is the model's "
         "own median wealth path, which no investor could know in advance. We "
@@ -3488,7 +3578,7 @@ def section_accumulation(ctx: Any) -> List[Flowable]:
         max_height=8.0 * cm))
 
     # -- 12.5 horse race --------------------------------------------------
-    out.append(ctx.h2("14.5 Which signal, out of everything available?"))
+    out.append(ctx.h2("#accumulation.5 Which signal, out of everything available?"))
     out.append(ctx.p(
         "Eight candidate state variables, all signed so that positive means "
         "\"save more\", all bounded so that one sensitivity grid is meaningful "
@@ -3554,7 +3644,7 @@ def section_accumulation(ctx: Any) -> List[Flowable]:
         max_height=8.0 * cm))
 
     # -- 12.6 feasibility --------------------------------------------------
-    out.append(ctx.h2("14.6 How far does the contribution have to move?"))
+    out.append(ctx.h2("#accumulation.6 How far does the contribution have to move?"))
     out.append(ctx.p(
         "The unconstrained optimum may send the savings rate anywhere in the "
         "permitted range. No household budget works like that. Re-pricing the "
@@ -3596,7 +3686,7 @@ def section_accumulation(ctx: Any) -> List[Flowable]:
         max_height=8.0 * cm))
 
     # -- 12.7 where the value lands ---------------------------------------
-    out.append(ctx.h2("14.7 Where the gain lands, and who wants it"))
+    out.append(ctx.h2("#accumulation.7 Where the gain lands, and who wants it"))
     out.append(ctx.p(
         "A certainty equivalent is one number. It cannot say whether a rule "
         "lifted the middle of the distribution or insured the bottom of it, "
@@ -3639,7 +3729,7 @@ def section_accumulation(ctx: Any) -> List[Flowable]:
         max_height=8.0 * cm))
 
     # -- 12.8 timing ------------------------------------------------------
-    out.append(ctx.h2("14.8 When in a career is the balance worth reading?"))
+    out.append(ctx.h2("#accumulation.8 When in a career is the balance worth reading?"))
     out.append(ctx.p(
         "Switching the conditioning on only for part of the career prices each "
         "stretch of working life separately. Outside the window the rule falls "
@@ -3668,7 +3758,7 @@ def section_accumulation(ctx: Any) -> List[Flowable]:
         "decades left to recover; it becomes informative once a shortfall is "
         "large in absolute terms and there is little time left to fix it. The "
         "three tiles sum to approximately what the whole career is worth, so "
-        "unlike the two directions of Section 14.2 these stretches really are "
+        "unlike the two directions of Section #accumulation.2 these stretches really are "
         "close to separable."))
     out.append(ctx.p(
         "How hard the rule leans at each age is a different question from "
@@ -3685,7 +3775,7 @@ def section_accumulation(ctx: Any) -> List[Flowable]:
         max_height=8.0 * cm))
 
     # -- 12.9 interactions -------------------------------------------------
-    out.append(ctx.h2("14.9 What the value depends on"))
+    out.append(ctx.h2("#accumulation.9 What the value depends on"))
     out.extend(ctx.table(
         rows_from(by_strategy.sort_values(V, ascending=False)
                   .assign(net=by_strategy[V] - shape_value),
@@ -3803,7 +3893,7 @@ def section_valuation(ctx: Any) -> List[Flowable]:
     long_h = int(long["horizon_years"])
     multiple = float((1.0 + float(long["gap"])) ** long_h)
 
-    out: List[Flowable] = [ctx.h1("15. What the Market Costs When You Start")]
+    out: List[Flowable] = [ctx.h1("#valuation. What the Market Costs When You Start")]
     out.append(ctx.p(
         "Every result so far treats one starting point as interchangeable "
         "with another. The bootstrap draws calendar windows without regard to "
@@ -3817,7 +3907,7 @@ def section_valuation(ctx: Any) -> List[Flowable]:
         "throughout by a single rule — nothing may condition on information "
         "the investor could not have had at the moment they started."))
 
-    out.append(ctx.h2("15.1 The observable, and why it is not the obvious one"))
+    out.append(ctx.h2("#valuation.1 The observable, and why it is not the obvious one"))
     out.append(ctx.p(
         "The natural candidate is the dividend-price ratio the source "
         "workbook records. It cannot be used directly. That series is a "
@@ -3852,7 +3942,7 @@ def section_valuation(ctx: Any) -> List[Flowable]:
         "The median is retained as a robustness check on the pull of any one "
         "distressed market."))
 
-    out.append(ctx.h2("15.2 The yield forecasts returns"))
+    out.append(ctx.h2("#valuation.2 The yield forecasts returns"))
     out.extend(ctx.table(
         rows_from(predictive,
                   ["horizon_years", "observations", "correlation",
@@ -3894,7 +3984,7 @@ def section_valuation(ctx: Any) -> List[Flowable]:
             f"{long_h} years that is a factor of {f2(multiple, 2)} on "
             f"terminal wealth — not a rounding difference."))
 
-    out.append(ctx.h2("15.3 Which tercile, on what was knowable at the time"))
+    out.append(ctx.h2("#valuation.3 Which tercile, on what was knowable at the time"))
     out.append(ctx.p(
         "A look-ahead-free yield is only half of an implementable signal. The "
         "<i>boundaries</i> are the other half, and the obvious way to draw "
@@ -3957,7 +4047,7 @@ def section_valuation(ctx: Any) -> List[Flowable]:
         "on falling — which is precisely the gap between a signal fitted to a "
         "sample and one a person could have executed."))
 
-    out.append(ctx.h2("15.4 What it does to the allocation decision"))
+    out.append(ctx.h2("#valuation.4 What it does to the allocation decision"))
     out.append(ctx.p(
         "Each simulated lifetime takes the blended portfolio yield at the "
         "country-year its first block opened, and is bucketed against the "
@@ -4042,7 +4132,7 @@ def section_housing(ctx: Any) -> List[Flowable]:
     from src.housing import break_even_cost
     break_even = break_even_cost(five)
 
-    out: List[Flowable] = [ctx.h1("16. Housing as a Fifth Asset")]
+    out: List[Flowable] = [ctx.h1("#housing. Housing as a Fifth Asset")]
     out.append(ctx.p(
         "The historical sources behind this study measure four asset classes. "
         "Three of them — equity, bonds and bills — form the investable set "
@@ -4054,7 +4144,7 @@ def section_housing(ctx: Any) -> List[Flowable]:
         "Two obstacles stand in the way, and both are addressed rather than "
         "assumed away."))
 
-    out.append(ctx.h2("16.1 The index is smoothed"))
+    out.append(ctx.h2("#housing.1 The index is smoothed"))
     out.append(ctx.p(
         "House prices come from transactions and valuations rather than from "
         "a continuous auction, so this year's index still carries part of "
@@ -4089,7 +4179,7 @@ def section_housing(ctx: Any) -> List[Flowable]:
         "materially less volatility than equity even after the correction — "
         "which is exactly why the second obstacle cannot be waved through."))
 
-    out.append(ctx.h2("16.2 A building costs money to hold"))
+    out.append(ctx.h2("#housing.2 A building costs money to hold"))
     out.append(ctx.p(
         "A share certificate does not. Rates, insurance, maintenance and "
         "management fall on a property owner every year whether the asset "
@@ -4194,7 +4284,7 @@ def section_housing(ctx: Any) -> List[Flowable]:
             f"{pc(abs(moves[loser]), 0)} of the portfolio between the dearest "
             f"case and the free one — more than any other asset." + tail))
 
-    out.append(ctx.h2("16.3 Two checks on that answer"))
+    out.append(ctx.h2("#housing.3 Two checks on that answer"))
     out.append(ctx.p(
         "The result rests on two choices that could each be driving it, so "
         "both are tested rather than defended."))
@@ -4261,7 +4351,7 @@ def section_housing(ctx: Any) -> List[Flowable]:
                 f"cost the solved schedule holds "
                 f"{pc(float(working[widest]), 0)} of it while working and "
                 f"{pc(float(retired[widest]), 0)} in retirement. That is the "
-                f"opposite of the declining glide path Sections 8 and 9 "
+                f"opposite of the declining glide path Sections #glide and #allocation "
                 f"searched for and did not find in equities, and it has a "
                 f"reading: a retiree drawing on the portfolio wants the asset "
                 f"with the best return per unit of volatility, and once the "
@@ -4280,7 +4370,7 @@ def section_housing(ctx: Any) -> List[Flowable]:
     except FileNotFoundError:
         pass
 
-    out.append(ctx.h2("16.4 What this is not"))
+    out.append(ctx.h2("#housing.4 What this is not"))
     out.append(ctx.p(
         "The asset priced here is a liquid, continuously rebalanced, "
         "nationally diversified claim on a country's housing stock, because "
@@ -4327,9 +4417,9 @@ def section_mortgage(ctx: Any) -> List[Flowable]:
     lvr_ret = float(retired["lvr"].mean())
     best = curve.loc[curve["cec"].idxmax()]
 
-    out: List[Flowable] = [ctx.h1("17. The Mortgage")]
+    out: List[Flowable] = [ctx.h1("#mortgage. The Mortgage")]
     out.append(ctx.p(
-        "Section 16 prices housing as an asset owned outright. No household "
+        "Section #housing prices housing as an asset owned outright. No household "
         "owns it that way. A house is the one asset an ordinary person can "
         f"borrow {pc(LVR_CAP, 0)} against, at a rate close to their own "
         "government's, secured on the thing itself — and leaving that out "
@@ -4337,7 +4427,7 @@ def section_mortgage(ctx: Any) -> List[Flowable]:
         "holding cost out overstates it. This section puts the mortgage in and "
         "asks the two questions that matter: how much, and when."))
 
-    out.append(ctx.h2("17.1 How the loan is modelled"))
+    out.append(ctx.h2("#mortgage.1 How the loan is modelled"))
     out.append(ctx.p(
         "The decision variable is the <b>loan-to-value ratio</b>, because that "
         "is the number a lender quotes and a borrower chooses. A property "
@@ -4345,7 +4435,7 @@ def section_mortgage(ctx: Any) -> List[Flowable]:
         "(r_H − λ·i) / (1 − λ), where r_H is the real return on the property "
         "and i the real mortgage rate. That is the leverage multiple 1/(1 − λ) "
         "applied to housing alone, so the arithmetic is the same function "
-        "Section 10 uses for portfolio borrowing and the two remain "
+        "Section #leverage uses for portfolio borrowing and the two remain "
         "consistent."))
     out.append(ctx.p(
         "The rate is the borrower's <i>own country's</i> real short rate plus "
@@ -4357,7 +4447,7 @@ def section_mortgage(ctx: Any) -> List[Flowable]:
         "borrowing. How often that floor binds is reported rather than "
         "buried."))
 
-    out.append(ctx.h2("17.2 How much"))
+    out.append(ctx.h2("#mortgage.2 How much"))
     out.extend(ctx.table(
         rows_from(curve,
                   ["lvr", "leverage_multiple", "cec",
@@ -4399,7 +4489,7 @@ def section_mortgage(ctx: Any) -> List[Flowable]:
             f"concentration risk of a single property, none of which are "
             f"here."))
 
-    out.append(ctx.h2("17.3 When"))
+    out.append(ctx.h2("#mortgage.3 When"))
     declines = lvr_work > lvr_ret
     if declines:
         out.append(ctx.p(
@@ -4425,7 +4515,7 @@ def section_mortgage(ctx: Any) -> List[Flowable]:
     out.append(ctx.p(
         f"That is a statement about the <i>level and the slope</i> and "
         f"nothing finer. Subjecting the schedule to the same deviation "
-        f"profile Section 9 applies to solved allocations — resetting one "
+        f"profile Section #allocation applies to solved allocations — resetting one "
         f"age at a time to the schedule's own average and pricing what is "
         f"lost — leaves {len(material)} of {len(profile)} ages carrying a "
         f"decision worth more than five basis points, the largest worth "
@@ -4436,7 +4526,7 @@ def section_mortgage(ctx: Any) -> List[Flowable]:
         f"for free. The plotted line is jagged; the evidence underneath it is "
         f"not."))
 
-    out.append(ctx.h2("17.4 At what price of credit"))
+    out.append(ctx.h2("#mortgage.4 At what price of credit"))
     out.extend(ctx.table(
         rows_from(sweep,
                   ["spread", "mean_lvr", "lvr_working", "lvr_retired",
@@ -4478,9 +4568,9 @@ def section_mortgage(ctx: Any) -> List[Flowable]:
             f"which is the practical point: a household's mortgage rate, not "
             f"the return on housing, is what decides this."))
 
-    out.append(ctx.h2("17.5 Why this differs from Section 10"))
+    out.append(ctx.h2("#mortgage.5 Why this differs from Section #leverage"))
     out.append(ctx.p(
-        "Section 10 concluded that borrowing is barely worth doing. This "
+        "Section #leverage concluded that borrowing is barely worth doing. This "
         "section concludes that borrowing against a house is worth a great "
         "deal. Both use the same arithmetic and the same real bill rate plus "
         "a swept spread, so the two results have to be reconciled rather than "
@@ -4570,7 +4660,7 @@ def section_mortgage(ctx: Any) -> List[Flowable]:
     except FileNotFoundError:
         pass
 
-    out.append(ctx.h2("17.6 What this is not"))
+    out.append(ctx.h2("#mortgage.6 What this is not"))
     out.append(ctx.p(
         "The schedule is rebalanced annually, like everything else in this "
         "paper. For a mortgage that means costlessly redrawing the loan every "
@@ -4627,7 +4717,7 @@ def section_sleeve(ctx: Any) -> List[Flowable]:
     kindest = spectrum.loc[spectrum["gap_pct"].idxmax()]
     tightest = spectrum.iloc[0]
 
-    out: List[Flowable] = [ctx.h1("18. How the International Sleeve Is "
+    out: List[Flowable] = [ctx.h1("#sleeve. How the International Sleeve Is "
                                   "Weighted")]
     out.append(ctx.p(
         f"Every result to this point rests on an international equity leg "
@@ -4652,7 +4742,7 @@ def section_sleeve(ctx: Any) -> List[Flowable]:
         f"re-runs the headline comparison through the same summariser, so the "
         f"answers differ in the weighting and in nothing else."))
 
-    out.append(ctx.h2("18.1 The schemes, and why these ones"))
+    out.append(ctx.h2("#sleeve.1 The schemes, and why these ones"))
     out.append(ctx.p(
         "The database supports very few honest cross-country weights. A "
         "series has to be in comparable units across countries and complete "
@@ -4684,7 +4774,7 @@ def section_sleeve(ctx: Any) -> List[Flowable]:
         "<b>Every weight is lagged.</b> Sizes are read from the prior year "
         "and the inverse-volatility estimate uses a strictly prior window, so "
         "no weight is formed from a number the investor could not yet have "
-        "seen — the same discipline Section 15 applies to valuation terciles.",
+        "seen — the same discipline Section #valuation applies to valuation terciles.",
         "<b>Every panel is paired.</b> All schemes share their years, "
         "countries and availability mask, so the bootstrap draws identical "
         "calendar history for each.",
@@ -4702,10 +4792,10 @@ def section_sleeve(ctx: Any) -> List[Flowable]:
         f"GDP per capita and inverse volatility barely concentrate it at all "
         f"while tilting it somewhere quite different — towards rich countries "
         f"and towards historically stable ones respectively. That is what "
-        f"lets Section 18.3 separate the effect of concentration from the "
+        f"lets Section #sleeve.3 separate the effect of concentration from the "
         f"effect of the tilt."))
 
-    out.append(ctx.h2("18.2 The headline under every weighting"))
+    out.append(ctx.h2("#sleeve.2 The headline under every weighting"))
     out.extend(ctx.table(
         rows_from(ranking, ["label"] + schemes,
                   ["Strategy"] + [LABELS.get(s, s) for s in schemes],
@@ -4751,7 +4841,7 @@ def section_sleeve(ctx: Any) -> List[Flowable]:
             f"{ref_gap:+.2f}%, so the headline is not resting on the kindest "
             f"sleeve available to it."))
 
-    out.append(ctx.h2("18.3 Concentration, or the tilt?"))
+    out.append(ctx.h2("#sleeve.3 Concentration, or the tilt?"))
     corr = float(np.corrcoef(spectrum["effective_markets"],
                              spectrum["gap_pct"])[0, 1])
     near = spectrum[spectrum["effective_markets"] >= 0.85 * n_markets]
@@ -4820,7 +4910,7 @@ def section_sleeve(ctx: Any) -> List[Flowable]:
         "advantage over the 50/50 split tracks concentration or the tilt.",
         max_height=8.0 * cm))
 
-    out.append(ctx.h2("18.4 What this changes"))
+    out.append(ctx.h2("#sleeve.4 What this changes"))
     out.extend(ctx.bullets([
         ("The equal-weighted sleeve is the most favourable construction of "
          "those tested, and the levels in every table of this paper reflect "
@@ -4851,7 +4941,7 @@ def section_sleeve(ctx: Any) -> List[Flowable]:
         "None of these is capitalisation weighting. This section brackets the "
         "answer rather than settling it: the truth sits between an "
         "equal-weighted sleeve nobody could buy and PPP-based proxies that "
-        "misprice strong-currency markets. Section 20.1 carries this as a "
+        "misprice strong-currency markets. Section #limitations.1 carries this as a "
         "limitation.",
     ]))
     return out
@@ -4867,8 +4957,8 @@ def section_discussion(ctx: Any) -> List[Flowable]:
     swr_eq = float(swr[swr["strategy"] == "balanced_all_equity"]
                    ["safe_withdrawal_rate_at_5%_ruin"].iloc[0])
 
-    out: List[Flowable] = [ctx.h1("19. Discussion")]
-    out.append(ctx.h2("19.1 What the replication does and does not establish"))
+    out: List[Flowable] = [ctx.h1("#discussion. Discussion")]
+    out.append(ctx.h2("#discussion.1 What the replication does and does not establish"))
     out.append(ctx.p(
         "The central claim reproduces cleanly and survives an unusually wide "
         "robustness exercise. That is a real result and it should update "
@@ -4880,7 +4970,7 @@ def section_discussion(ctx: Any) -> List[Flowable]:
         "draw from the developed-market twentieth century, then a diversified "
         "all-equity portfolio dominates a declining glide path on essentially "
         "every metric a lifecycle investor would use. What has <i>not</i> been "
-        "established is that the future will resemble that process. Section 15 "
+        "established is that the future will resemble that process. Section #valuation "
         "removes part of that gap by conditioning on the valuation a lifetime "
         "starts at, which is the piece of the objection an investor can "
         "actually observe. What remains outside the model is the rest of it: "
@@ -4896,7 +4986,7 @@ def section_discussion(ctx: Any) -> List[Flowable]:
         "outside the support of the sampler, and no amount of block "
         "resampling can put it back in."))
 
-    out.append(ctx.h2("19.2 The hierarchy of levers"))
+    out.append(ctx.h2("#discussion.2 The hierarchy of levers"))
     out.append(ctx.p(
         "Reading the extensions together produces a ranking of what actually "
         "moves a retirement outcome, and it is not the ranking the industry's "
@@ -4910,10 +5000,11 @@ def section_discussion(ctx: Any) -> List[Flowable]:
         "<b>How much you save dominates what you hold.</b> The savings-rate "
         "dimension of the tornado analysis moves the outcome by more than most "
         "allocation choices, and conditioning the savings rate is worth more "
-        "than every allocation refinement in Sections 8 to 11 combined.",
+        "than every allocation refinement in Sections #hedging to #leverage "
+        "combined.",
         "<b>How you spend it matters more than expected.</b> The gap between "
-        "the best and worst spending rules in Section 7 is comparable to the "
-        "gap between the best and worst allocation strategies in Section 5.",
+        "the best and worst spending rules in Section #spending is comparable to the "
+        "gap between the best and worst allocation strategies in Section #baseline.",
         "<b>What you hold matters, but mostly through diversification.</b> The "
         "all-equity advantage is real, and it is driven by the international "
         "leg rather than by equity exposure as such.",
@@ -4925,27 +5016,23 @@ def section_discussion(ctx: Any) -> List[Flowable]:
         "borrowing costs. The advantage rounds to nothing across most of the "
         "plausible range of spreads, and what it does buy is bought out of "
         "the left tail. <b>Levering one asset is a different question</b>, "
-        "and Section 17.5 shows it has a different answer: at the same "
+        "and Section #mortgage.5 shows it has a different answer: at the same "
         "borrowing cost, a mortgage on the housing sleeve is worth several "
         "times what scaling the whole portfolio is worth, because it buys "
         "more of the holding that moves independently of the rest rather "
         "than more of what the investor already owns.",
         "<b>Borrowing is where age structure actually lives.</b> The two "
         "policies an unconstrained search makes genuinely age-varying in this "
-        "paper are both borrowing schedules — the leverage ratio of Section "
-        "10 and the loan-to-value of Section 17 — and both decline. The "
-        "equity share does not. What should fall as an investor ages is the "
-        "debt, not the risk.",
+        "paper are both borrowing schedules — the leverage ratio of "
+        "Section #leverage and the loan-to-value of Section #mortgage — and "
+        "both decline. The equity share does not. The glide path the industry "
+        "applies to equities has the right shape attached to the wrong "
+        "instrument: what should fall as an investor ages is the debt, not "
+        "the risk.",
         "<b>The valuation you start at is not an allocation lever at all.</b> "
         "It moves what a portfolio delivers without changing which portfolio "
         "to hold, so it belongs in a reader's expectations and their "
         "withdrawal planning rather than in their asset mix.",
-        "<b>What should decline with age is the borrowing, not the "
-        "equity.</b> The only schedule in this paper that an unconstrained "
-        "search makes genuinely age-declining is the mortgage: heavy "
-        "borrowing against the first house, paid down over a career. The "
-        "glide path the industry applies to equities has the right shape "
-        "attached to the wrong instrument.",
         "<b>Widening the opportunity set is a bigger lever than refining "
         "it.</b> Adding a fifth asset class buys more, at a low enough "
         "holding cost, than every refinement within the four existing sleeves "
@@ -4958,7 +5045,7 @@ def section_discussion(ctx: Any) -> List[Flowable]:
         "should read that list from the top, not from the bottom. The "
         "profession's attention is allocated in roughly the reverse order."))
 
-    out.append(ctx.h2("19.3 Why the pay cheque beats the portfolio"))
+    out.append(ctx.h2("#discussion.3 Why the pay cheque beats the portfolio"))
     out.append(ctx.p(
         "The single most surprising result in the paper is that the best "
         "state variable for a savings rule is labour income relative to its "
@@ -4981,7 +5068,7 @@ def section_discussion(ctx: Any) -> List[Flowable]:
         "no balance lookup and no arithmetic, and on this model it outperforms "
         "the wealth-target advice that dominates financial planning."))
 
-    out.append(ctx.h2("19.4 Implications for default design"))
+    out.append(ctx.h2("#discussion.4 Implications for default design"))
     out.append(ctx.p(
         "If the results here were taken at face value by a plan sponsor, the "
         "implied redesign would not be \"raise the equity share of the "
@@ -4990,8 +5077,8 @@ def section_discussion(ctx: Any) -> List[Flowable]:
     out.extend(ctx.bullets([
         "<b>Default the contribution schedule, not just the portfolio.</b> "
         "Auto-escalation tied to pay increases captures the strongest signal "
-        "in Section 14 and requires no member decision.",
-        "<b>Default the drawdown policy.</b> Section 7 shows the choice of "
+        "in Section #accumulation and requires no member decision.",
+        "<b>Default the drawdown policy.</b> Section #spending shows the choice of "
         "withdrawal rule is worth as much as the choice of portfolio, and it "
         "is almost never defaulted.",
         f"<b>Stop quoting four percent.</b> On this panel the sustainable rate "
@@ -5007,7 +5094,7 @@ def section_discussion(ctx: Any) -> List[Flowable]:
         "has no disutility of labour, no taxes, no fees, no owner-occupied "
         "housing and no "
         "behavioural constraints, and each of those would temper the "
-        "conclusions in Section 16's direction."))
+        "conclusions in Section #housing's direction."))
     return out
 
 
@@ -5018,18 +5105,18 @@ def section_limitations(ctx: Any) -> List[Flowable]:
     f = ctx.f
     p = f.panel
     pr, adv = f.provenance, f.panel_advantage
-    out: List[Flowable] = [ctx.h1("20. Limitations and Threats to Validity")]
+    out: List[Flowable] = [ctx.h1("#limitations. Limitations and Threats to Validity")]
     out.append(ctx.p(
         "This section is deliberately long. A replication that reports only "
         "the ways in which it succeeded is not much use."))
 
-    out.append(ctx.h2("20.1 The cross-section is sixteen countries"))
+    out.append(ctx.h2("#limitations.1 The cross-section is sixteen countries"))
     out.append(ctx.p(
         f"This is the largest weakness in the paper, and it is a weakness we "
         f"chose deliberately. The developed-market universe runs to 38 "
         f"markets. We cover {pr['n_countries']}, because the other "
         f"{pr['n_removed']} have no recorded return series in any openly "
-        f"licensed source. Section 3.6 audits what we do use; Section 3.6.1 "
+        f"licensed source. Section #data.6 audits what we do use; Section #data.6.1 "
         f"reports what the excluded countries have and why it is not "
         f"enough."))
     out.append(ctx.p(
@@ -5044,10 +5131,10 @@ def section_limitations(ctx: Any) -> List[Flowable]:
 
     out.append(ctx.p(
         "The last five years of the series are separately flagged as "
-        "unverified in Section 3.6, on a variance test that every country in "
+        "unverified in Section #data.6, on a variance test that every country in "
         "the sample fails in the same direction."))
 
-    out.append(ctx.h2("20.2 What the bootstrap cannot represent"))
+    out.append(ctx.h2("#limitations.2 What the bootstrap cannot represent"))
     out.extend(ctx.bullets([
         "<b>No valuation conditioning.</b> Blocks are drawn without regard to "
         "the starting dividend yield or price-earnings ratio, so a simulated "
@@ -5068,14 +5155,14 @@ def section_limitations(ctx: Any) -> List[Flowable]:
         "the exercise. We quantify this rather than correct it.",
     ]))
 
-    out.append(ctx.h2("20.3 What the lifecycle model omits"))
+    out.append(ctx.h2("#limitations.3 What the lifecycle model omits"))
     hs, wg = pr.get("housing", {}), pr.get("wages", {})
     housing_bullet = (
         "<b>No housing.</b> For most households the primary residence is the "
         "largest asset and the mortgage the largest liability, and both "
         "interact with inflation in ways the financial portfolio does not. "
         "This is the single largest omission and it is not a small one."
-        + (f" We do hold the data: Section 3.6.2 audits "
+        + (f" We do hold the data: Section #data.6.2 audits "
            f"{hs['country_years']:,} country-years of observed housing "
            f"returns and explains why an appraisal-smoothed index is not a "
            f"fourth sleeve. That is a reason not to use it as written, not a "
@@ -5083,7 +5170,7 @@ def section_limitations(ctx: Any) -> List[Flowable]:
            else ""))
     wage_bullet = (
         f"<b>No economy-wide wage growth.</b> The income profile is an age "
-        f"effect only. Section 3.6.3 measures what that leaves out — a median "
+        f"effect only. Section #data.6.3 measures what that leaves out — a median "
         f"{pc(wg['measured'], 2)} a year across {wg['countries']} countries, "
         f"which compounds to {f2(wg['career_multiple'], 2)}× over a career — "
         f"and finds the bias runs against our conclusion, because less human "
@@ -5093,7 +5180,7 @@ def section_limitations(ctx: Any) -> List[Flowable]:
         "<b>No taxes.</b> Every return is pre-tax and every withdrawal is "
         "untaxed. Tax-deferred and taxable accounts behave differently under "
         "the same allocation, and the asymmetric treatment of capital gains "
-        "and income would change the ranking of spending rules in Section 7 "
+        "and income would change the ranking of spending rules in Section #spending "
         "more than it would change the allocation ranking.",
         "<b>No fees.</b> A constant annual fee differential between an "
         "all-equity index and a target-date fund would move the results in the "
@@ -5104,19 +5191,19 @@ def section_limitations(ctx: Any) -> List[Flowable]:
         "<b>No annuities.</b> A real annuity is the natural competitor to a "
         "withdrawal rule and is absent entirely.",
         "<b>No disutility of labour.</b> This is why the retirement-timing "
-        "results of Section 12 require a matched comparison, and it means the "
+        "results of Section #retirement require a matched comparison, and it means the "
         "model can never say when someone <i>should</i> retire, only what "
         "conditioning the date is worth.",
         "<b>Deterministic mortality.</b> Death at 93 with certainty. Real "
         "longevity risk is two-sided and would raise the value of the "
         "actuarial spending rules relative to the fixed-horizon ones.",
         "<b>No behavioural constraints.</b> Every rule here assumes the "
-        "investor executes it. Section 14.6 prices the cost of a constrained "
+        "investor executes it. Section #accumulation.6 prices the cost of a constrained "
         "contribution but nothing prices the probability that a saver "
         "abandons an all-equity portfolio in the middle of a 60% drawdown.",
     ] if x]))
 
-    out.append(ctx.h2("20.4 Specification sensitivities we know about"))
+    out.append(ctx.h2("#limitations.4 Specification sensitivities we know about"))
     out.append(ctx.p(
         "Three modelling choices are load-bearing and a reader should know "
         "where they bite."))
@@ -5138,32 +5225,32 @@ def section_limitations(ctx: Any) -> List[Flowable]:
         "of two.",
     ]))
 
-    out.append(ctx.h2("20.5 What the new searches assume"))
+    out.append(ctx.h2("#limitations.5 What the new searches assume"))
     out.extend(ctx.bullets([
-        "<b>The simplex search is a coordinate search.</b> Section 9 reports "
+        "<b>The simplex search is a coordinate search.</b> Section #allocation reports "
         "restarts from three corners and they agree, but coordinate ascent "
         "offers no guarantee of a global optimum in a 204-dimensional space "
         "and none is claimed.",
-        "<b>The opportunity set is still narrow.</b> Section 16 adds housing "
+        "<b>The opportunity set is still narrow.</b> Section #housing adds housing "
         "as a fifth asset, but there is no credit, no commodities and no "
         "inflation-linked bond, and an inflation-linked bond in particular "
-        "would change the fixed-income result of Section 9 more than any "
+        "would change the fixed-income result of Section #allocation more than any "
         "refinement within the sleeves that are present.",
         "<b>The valuation conditioning applies to the first block only.</b> "
         "A lifetime is a chain of calendar windows and only the first is a "
         "starting condition; the rest are the future, which no investor "
-        "chooses. Section 15 therefore measures the effect of the opening "
+        "chooses. Section #valuation therefore measures the effect of the opening "
         "decade's valuation on a sixty-eight-year outcome, diluted by "
         "everything that follows. A design that made the whole chain "
         "valuation-dependent would report a larger effect and would be "
         "assuming a great deal more.",
-        "<b>The de-smoothing of housing is itself a model.</b> Section 16 "
+        "<b>The de-smoothing of housing is itself a model.</b> Section #housing "
         "inverts a first-order filter, which is the standard correction and "
         "not necessarily the right one: if house price indices carry "
         "higher-order smoothing, the true volatility is higher than the "
         "correction restores and housing is worth less than reported. The "
         "direction of that error is known even though its size is not.",
-        "<b>The mortgage is rebalanced annually.</b> Section 17 redraws the "
+        "<b>The mortgage is rebalanced annually.</b> Section #mortgage redraws the "
         "loan every year at no cost to hit a target loan-to-value. Real "
         "mortgages amortise on a fixed schedule, cost several percent of the "
         "property to refinance, and are called on missed payments rather "
@@ -5171,20 +5258,20 @@ def section_limitations(ctx: Any) -> List[Flowable]:
         "leverage, not a financing plan, and it prices no mortgage insurance "
         "and no tax deductibility in either direction.",
         "<b>Housing is priced as an index, not as a house.</b> The asset in "
-        "Section 16 is a liquid, continuously rebalanced, nationally "
+        "Section #housing is a liquid, continuously rebalanced, nationally "
         "diversified claim on the housing stock. A single leveraged "
         "owner-occupied property shares almost none of those properties, and "
         "nothing in this paper speaks to it.",
         "<b>Leverage is modelled with limited liability</b> and a floating "
         "borrowing rate, rebalanced annually. Real margin lending liquidates "
         "at a threshold rather than at zero and reprices continuously, both of "
-        "which would make borrowing less attractive than Section 10 finds it.",
+        "which would make borrowing less attractive than Section #leverage finds it.",
         "<b>No borrowing constraint binds by quantity.</b> The model lets an "
         "investor borrow three times their financial capital at a spread; no "
         "lender would extend that against a retirement account.",
     ]))
 
-    out.append(ctx.h2("20.6 Statistical caveats"))
+    out.append(ctx.h2("#limitations.6 Statistical caveats"))
     out.append(ctx.p(
         "Certainty equivalents are reported without standard errors. Under "
         "common random numbers the <i>differences</i> between policies are far "
@@ -5204,7 +5291,7 @@ def section_conclusion(ctx: Any) -> List[Flowable]:
     f = ctx.f
     adv_tdf = f.advantage("balanced_all_equity", "target_date_fund")
     lottery = f.table("retirement_lottery_stats").iloc[0]
-    out: List[Flowable] = [ctx.h1("21. Conclusion")]
+    out: List[Flowable] = [ctx.h1("#conclusion. Conclusion")]
     out.append(ctx.p(
         f"We set out to reproduce a specific empirical claim and ended up with "
         f"a hierarchy. The claim reproduces: on a "
@@ -5295,7 +5382,7 @@ REFERENCES = [
     "<i>Review of Financial Studies</i>, 34(8), 3572–3607.",
     "Fidelity Investments. \"Retirement guidelines: how much should I save?\" "
     "Viewpoints. The 1×/3×/6×/8×/10× salary-multiple ladder used as an "
-    "alternative wealth target in Section 14.4.",
+    "alternative wealth target in Section #accumulation.4.",
     "Geltner, D. (1991). \"Smoothing in Appraisal-Based Returns.\" "
     "<i>Journal of Real Estate Finance and Economics</i>, 4(3), 327–345.",
     "Guyton, J. T., and Klinger, W. J. (2006). \"Decision Rules and Maximum "
@@ -5340,21 +5427,21 @@ def appendix_parameters(ctx: Any) -> List[Flowable]:
         ["Parameter", "Symbol", "Value", "Where it is used"],
         ["Start age", "—", f"{int(lc['age_start'])}", "All"],
         ["Retirement age", "—", f"{int(lc['age_retire'])}",
-         "All; varied in §6.4 and made endogenous in §12"],
+         "All; varied in §#sensitivity.4 and made endogenous in §#retirement"],
         ["Death age", "—", f"{int(lc['age_death'])}",
-         "All; varied in §6.4"],
+         "All; varied in §#sensitivity.4"],
         ["Savings rate", "s", f"{float(lc['savings_rate']):.0%}",
-         "All; solved in §13 and conditioned in §14"],
+         "All; solved in §#saving and conditioned in §#accumulation"],
         ["Income profile (linear)", "b₁", f"{float(lc['income']['b1']):g}",
          "Labour income"],
         ["Income profile (quadratic)", "b₂", f"{float(lc['income']['b2']):g}",
          "Labour income"],
         ["Permanent shock s.d.", "σ<sub>p</sub>",
          f"{float(lc['income']['permanent_shock_sd']):.2f}",
-         "Labour income; scaled in §14.9"],
+         "Labour income; scaled in §#accumulation.9"],
         ["Transitory shock s.d.", "σ<sub>t</sub>",
          f"{float(lc['income']['transitory_shock_sd']):.2f}",
-         "Labour income; scaled in §14.9"],
+         "Labour income; scaled in §#accumulation.9"],
         ["Social-security formula", "—", str(lc["social_security"]["formula"]),
          "Retirement income floor"],
         ["PIA bend point 1", "—", f"{float(lc['social_security']['pia_bend1']):.2f}",
@@ -5366,9 +5453,9 @@ def appendix_parameters(ctx: Any) -> List[Flowable]:
                     for k in ("pia_rate1", "pia_rate2", "pia_rate3")),
          "Successive tranches of career-average earnings"],
         ["Withdrawal rule", "—", str(lc["retirement"]["rule"]),
-         "Baseline; eight families compared in §7"],
+         "Baseline; eight families compared in §#spending"],
         ["Withdrawal rate", "—", f"{float(lc['retirement']['rule_rate']):.0%}",
-         "Baseline; swept in §5.4 and §6.4"],
+         "Baseline; swept in §#baseline.4 and §#sensitivity.4"],
         ["Discount factor", "β", f"{float(ut['discount_factor']):g}",
          "Utility"],
         ["Risk aversions", "γ",
@@ -5378,17 +5465,17 @@ def appendix_parameters(ctx: Any) -> List[Flowable]:
          ", ".join(f"{float(v):g}" for v in ut["epstein_zin_ies"]),
          "Epstein–Zin only"],
         ["Bequest weight", "θ", f"{float(ut['bequest_weight']):g}",
-         "Utility; pivoted in §7.1"],
+         "Utility; pivoted in §#spending.1"],
         ["Bequest shift", "κ", f"{float(ut['bequest_shift']):g}",
          "De Nardi (2004) specification"],
         ["Consumption floor", "—", f"{float(ut['consumption_floor']):g}",
          "Numerical guard only"],
         ["Evaluation window", "—", str(ut["consumption_window"]),
-         "Allocation comparisons; whole lifetime in §12–§14"],
+         "Allocation comparisons; whole lifetime in §#retirement–§#accumulation"],
         ["Paths per strategy", "N", f"{int(bs['n_paths']):,}", "All"],
         ["Horizon", "H", f"{int(bs['horizon_years'])}", "All"],
         ["Mean block length", "—", f"{float(bs['mean_block_years']):.0f} years",
-         "Bootstrap; swept in §4.1"],
+         "Bootstrap; swept in §#methods.1"],
         ["Block length range", "—",
          f"{int(bs['min_block_years'])}–{int(bs['max_block_years'])} years",
          "Bootstrap"],
@@ -5402,7 +5489,8 @@ def appendix_parameters(ctx: Any) -> List[Flowable]:
     out.append(ctx.p(
         "Every parameter below is read from a single YAML configuration file. "
         "No value is hard-coded in the simulation modules, which is what makes "
-        "the sweeps of Sections 6, 11 and 12 mechanical rather than manual."))
+        "the sweeps of Sections #sensitivity, #leverage and #housing mechanical "
+        "rather than manual."))
     out.extend(ctx.table(
         rows, "The complete baseline parameter set",
         note="Section references indicate where each parameter is varied. "
@@ -5512,7 +5600,7 @@ def appendix_supplementary(ctx: Any) -> List[Flowable]:
         "The deterministic labour-income profile",
         note="Before permanent and transitory shocks. The hump peaks in the "
              "early fifties, which is what makes the solved savings profile of "
-             "§13.2 hump-shaped at moderate risk aversion."))
+             "§#saving.2 hump-shaped at moderate risk aversion."))
     out.extend(ctx.table(
         rows_from(ss, ["career_average_earnings", "annual_benefit",
                        "replacement_rate"],
@@ -5585,36 +5673,36 @@ def appendix_software(ctx: Any) -> List[Flowable]:
         ["Stage", "What it owns", "Paper section"],
         ["Panel construction", "Deflation to real returns, the leave-one-out "
          "international leg, currency-hedged legs, coverage and gap "
-         "diagnostics, per-cell provenance", "§3"],
+         "diagnostics, per-cell provenance", "§#data"],
         ["Sampler", "The stationary block bootstrap with gap-respecting "
-         "admissibility; moment and persistence diagnostics", "§4.1"],
+         "admissibility; moment and persistence diagnostics", "§#methods.1"],
         ["Lifecycle simulator", "The wealth recursion, income process, "
-         "social-security schedule and strategy definitions", "§4.2"],
+         "social-security schedule and strategy definitions", "§#methods.2"],
         ["Preferences", "CRRA and Epstein–Zin certainty equivalents, the "
-         "bequest term, shortfall and ruin metrics", "§4.3"],
+         "bequest term, shortfall and ruin metrics", "§#methods.3"],
         ["Sweep engine", "Parameter sweeps under common random numbers; "
-         "tornado and crossover analysis", "§6"],
+         "tornado and crossover analysis", "§#sensitivity"],
         ["Spending rules", "Eight families of withdrawal policy behind a "
-         "single interface", "§7"],
+         "single interface", "§#spending"],
         ["Glide-path solver", "A batched evaluator and coordinate ascent over "
-         "the age-by-asset schedule", "§8"],
+         "the age-by-asset schedule", "§#glide"],
         ["Allocation solver", "The weight simplex solved at every age: "
          "lattice search then pairwise-exchange ascent, over four assets or "
-         "five", "§9, §16"],
+         "five", "§#allocation, §#housing"],
         ["Leverage", "A levered evaluator, the cost-of-credit sweep and the "
-         "age-varying leverage schedule", "§10"],
+         "age-varying leverage schedule", "§#leverage"],
         ["Hedging", "Covered-interest-parity hedged legs, break-even cost and "
-         "optimal hedge ratio", "§11"],
+         "optimal hedge ratio", "§#hedging"],
         ["Path-dependent engine", "Endogenous retirement dates and "
-         "state-conditioned saving", "§12–§14"],
+         "state-conditioned saving", "§#retirement–§#accumulation"],
         ["Savings rules", "Rule families, the fixed-mean shape solver and "
-         "matched-rate scoring", "§13–§14"],
+         "matched-rate scoring", "§#saving–§#accumulation"],
         ["Valuation", "The look-ahead-free trailing dividend yield, the "
-         "structural no-leak check and the valuation buckets", "§15"],
+         "structural no-leak check and the valuation buckets", "§#valuation"],
         ["Housing", "De-smoothing the appraisal index, and the five-asset "
-         "simplex re-solved at each holding cost", "§16"],
+         "simplex re-solved at each holding cost", "§#housing"],
         ["Mortgage", "Leverage applied to the housing sleeve alone, and the "
-         "loan-to-value schedule solved by age", "§17"],
+         "loan-to-value schedule solved by age", "§#mortgage"],
     ]
     out.extend(ctx.table(
         stages, "How the computation is organised",
@@ -5628,7 +5716,7 @@ def appendix_software(ctx: Any) -> List[Flowable]:
         "is what makes a hundred thousand lifetimes per strategy — and the "
         "tens of thousands of policy evaluations the optimisers require — "
         "tractable on a single core, which in turn is what makes the "
-        "sensitivity analysis of Section 6 affordable enough to run "
+        "sensitivity analysis of Section #sensitivity affordable enough to run "
         "exhaustively rather than selectively."))
 
     out.append(ctx.h2("D.3 Verification"))
@@ -5644,7 +5732,7 @@ def appendix_software(ctx: Any) -> List[Flowable]:
         "The batched glide-path evaluator reproduces the reference simulator "
         "to a stated floating-point tolerance.",
         "Zero-sensitivity conditioning rules reproduce their own base age "
-        "profile exactly, which is what makes the incremental values in §14 "
+        "profile exactly, which is what makes the incremental values in §#accumulation "
         "meaningful.",
         "The block sampler never draws across a data gap, verified against "
         "the run-length structure directly.",
@@ -5671,6 +5759,28 @@ def appendix_software(ctx: Any) -> List[Flowable]:
     return out
 
 
+def _check_section_order(parts: List[Flowable]) -> None:
+    """Fail the build if `story` and :data:`SECTION_ORDER` have drifted apart.
+
+    The tokens guarantee that a cross-reference and its heading agree on a
+    number. They cannot guarantee that the sections are *emitted* in the order
+    the tuple claims -- a reordered tuple with an unreordered `story` would
+    silently produce a paper numbered 1, 2, 7, 4, ... So the numbers are read
+    back off the headings actually built and checked to run 1..N in sequence.
+    """
+    seen: List[int] = []
+    for flowable in parts:
+        style = getattr(getattr(flowable, "style", None), "name", "")
+        text = getattr(flowable, "text", "")
+        if style == "h1" and text[:1].isdigit():
+            seen.append(int(text.split(".", 1)[0]))
+    expected = list(range(1, len(SECTION_ORDER) + 1))
+    if seen != expected:
+        raise AssertionError(
+            "section order in story() does not match SECTION_ORDER: "
+            f"emitted {seen}, expected {expected}")
+
+
 # ---------------------------------------------------------------------------
 # Assembly
 # ---------------------------------------------------------------------------
@@ -5682,20 +5792,22 @@ def story(ctx: Any) -> List[Flowable]:
     parts += section_background(ctx)
     parts += section_data(ctx)
     parts += section_methods(ctx)
+    # The order below must match SECTION_ORDER; the assertion in `story`
+    # fails the build if the two ever drift apart.
     parts += section_baseline(ctx)
     parts += section_sensitivity(ctx)
-    parts += section_spending(ctx)
+    parts += section_sleeve(ctx)
+    parts += section_hedging(ctx)
     parts += section_glide(ctx)
     parts += section_allocation(ctx)
     parts += section_leverage(ctx)
-    parts += section_hedging(ctx)
-    parts += section_retirement(ctx)
-    parts += section_saving(ctx)
-    parts += section_accumulation(ctx)
-    parts += section_valuation(ctx)
     parts += section_housing(ctx)
     parts += section_mortgage(ctx)
-    parts += section_sleeve(ctx)
+    parts += section_valuation(ctx)
+    parts += section_saving(ctx)
+    parts += section_accumulation(ctx)
+    parts += section_retirement(ctx)
+    parts += section_spending(ctx)
     parts += section_discussion(ctx)
     parts += section_limitations(ctx)
     parts += section_conclusion(ctx)
@@ -5704,4 +5816,5 @@ def story(ctx: Any) -> List[Flowable]:
     parts += appendix_panel(ctx)
     parts += appendix_supplementary(ctx)
     parts += appendix_software(ctx)
+    _check_section_order(parts)
     return parts

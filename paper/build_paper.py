@@ -31,6 +31,7 @@ from reportlab.platypus import (BaseDocTemplate, Flowable, Frame,  # noqa: E402
                                 Spacer, Table)
 from reportlab.platypus.tableofcontents import TableOfContents     # noqa: E402
 
+import content                                                     # noqa: E402
 import style as st                                                 # noqa: E402
 from facts import Facts                                            # noqa: E402
 
@@ -113,23 +114,34 @@ class Context:
         self.table_index: List[str] = []
 
     # -- text -------------------------------------------------------------
+    @staticmethod
+    def _r(text: str) -> str:
+        """Resolve ``#section`` tokens against the paper's reading order.
+
+        Every string that reaches the page goes through here, so a heading
+        and a cross-reference to it can never disagree: both are rendered
+        from ``content.SECTION_ORDER``. Code blocks are the one exception --
+        a shell command may legitimately contain a ``#``.
+        """
+        return content.resolve_sections(text)
+
     def h1(self, text: str) -> Paragraph:
-        return Paragraph(text, self.s["h1"])
+        return Paragraph(self._r(text), self.s["h1"])
 
     def h2(self, text: str) -> Paragraph:
-        return Paragraph(text, self.s["h2"])
+        return Paragraph(self._r(text), self.s["h2"])
 
     def h3(self, text: str) -> Paragraph:
-        return Paragraph(text, self.s["h3"])
+        return Paragraph(self._r(text), self.s["h3"])
 
     def p(self, text: str) -> Paragraph:
-        return Paragraph(text, self.s["body"])
+        return Paragraph(self._r(text), self.s["body"])
 
     def note(self, text: str) -> Paragraph:
-        return Paragraph(text, self.s["note"])
+        return Paragraph(self._r(text), self.s["note"])
 
     def quote(self, text: str) -> Paragraph:
-        return Paragraph(text, self.s["quote"])
+        return Paragraph(self._r(text), self.s["quote"])
 
     def code(self, text: str) -> Paragraph:
         body = text.strip("\n").replace("&", "&amp;").replace("<", "&lt;") \
@@ -137,7 +149,7 @@ class Context:
         return Paragraph(body, self.s["code"])
 
     def bullets(self, items: Sequence[str]) -> List[Paragraph]:
-        return [Paragraph(f"•&nbsp;&nbsp;{item}", self.s["bullet"])
+        return [Paragraph(f"•&nbsp;&nbsp;{self._r(item)}", self.s["bullet"])
                 for item in items]
 
     def equation(self, text: str, tag: bool = True) -> Paragraph:
@@ -153,6 +165,7 @@ class Context:
     def figure(self, name: str, caption: str, max_height: float = 9.6 * cm,
                width_scale: float = 1.0) -> List[Flowable]:
         self._figure_no += 1
+        caption = self._r(caption)
         self.figure_index.append(f"Figure {self._figure_no}. {caption}")
         image = st.figure_flowable(self.f.figure(name),
                                    self.width * width_scale, max_height)
@@ -163,6 +176,12 @@ class Context:
     def table(self, rows: Sequence[Sequence[str]], caption: str,
               note: str | None = None, **kwargs: Any) -> List[Flowable]:
         self._table_no += 1
+        caption = self._r(caption)
+        note = self._r(note) if note else note
+        # Cells carry cross-references too -- Appendix A cites the section
+        # each parameter is varied in -- so they are resolved as well.
+        rows = [[self._r(cell) if isinstance(cell, str) else cell
+                 for cell in row] for row in rows]
         self.table_index.append(f"Table {self._table_no}. {caption}")
         head = Paragraph(f"Table {self._table_no}. {caption}",
                          self.s["caption_head"])
@@ -198,7 +217,6 @@ def build(out_path: str, config_path: str = "config.yaml") -> Path:
     facts = Facts(config_path=config_path)
     ctx = Context(facts, styles)
 
-    import content
     story = content.story(ctx)
 
     prose = "".join(flowable.getPlainText() for flowable in _walk(story)
