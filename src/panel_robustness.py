@@ -323,3 +323,188 @@ def verdict(influence_frame: pd.DataFrame, jack: Mapping[str, Any],
         out["weakest_window"] = str(weakest["window"])
         out["weakest_window_gap_pct"] = float(weakest["gap_pct"])
     return out
+
+
+# ---------------------------------------------------------------------------
+# Why a particular country matters: the two channels a deletion works through
+# ---------------------------------------------------------------------------
+def channels(loco: pd.DataFrame, full: pd.DataFrame,
+             pair: Tuple[str, str] = DEFAULT_PAIR) -> pd.DataFrame:
+    """Split each deletion into the sleeve channel and the domestic channel.
+
+    Every country sits in the panel twice over: once as somebody's home
+    market, and once inside the fifteen-market average that everybody *else*
+    holds as their international leg. The two strategies whose ordering is at
+    stake weight those roles differently -- all-international is entirely
+    sleeve, the 50/50 split is half sleeve and half domestic -- so writing
+    ``S`` for the effect on the first and ``D`` for the implied effect on the
+    domestic half,
+
+        change in all-international  = S
+        change in the 50/50 split    = (S + D) / 2
+        change in the gap            = (S - D) / 2
+
+    A country whose value lies mostly in other people's sleeves has a large
+    negative ``S`` and narrows the gap when removed. One whose value lies
+    mostly in being its own home market has a large negative ``D`` and widens
+    it. The decomposition is a first-order reading of a non-linear objective,
+    so ``implied_shift_pct`` is reported beside the measured shift rather than
+    instead of it.
+    """
+    cec = _cec_column(full)
+    base = {r["strategy"]: float(r[cec]) for _, r in full.iterrows()}
+    challenger, incumbent = pair
+    baseline_gap = gap(full, pair)
+    rows: List[Dict[str, Any]] = []
+    for dropped in loco["dropped"].unique():
+        block = loco[loco["dropped"] == dropped]
+        by_key = {r["strategy"]: float(r[cec]) for _, r in block.iterrows()}
+        if challenger not in by_key or incumbent not in by_key:
+            continue
+        s = (by_key[challenger] / base[challenger] - 1.0) * 100.0
+        both = (by_key[incumbent] / base[incumbent] - 1.0) * 100.0
+        d = 2.0 * both - s
+        rows.append({
+            "dropped": str(dropped),
+            "sleeve_channel_pct": s,
+            "domestic_channel_pct": d,
+            "implied_shift_pct": 0.5 * (s - d),
+            "measured_shift_pct": gap(block, pair) - baseline_gap,
+            # Which role the deletion moved more, in magnitude. Labelling by
+            # the sign of S - D instead would call a deletion that helps the
+            # sleeve a great deal and the domestic pool a little "domestic".
+            "channel": "sleeve" if abs(s) >= abs(d) else "domestic",
+        })
+    return pd.DataFrame.from_records(rows).sort_values(
+        "measured_shift_pct").reset_index(drop=True)
+
+
+def market_profile(cfg: Mapping[str, Any], panel: dl.Panel,
+                   weighting: str | None = None) -> pd.DataFrame:
+    """Each market's own returns, and what removing it does to the sleeve.
+
+    Two columns carry the explanation. ``volatility_drag`` is the wedge
+    between a market's arithmetic and geometric mean -- what its own residents
+    lose to its volatility, and what an averaged sleeve of fifteen markets
+    diversifies away instead of paying. ``sleeve_geometric_delta`` is measured
+    rather than argued: the panel is rebuilt without the market and the
+    pooled sleeve's compound return recomputed.
+
+    No simulation is involved, so this is cheap next to the delete-one runs it
+    explains.
+    """
+    def pooled(p: dl.Panel) -> Dict[str, float]:
+        x = p.intl_eq[p.available]
+        x = x[np.isfinite(x)]
+        log = np.log1p(np.clip(x, -0.99, None))
+        return {"mean": float(x.mean()), "sd": float(x.std(ddof=1)),
+                "geometric": float(np.expm1(log.mean()))}
+
+    base = pooled(panel)
+    rows: List[Dict[str, Any]] = []
+    for iso in panel.countries:
+        kept = [c for c in panel.countries if c != iso]
+        without = pooled(dl.build_tier_a(cfg, weighting=weighting,
+                                         countries=kept))
+        k = panel.country_index(iso)
+        own = panel.dom_eq[panel.available[:, k], k]
+        own = own[np.isfinite(own)]
+        arithmetic = float(own.mean())
+        geometric = float(np.expm1(
+            np.log1p(np.clip(own, -0.99, None)).mean()))
+        rows.append({
+            "iso": str(iso),
+            "own_arithmetic": arithmetic,
+            "own_geometric": geometric,
+            "own_sd": float(own.std(ddof=1)),
+            "volatility_drag": arithmetic - geometric,
+            "sleeve_geometric_delta": (without["geometric"]
+                                       - base["geometric"]) * 100.0,
+            "sleeve_sd_delta": (without["sd"] - base["sd"]) * 100.0,
+        })
+    frame = pd.DataFrame.from_records(rows)
+    frame["arithmetic_rank"] = frame["own_arithmetic"].rank(ascending=False)
+    frame["geometric_rank"] = frame["own_geometric"].rank(ascending=False)
+    frame["drag_rank"] = frame["volatility_drag"].rank(ascending=False)
+    return frame
+
+
+def explain(profile: pd.DataFrame, influence_frame: pd.DataFrame,
+            channel_frame: pd.DataFrame) -> Dict[str, Any]:
+    """Classify what actually drives the delete-one pattern.
+
+    Returns the correlation between a deletion's measured shift and what it
+    does to the sleeve's compound return, along with the two poles of the
+    panel -- the market worth most to everyone else's sleeve and the one worth
+    most to its own residents -- so the prose can name them instead of
+    asserting a mechanism.
+    """
+    merged = profile.merge(
+        influence_frame[["dropped", "shift_pct"]],
+        left_on="iso", right_on="dropped").merge(
+        channel_frame[["dropped", "sleeve_channel_pct",
+                       "domestic_channel_pct", "channel"]], on="dropped")
+    out: Dict[str, Any] = {"n": int(len(merged))}
+    if len(merged) > 2:
+        for column in ("sleeve_geometric_delta", "own_arithmetic",
+                       "own_geometric", "volatility_drag"):
+            out[f"corr_{column}"] = float(np.corrcoef(
+                merged["shift_pct"], merged[column])[0, 1])
+    n = len(merged)
+    sleeve_pole = merged.loc[merged["sleeve_geometric_delta"].idxmin()]
+    # The clearest domestic case: the deletion whose domestic channel most
+    # exceeds its sleeve channel, among those where it does at all.
+    domestic_led = merged[merged["domestic_channel_pct"].abs()
+                          > merged["sleeve_channel_pct"].abs()]
+    home_pole = (domestic_led.loc[domestic_led["domestic_channel_pct"].idxmin()]
+                 if len(domestic_led) else
+                 merged.loc[merged["domestic_channel_pct"].idxmin()])
+    for tag, row in (("sleeve_pole", sleeve_pole), ("home_pole", home_pole)):
+        out[tag] = str(row["iso"])
+        out[f"{tag}_delta"] = float(row["sleeve_geometric_delta"])
+        out[f"{tag}_arithmetic"] = float(row["own_arithmetic"])
+        out[f"{tag}_geometric"] = float(row["own_geometric"])
+        out[f"{tag}_drag"] = float(row["volatility_drag"])
+        out[f"{tag}_drag_rank"] = int(row["drag_rank"])
+        out[f"{tag}_sleeve_channel"] = float(row["sleeve_channel_pct"])
+        out[f"{tag}_domestic_channel"] = float(row["domestic_channel_pct"])
+        out[f"{tag}_shift"] = float(row["shift_pct"])
+        # Classified, not assumed: the drag story fits this market only if it
+        # actually sits at the end of the drag ranking its role implies.
+        out[f"{tag}_drag_is_large"] = bool(int(row["drag_rank"]) <= n / 3)
+        out[f"{tag}_drag_is_small"] = bool(int(row["drag_rank"]) > 2 * n / 3)
+    # "Is it just America?" is the question every reader arrives with, so the
+    # market is named whenever it is in the panel rather than only when it
+    # happens to be one of the two poles.
+    usa = merged[merged["iso"] == "USA"]
+    if len(usa):
+        row = usa.iloc[0]
+        out["usa_present"] = True
+        for key, column in (("arithmetic", "own_arithmetic"),
+                            ("geometric", "own_geometric"),
+                            ("drag", "volatility_drag"),
+                            ("delta", "sleeve_geometric_delta"),
+                            ("shift", "shift_pct"),
+                            ("sleeve_channel", "sleeve_channel_pct"),
+                            ("domestic_channel", "domestic_channel_pct")):
+            out[f"usa_{key}"] = float(row[column])
+        out["usa_drag_rank"] = int(row["drag_rank"])
+        out["usa_arithmetic_rank"] = int(row["arithmetic_rank"])
+        out["usa_geometric_rank"] = int(row["geometric_rank"])
+        out["usa_drag_is_small"] = bool(int(row["drag_rank"]) > 2 * n / 3)
+        out["usa_widens"] = bool(float(row["shift_pct"]) > 0.0)
+    else:
+        out["usa_present"] = False
+    out["n_markets"] = int(n)
+    # Arithmetic mean alone does not predict the pattern; naming the market
+    # that breaks it keeps the explanation from over-reaching.
+    richer = merged[merged["own_arithmetic"]
+                    > float(sleeve_pole["own_arithmetic"])]
+    weaker = richer[richer["sleeve_geometric_delta"]
+                    > float(sleeve_pole["sleeve_geometric_delta"]) / 2.0]
+    out["counterexample"] = str(weaker["iso"].iloc[0]) if len(weaker) else ""
+    out["counterexample_arithmetic"] = float(
+        weaker["own_arithmetic"].iloc[0]) if len(weaker) else float("nan")
+    out["counterexample_delta"] = float(
+        weaker["sleeve_geometric_delta"].iloc[0]) if len(weaker) else float("nan")
+    return out

@@ -2441,6 +2441,14 @@ def step19_panel(cfg: Dict[str, Any],
                 jack["baseline_gap_pct"], jack["standard_error"],
                 jack["ci_low"], jack["ci_high"])
 
+    chan = pr.channels(loco, full)
+    profile = pr.market_profile(cfg, full_panel)
+    why = pr.explain(profile, infl, chan)
+    LOGGER.info("channel split: %s matters most to everyone else's sleeve "
+                "(%.2f pp of its compound return), %s most as its own home "
+                "market", why["sleeve_pole"], why["sleeve_pole_delta"],
+                why["home_pole"])
+
     periods = pr.subperiods(full_panel, summarise, n_paths,
                             [int(w) for w in pr_cfg.get("windows",
                                                         pr.DEFAULT_WINDOWS)])
@@ -2453,6 +2461,8 @@ def step19_panel(cfg: Dict[str, Any],
     tables = cfg["run"]["table_dir"]
     for frame, name in ((loco, "panel_leave_one_out"),
                         (infl, "panel_influence"),
+                        (chan, "panel_channels"),
+                        (profile, "panel_market_profile"),
                         (periods, "panel_subperiods"),
                         (period, "panel_period_summary"),
                         (floor, "panel_noise_floor")):
@@ -2460,16 +2470,18 @@ def step19_panel(cfg: Dict[str, Any],
             _save_table(frame, tables, name)
 
     figures = [str(plots.plot_panel_robustness(
-        infl, period, floor_stats, jack, cfg["run"]["figure_dir"]))]
+        infl, period, floor_stats, jack, cfg["run"]["figure_dir"],
+        profile=profile))]
 
     elapsed = time.perf_counter() - started
     rp.write_doc_19(
         Path("docs") / "19_panel_robustness.md", cfg,
-        {"influence": infl, "period": period, "loco": loco},
+        {"influence": infl, "period": period, "loco": loco,
+         "channels": chan, "profile": profile},
         figures, {"elapsed_seconds": elapsed, "n_paths": n_paths,
                   "gamma": float(cfg["utility"]["baseline_risk_aversion"]),
                   "verdict": findings, "jackknife": jack,
-                  "floor": floor_stats})
+                  "floor": floor_stats, "why": why})
     LOGGER.info("docs/19 written (%.0fs)", elapsed)
     state["panel_influence"] = infl
     return state

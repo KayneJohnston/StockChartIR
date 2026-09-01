@@ -2284,7 +2284,8 @@ def plot_sleeve_weighting(concentration: pd.DataFrame, ranking: pd.DataFrame,
 def plot_panel_robustness(influence: pd.DataFrame, period: pd.DataFrame,
                           floor: Mapping[str, Any], jack: Mapping[str, Any],
                           directory: str | Path,
-                          name: str = "fig44_panel_robustness") -> Path:
+                          name: str = "fig44_panel_robustness",
+                          profile: pd.DataFrame | None = None) -> Path:
     """Whether the headline rests on any one country, or any one era.
 
     Three readings: what each country's removal does to the headline gap,
@@ -2295,7 +2296,9 @@ def plot_panel_robustness(influence: pd.DataFrame, period: pd.DataFrame,
     baseline = float(jack.get("baseline_gap_pct", float("nan")))
     noise = float(floor.get("range_pct", 0.0)) / 2.0
     with plt.rc_context(STYLE):
-        fig, axes = plt.subplots(1, 3, figsize=(17.0, 5.2))
+        n_panels = 4 if profile is not None and len(profile) else 3
+        fig, axes = plt.subplots(1, n_panels,
+                                 figsize=(5.7 * n_panels, 5.2))
 
         # -- 1. per-country influence --------------------------------------
         ax = axes[0]
@@ -2362,6 +2365,28 @@ def plot_panel_robustness(influence: pd.DataFrame, period: pd.DataFrame,
         ax.set_xticks([])
         ax.set_title("Jackknife interval from 16 countries")
         ax.set_ylabel("All-international over 50/50 (pp)")
+
+        # -- 4. why: what the deletion does to the sleeve's compound return
+        if n_panels == 4:
+            ax = axes[3]
+            merged = profile.merge(influence[["dropped", "shift_pct"]],
+                                   left_on="iso", right_on="dropped")
+            ax.scatter(merged["sleeve_geometric_delta"], merged["shift_pct"],
+                       s=70, color=_colour(0), zorder=3)
+            for _, row in merged.iterrows():
+                extreme = (abs(float(row["shift_pct"])) > 0.35
+                           or abs(float(row["sleeve_geometric_delta"])) > 0.15)
+                if extreme:
+                    ax.annotate(str(row["iso"]),
+                                xy=(float(row["sleeve_geometric_delta"]),
+                                    float(row["shift_pct"])),
+                                xytext=(6, 3), textcoords="offset points",
+                                fontsize=8, color="0.3")
+            ax.axhline(0.0, color="0.4", linewidth=1.0, linestyle=":")
+            ax.axvline(0.0, color="0.4", linewidth=1.0, linestyle=":")
+            ax.set_title("Why: the sleeve's compound return")
+            ax.set_xlabel("Change in the sleeve's geometric mean (pp)")
+            ax.set_ylabel("Change in the lead (pp)")
 
         fig.tight_layout()
         return _save(fig, directory, name)

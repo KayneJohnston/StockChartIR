@@ -53,6 +53,18 @@ def pc(x: Any, d: int = 1) -> str:
     return "\u2014" if not np.isfinite(value) else f"{value * 100.0:.{d}f}%"
 
 
+def ordinal(n: int) -> str:
+    """1 -> first, 2 -> second, ... for prose that names a rank."""
+    words = {1: "first", 2: "second", 3: "third", 4: "fourth", 5: "fifth",
+             6: "sixth", 7: "seventh", 8: "eighth", 9: "ninth", 10: "tenth"}
+    return words.get(int(n), f"{int(n)}th")
+
+
+def nth_best(n: int) -> str:
+    """`the best`, `the second-best`, ... for a rank in prose."""
+    return "the best" if int(n) == 1 else f"the {ordinal(int(n))}-best"
+
+
 def rows_from(frame: pd.DataFrame, columns: Sequence[str],
               headers: Sequence[str],
               formats: Dict[str, Callable[[Any], str]] | None = None,
@@ -4793,7 +4805,107 @@ def section_panel(ctx: Any) -> List[Flowable]:
             f"statement about a particular set of markets rather than a "
             f"general one."))
 
-    out.append(ctx.h2("#panel.3 What sixteen countries actually support"))
+    out.append(ctx.h2("#panel.3 Why that market, and not the obvious one"))
+    chan = f.table("panel_channels")
+    prof = f.table("panel_market_profile")
+    from src.panel_robustness import explain
+    why = explain(prof, infl, chan)
+    n_mkt = int(why["n_markets"])
+    pole = str(why["sleeve_pole"])
+    pole_rank = int(why["sleeve_pole_drag_rank"])
+    pole_drag = ("the largest volatility drag in the panel" if pole_rank == 1
+                 else f"the {ordinal(pole_rank)}-largest of {n_mkt}")
+    out.append(ctx.p(
+        "The natural guess is that the load-bearing market is the one with "
+        "the best domestic history, and that removing it makes the domestic "
+        "half of the 50/50 split look worse. The data says otherwise, and the "
+        "reason is a general point about what an averaged sleeve does to a "
+        "constituent's volatility."))
+    out.append(ctx.p(
+        "Every country sits in the panel twice over: once as somebody's home "
+        "market, and once inside the fifteen-market average that everybody "
+        "<i>else</i> holds as their international leg. The two strategies "
+        "weight those roles differently — all-international is entirely "
+        "sleeve, the 50/50 split is half sleeve and half domestic — so "
+        "writing <i>S</i> for a deletion's effect on the first and <i>D</i> "
+        "for the implied effect on the domestic half, the change in "
+        "all-international is <i>S</i>, the change in the 50/50 split is "
+        "(<i>S</i>&nbsp;+&nbsp;<i>D</i>)/2, and the change in the gap is "
+        "(<i>S</i>&nbsp;−&nbsp;<i>D</i>)/2. A market whose value lies mostly "
+        "in other people's sleeves narrows the gap when removed; one whose "
+        "value lies mostly in being its own home market widens it."))
+    out.extend(ctx.table(
+        rows_from(prof.sort_values("sleeve_geometric_delta"),
+                  ["iso", "own_arithmetic", "own_geometric",
+                   "volatility_drag", "sleeve_geometric_delta"],
+                  ["Market", "Own arithmetic mean", "Own geometric mean",
+                   "Volatility drag", "Effect on the sleeve"],
+                  {"iso": str, "own_arithmetic": lambda v: pc(v, 2),
+                   "own_geometric": lambda v: pc(v, 2),
+                   "volatility_drag": lambda v: f"{float(v) * 100:.2f} pp",
+                   "sleeve_geometric_delta": lambda v: f"{float(v):+.2f} pp"}),
+        "Each market's own returns, and what removing it does to the sleeve",
+        note="The volatility drag is the wedge between a market's arithmetic "
+             "and geometric mean — what its own residents lose to its "
+             "volatility. The last column is measured, not argued: the panel "
+             "is rebuilt without the market and the pooled sleeve's compound "
+             "return recomputed."))
+    out.append(ctx.p(
+        f"A deletion's effect on the headline tracks what it does to the "
+        f"<b>sleeve's compound return</b> (correlation "
+        f"{float(why['corr_sleeve_geometric_delta']):+.2f}), not the removed "
+        f"market's own average return (correlation "
+        f"{float(why['corr_own_arithmetic']):+.2f}). The load-bearing market "
+        f"is not the one with the best domestic history; it is the one the "
+        f"fifteen-way average could least afford to lose."))
+    out.append(ctx.p(
+        f"<b>{pole}</b> is that market, and the reason is the gap between its "
+        f"two means: an arithmetic mean of "
+        f"{pc(float(why['sleeve_pole_arithmetic']), 2)} against a geometric "
+        f"mean of {pc(float(why['sleeve_pole_geometric']), 2)} — "
+        f"{pole_drag}. "
+        f"An equal-weighted average of fifteen markets adds up "
+        f"<i>arithmetic</i> returns each year and diversifies the volatility "
+        f"away, so the sleeve collects {pole}'s high mean without paying its "
+        f"drag while its own residents pay it in full. It is an excellent "
+        f"constituent of somebody else's sleeve and a mediocre thing to hold "
+        f"alone, so removing it hits the all-sleeve strategy hardest."))
+    if why.get("usa_present"):
+        out.append(ctx.p(
+            f"<b>The United States is the mirror image</b>, which answers the "
+            f"question most readers arrive with. It is "
+            f"{nth_best(int(why['usa_arithmetic_rank']))} market in the panel "
+            f"by arithmetic mean ({pc(float(why['usa_arithmetic']), 2)}) and "
+            f"{nth_best(int(why['usa_geometric_rank']))} by geometric mean "
+            f"({pc(float(why['usa_geometric']), 2)}) — "
+            f"{'one of the smallest drags here' if why.get('usa_drag_is_small') else 'a middling drag'}. "
+            f"Almost all of its return survives being held on its own, so its "
+            f"value is concentrated in the role the 50/50 split holds and the "
+            f"all-international strategy does not. Removing it costs the "
+            f"sleeve only {float(why['usa_delta']):+.2f} points of compound "
+            f"return while taking a good home market out of the pool, so it "
+            f"hurts the 50/50 split more and "
+            f"{'widens' if why.get('usa_widens') else 'narrows'} the lead by "
+            f"{abs(float(why['usa_shift'])):.2f} points. The United States is "
+            f"not what the result rests on; it is what the <i>comparison</i> "
+            f"rests on."))
+    out.append(ctx.p(
+        f"The reading should not be pushed past the column it rests on. "
+        f"Across the panel the correlation between a deletion's effect and "
+        f"the removed market's volatility drag is only "
+        f"{float(why['corr_volatility_drag']):+.2f}: the drag explains why "
+        f"{pole} in particular is worth more to others than to itself, not "
+        f"the pattern as a whole. "
+        + (f"{str(why['counterexample'])} makes the point — a higher "
+           f"arithmetic mean still "
+           f"({pc(float(why['counterexample_arithmetic']), 2)}), and removing "
+           f"it costs the sleeve only "
+           f"{float(why['counterexample_delta']):+.2f} points. How a market's "
+           f"good years line up against the other fourteen matters as much as "
+           f"its average, and that is what the measured column captures."
+           if why.get("counterexample") else "")))
+
+    out.append(ctx.h2("#panel.4 What sixteen countries actually support"))
     out.append(ctx.p(
         f"The delete-one runs give a jackknife standard error of "
         f"<b>{se:.2f} points</b> on a lead of {baseline:.2f}%, for a 95% "
@@ -4828,7 +4940,7 @@ def section_panel(ctx: Any) -> List[Flowable]:
         "interval of this kind, and the reader should assume every gap "
         "reported elsewhere is estimated no more precisely than this one."))
 
-    out.append(ctx.h2("#panel.4 Is the ranking stable through time?"))
+    out.append(ctx.h2("#panel.5 Is the ranking stable through time?"))
     out.extend(ctx.table(
         rows_from(period, ["window", "country_years", "gap_pct"],
                   ["Window", "Country-years", "Lead"],
@@ -4865,7 +4977,7 @@ def section_panel(ctx: Any) -> List[Flowable]:
         "sixteen countries support.",
         max_height=8.0 * cm))
 
-    out.append(ctx.h2("#panel.5 What this changes"))
+    out.append(ctx.h2("#panel.6 What this changes"))
     out.extend(ctx.bullets([
         ("No single market carries the headline, so it is not a restatement "
          "of one country's history — and in particular it is not a "

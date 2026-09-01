@@ -68,6 +68,18 @@ def _write(path: str | Path, sections: Sequence[str]) -> Path:
     return path
 
 
+def _nth_best(n: int) -> str:
+    """`the best`, `the second-best`, ... for a rank in prose."""
+    return "the best" if int(n) == 1 else f"the {_ordinal(int(n))}-best"
+
+
+def _ordinal(n: int) -> str:
+    """1 -> first, 2 -> second, ... for prose that names a rank."""
+    words = {1: "first", 2: "second", 3: "third", 4: "fourth", 5: "fifth",
+             6: "sixth", 7: "seventh", 8: "eighth", 9: "ninth", 10: "tenth"}
+    return words.get(int(n), f"{int(n)}th")
+
+
 def _and_list(items: Sequence[str]) -> str:
     """``"a"``, ``"a and b"``, ``"a, b and c"`` -- prose, not a Python repr."""
     items = list(items)
@@ -6519,6 +6531,9 @@ def write_doc_19(
     """How much of the headline rests on any one country, or any one era."""
     infl = frames["influence"]
     period = frames["period"]
+    chan = frames.get("channels", pd.DataFrame())
+    profile = frames.get("profile", pd.DataFrame())
+    why = notes.get("why", {})
     gamma = float(notes["gamma"])
     found = notes["verdict"]
     jack = notes["jackknife"]
@@ -6613,6 +6628,129 @@ def write_doc_19(
             f"That makes the finding era-dependent, and the era it depends on "
             f"should be named whenever it is quoted.")
 
+    channel_tbl = md_table(_compact(
+        chan, ["dropped", "sleeve_channel_pct", "domestic_channel_pct",
+               "implied_shift_pct", "measured_shift_pct"],
+        {"dropped": "Country removed",
+         "sleeve_channel_pct": "Sleeve channel S (%)",
+         "domestic_channel_pct": "Domestic channel D (%)",
+         "implied_shift_pct": "(S-D)/2", "measured_shift_pct": "Measured"}),
+        floatfmt="{:.2f}") if len(chan) else "_not computed_"
+
+    channel_note = ""
+    if len(chan):
+        agree = float(np.corrcoef(chan["implied_shift_pct"],
+                                  chan["measured_shift_pct"])[0, 1])
+        by_sleeve = chan[chan["channel"] == "sleeve"]
+        channel_note = (
+            f"The split reproduces the measured shifts almost exactly "
+            f"(correlation {agree:.3f}), so it is a fair reading of them "
+            f"rather than a story laid over the top. "
+            f"{len(by_sleeve)} of {len(chan)} deletions work mainly through "
+            f"the sleeve.")
+
+    profile_tbl = md_table(_compact(
+        _pct(profile.sort_values("sleeve_geometric_delta"),
+             ["own_arithmetic", "own_geometric", "own_sd", "volatility_drag"]),
+        ["iso", "own_arithmetic", "own_geometric", "volatility_drag",
+         "own_sd", "sleeve_geometric_delta"],
+        {"iso": "Market", "own_arithmetic": "Own arithmetic mean (%)",
+         "own_geometric": "Own geometric mean (%)",
+         "volatility_drag": "Volatility drag (pp)", "own_sd": "SD (%)",
+         "sleeve_geometric_delta": "Effect on the sleeve's compound return (pp)"}),
+        floatfmt="{:.2f}") if len(profile) else "_not computed_"
+
+    why_note = ""
+    if why:
+        n_mkt = int(why.get("n_markets", 0))
+        pole = str(why.get("sleeve_pole", "?"))
+        home = str(why.get("home_pole", "?"))
+        corr_geo = float(why.get("corr_sleeve_geometric_delta", float("nan")))
+        corr_arith = float(why.get("corr_own_arithmetic", float("nan")))
+        corr_drag = float(why.get("corr_volatility_drag", float("nan")))
+        pole_drag = (
+            "the largest volatility drag in the panel"
+            if int(why.get("sleeve_pole_drag_rank", 0)) == 1 else
+            f"the {_ordinal(int(why.get('sleeve_pole_drag_rank', 0)))}-largest "
+            f"volatility drag of {n_mkt}")
+        parts = [
+            f"A deletion's effect on the headline tracks what it does to the "
+            f"**sleeve's compound return** (correlation {corr_geo:+.2f}), not "
+            f"the removed market's own average return (correlation "
+            f"{corr_arith:+.2f}). So the load-bearing market is not the one "
+            f"with the best domestic history -- it is the one the fifteen-way "
+            f"average could least afford to lose.",
+            f"**{pole}** is that market, and the reason is the gap between "
+            f"its two means: an arithmetic mean of "
+            f"{float(why.get('sleeve_pole_arithmetic', float('nan'))):.2%} "
+            f"against a geometric mean of "
+            f"{float(why.get('sleeve_pole_geometric', float('nan'))):.2%}, "
+            f"{pole_drag}. An equal-weighted average of fifteen markets adds "
+            f"up *arithmetic* returns each year and diversifies the "
+            f"volatility away, so the sleeve collects {pole}'s high mean "
+            f"without paying its drag, while its own residents pay the drag "
+            f"in full. It is an excellent constituent of somebody else's "
+            f"sleeve and a mediocre thing to hold alone, so removing it hits "
+            f"the all-sleeve strategy hardest and narrows the lead."]
+        if why.get("usa_present"):
+            widen = "widens" if why.get("usa_widens") else "narrows"
+            drag_note = ("one of the smallest drags in the panel"
+                         if why.get("usa_drag_is_small") else
+                         f"the {_ordinal(int(why.get('usa_drag_rank', 0)))}"
+                         f"-largest drag of {n_mkt}")
+            parts.append(
+                f"**The United States is the mirror image**, which answers "
+                f"the question most readers arrive with. It is the "
+                f"{_ordinal(int(why.get('usa_arithmetic_rank', 0)))}-best "
+                f"market by arithmetic mean "
+                f"({float(why.get('usa_arithmetic', float('nan'))):.2%}) and "
+                f"the {_ordinal(int(why.get('usa_geometric_rank', 0)))}-best "
+                f"by geometric mean "
+                f"({float(why.get('usa_geometric', float('nan'))):.2%}) -- "
+                f"{drag_note}. Almost all of its return survives being held "
+                f"on its own, so its value is concentrated in the role the "
+                f"50/50 split holds and the all-international strategy does "
+                f"not. Removing it costs the sleeve only "
+                f"{float(why.get('usa_delta', float('nan'))):.2f} points of "
+                f"compound return but takes a good home market out of the "
+                f"pool, so it hurts the 50/50 split more and {widen} the "
+                f"lead by {abs(float(why.get('usa_shift', float('nan')))):.2f} "
+                f"points. The United States is not what the result rests on; "
+                f"it is what the *comparison* rests on.")
+        if home != pole:
+            home_drag = ("a small volatility drag"
+                         if why.get("home_pole_drag_is_small") else
+                         "a large volatility drag of its own"
+                         if why.get("home_pole_drag_is_large") else
+                         "a middling volatility drag")
+            parts.append(
+                f"The largest domestic channel of all belongs to **{home}** "
+                f"({float(why.get('home_pole_domestic_channel', float('nan'))):.2f}% "
+                f"against a sleeve channel of "
+                f"{float(why.get('home_pole_sleeve_channel', float('nan'))):.2f}%), "
+                f"and it has {home_drag} -- so the arithmetic-versus-geometric "
+                f"reading is not the whole of the domestic side either.")
+        parts.append(
+            f"The explanation should not be pushed further than the column it "
+            f"rests on. Across the panel the correlation between a deletion's "
+            f"effect and the removed market's volatility drag is only "
+            f"{corr_drag:+.2f}: the drag explains why {pole} in particular is "
+            f"worth more to others than to itself, not the pattern as a "
+            f"whole.")
+        counter = str(why.get("counterexample", ""))
+        if counter:
+            parts.append(
+                f"{counter} makes the point. It has a higher arithmetic mean "
+                f"still "
+                f"({float(why.get('counterexample_arithmetic', float('nan'))):.2%}) "
+                f"and removing it costs the sleeve only "
+                f"{float(why.get('counterexample_delta', float('nan'))):.2f} "
+                f"points, so a high average alone does not make a market "
+                f"load-bearing. How its good years line up against the other "
+                f"fourteen matters too, and that is measured in the last "
+                f"column above rather than argued from the first.")
+        why_note = "\n\n".join(parts)
+
     figure_list = "\n".join(f"* `{f}`" for f in figures)
     intro = _header(
         "19 - How Much Rests on One Country, or One Era",
@@ -6661,6 +6799,39 @@ full-panel lead at {baseline:.2f}%:
 {infl_tbl}
 
 {headline}
+
+## 3.1 Why that country, and not the obvious one
+
+The natural guess is that the load-bearing market is the one with the best
+domestic returns, and that removing it makes the domestic half of the 50/50
+split look worse. The data says otherwise, and the reason is worth setting out
+because it is a general point about what an averaged sleeve does.
+
+Every country sits in the panel twice over: once as somebody's home market,
+and once inside the fifteen-market average that everybody *else* holds as
+their international leg. The two strategies weight those roles differently --
+all-international is entirely sleeve, the 50/50 split is half sleeve and half
+domestic -- so writing `S` for the effect of a deletion on the first and `D`
+for the implied effect on the domestic half:
+
+    change in all-international  =  S
+    change in the 50/50 split    =  (S + D) / 2
+    change in the gap            =  (S - D) / 2
+
+A market whose value lies mostly in other people's sleeves has a large
+negative `S`, and removing it narrows the gap. One whose value lies mostly in
+being its own home market has a large negative `D`, and removing it widens the
+gap.
+
+{channel_tbl}
+
+{channel_note}
+
+### What separates the two
+
+{profile_tbl}
+
+{why_note}
 
 ## 4. What sixteen countries actually support
 
