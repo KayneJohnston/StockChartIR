@@ -729,7 +729,8 @@ def economy_size(frame: pd.DataFrame, years: np.ndarray,
 
 def build_tier_a(cfg: Mapping[str, Any], hedge_ratio: float = 0.0,
                  hedge_cost: float = 0.0,
-                 weighting: str | None = None) -> Panel:
+                 weighting: str | None = None,
+                 countries: Sequence[str] | None = None) -> Panel:
     """Construct the fully empirical 16-country JST panel.
 
     ``hedge_ratio`` blends a currency-hedged international equity leg into
@@ -740,6 +741,14 @@ def build_tier_a(cfg: Mapping[str, Any], hedge_ratio: float = 0.0,
     ``weighting`` overrides ``data.international_weighting`` for the
     international sleeve, which is what lets ``docs/18`` build the equal- and
     GDP-weighted panels from one code path rather than two.
+
+    ``countries`` restricts the panel to a subset of the Tier-A markets, and
+    restricts the *sleeve pool* with it. That second half is the point: the
+    delete-one-country study in ``docs/19`` asks what the results would be had
+    a market never been in the sample at all, which means it must vanish from
+    every other country's international leg too. :meth:`Panel.subset` slices a
+    panel that is already built and cannot do this -- the dropped market is
+    still inside the sleeve it computed.
     """
     data_cfg = cfg["data"]
     jst = load_jst(cfg)
@@ -747,12 +756,21 @@ def build_tier_a(cfg: Mapping[str, Any], hedge_ratio: float = 0.0,
     jst = _usd_gross_equity(jst)
 
     years = np.arange(int(data_cfg["start_year"]), int(data_cfg["end_year"]) + 1)
-    isos = list(TIER_A_ISO)
+    isos = list(TIER_A_ISO if countries is None else countries)
+    unknown = set(isos) - set(TIER_A_ISO)
+    if unknown:
+        raise ValueError(f"not Tier-A countries: {sorted(unknown)}")
+    if len(isos) < 2:
+        raise ValueError("a leave-one-out international leg needs at least "
+                         "two markets")
     window = jst[jst["year"].between(years[0] - 1, years[-1])]
 
     # The international leg must be built on *all* JST countries that have
-    # equity data, then read off for the Tier-A columns.
+    # equity data, then read off for the Tier-A columns. When the caller has
+    # restricted the panel, the pool is restricted with it -- see the note in
+    # the docstring on why slicing afterwards would not do.
     all_isos = sorted(window.loc[window["usd_gross_eq"].notna(), "iso"].unique())
+    all_isos = [i for i in all_isos if i in set(isos)]
     usd_gross = _pivot(window, "usd_gross_eq", years, all_isos)
     fx_gain = _pivot(window, "fx_gain", years, all_isos)
     infl_all = _pivot(window, "inflation", years, all_isos)

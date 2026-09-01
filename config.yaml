@@ -711,3 +711,11 @@ sleeve:
   # are directly comparable rather than merely similar.
   n_paths: 100000
   weightings: ["equal", "gdp", "pop", "gdp_pc", "inverse_vol"]
+
+# How much of the headline rests on any one country, or any one era. See
+# docs/19. Twenty-two extra headline runs, so it is the slowest single step.
+panel_robustness:
+  enabled: true
+  n_paths: 100000
+  seeds: [101, 202, 303]
+  windows: [1950, 1970, 1990, 2020]

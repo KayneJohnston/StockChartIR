@@ -2279,3 +2279,89 @@ def plot_sleeve_weighting(concentration: pd.DataFrame, ranking: pd.DataFrame,
 
         fig.tight_layout()
         return _save(fig, directory, name)
+
+
+def plot_panel_robustness(influence: pd.DataFrame, period: pd.DataFrame,
+                          floor: Mapping[str, Any], jack: Mapping[str, Any],
+                          directory: str | Path,
+                          name: str = "fig44_panel_robustness") -> Path:
+    """Whether the headline rests on any one country, or any one era.
+
+    Three readings: what each country's removal does to the headline gap,
+    against the noise a re-seeded run produces on an unchanged panel; the same
+    gap on expanding windows of history; and the jackknife interval the
+    sixteen-country panel actually supports.
+    """
+    baseline = float(jack.get("baseline_gap_pct", float("nan")))
+    noise = float(floor.get("range_pct", 0.0)) / 2.0
+    with plt.rc_context(STYLE):
+        fig, axes = plt.subplots(1, 3, figsize=(17.0, 5.2))
+
+        # -- 1. per-country influence --------------------------------------
+        ax = axes[0]
+        if len(influence):
+            frame = influence.sort_values("shift_pct")
+            y = np.arange(len(frame), dtype=float)
+            material = frame["shift_pct"].abs() > noise
+            ax.barh(y, frame["shift_pct"],
+                    color=[_colour(1) if m else "0.72" for m in material],
+                    height=0.72)
+            if noise > 0:
+                ax.axvspan(-noise, noise, color="0.85", alpha=0.55, zorder=0)
+                ax.text(0.0, len(frame) - 0.4, " re-seeding noise",
+                        fontsize=8, color="0.35", ha="center", va="top")
+            ax.axvline(0.0, color="0.35", linewidth=1.0)
+            ax.set_yticks(y)
+            ax.set_yticklabels(frame["dropped"], fontsize=8)
+        ax.set_title("Effect of removing one country")
+        ax.set_xlabel("Change in the all-international lead (pp)")
+
+        # -- 2. the gap on expanding windows -------------------------------
+        ax = axes[1]
+        if len(period):
+            expanding = period[~period["window"].str.contains("half")]
+            halves = period[period["window"].str.contains("half")]
+            x = np.arange(len(expanding), dtype=float)
+            ax.plot(x, expanding["gap_pct"], marker=_marker(0),
+                    color=_colour(0), linewidth=2.0, markersize=9,
+                    label="expanding window")
+            for k, (_, row) in enumerate(halves.iterrows()):
+                ax.axhline(float(row["gap_pct"]), color=_colour(2 + k),
+                           linestyle="--", linewidth=1.6,
+                           label=str(row["window"]))
+            ax.axhline(0.0, color="0.4", linewidth=1.0, linestyle=":")
+            ax.set_xticks(x)
+            ax.set_xticklabels([w.split("-")[-1] for w in expanding["window"]],
+                               fontsize=9)
+            ax.set_ylim(min(0.0, float(period["gap_pct"].min()) * 1.2),
+                        float(period["gap_pct"].max()) * 1.25)
+        ax.set_title("The lead, by how much history you have")
+        ax.set_xlabel("Data available through")
+        ax.set_ylabel("All-international over 50/50 (pp)")
+        ax.legend(fontsize=8, loc="lower right")
+
+        # -- 3. what the panel actually supports ---------------------------
+        ax = axes[2]
+        lo = float(jack.get("ci_low", float("nan")))
+        hi = float(jack.get("ci_high", float("nan")))
+        se = float(jack.get("standard_error", float("nan")))
+        if np.isfinite(baseline):
+            ax.errorbar([0.0], [baseline],
+                        yerr=[[baseline - lo], [hi - baseline]],
+                        fmt=_marker(0), color=_colour(0), markersize=12,
+                        capsize=10, capthick=2.0, elinewidth=2.0)
+            ax.axhline(0.0, color=_colour(1), linewidth=1.6, linestyle="--")
+            ax.text(0.12, 0.0, " no advantage", fontsize=9, color=_colour(1),
+                    va="bottom")
+            ax.text(0.12, baseline, f" {baseline:.2f} ± {se:.2f}",
+                    fontsize=10, va="center", color="0.25")
+            ax.text(0.12, hi, f" 95%: [{lo:.2f}, {hi:.2f}]", fontsize=8,
+                    va="bottom", color="0.4")
+            ax.set_xlim(-0.5, 1.4)
+            ax.set_ylim(min(-0.4, lo * 1.4), hi * 1.35)
+        ax.set_xticks([])
+        ax.set_title("Jackknife interval from 16 countries")
+        ax.set_ylabel("All-international over 50/50 (pp)")
+
+        fig.tight_layout()
+        return _save(fig, directory, name)

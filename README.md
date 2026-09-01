@@ -38,6 +38,15 @@ survives under per-block country resampling and under uniform country
 weighting. Every path behind these numbers was drawn from recorded returns --
 see "How much of this data is real" below.
 
+**How precisely is any of this known?** Less precisely than four decimal places
+suggests. A delete-one-country jackknife puts a standard error of **2.92
+points** on the 5.79-point lead all-international holds over the 50/50 split —
+a 95% interval of [0.08, 11.51], a t-statistic of 1.99. The direction is
+supported by the panel; the magnitude is barely resolved. Sixteen countries is
+sixteen countries however long the computer runs, and a reader should carry
+that interval to every other number in this repository. See
+[`docs/19_panel_robustness.md`](docs/19_panel_robustness.md).
+
 See [`docs/04_replicated_results_and_tables.md`](docs/04_replicated_results_and_tables.md)
 for the full analysis and the caveats.
 
@@ -88,6 +97,7 @@ is the read-through; the table below is the build.
 | [`docs/16_housing.md`](docs/16_housing.md) | Housing as a fifth asset: undoing the appraisal smoothing in the index, then sweeping the annual holding cost to find the price at which it stops being worth holding |
 | [`docs/17_mortgage.md`](docs/17_mortgage.md) | How much of the house to borrow and at what age: the loan-to-value ratio solved against the domestic short rate plus a swept mortgage spread, capped at 80% |
 | [`docs/18_sleeve_weighting.md`](docs/18_sleeve_weighting.md) | Whether the headline needs an equal-weighted international sleeve, or survives five constructions: equal, real GDP, population, GDP per capita and inverse volatility |
+| [`docs/19_panel_robustness.md`](docs/19_panel_robustness.md) | Delete-one-country influence, the jackknife standard error sixteen countries actually support, and whether the ranking is stable through time |
 
 All fourteen are **generated** by `main.py` from live pipeline objects -- edit
 `src/report.py`, not the Markdown.
@@ -193,6 +203,38 @@ withdrawal rate that holds ruin probability to 5%:
 The 4% rule was calibrated on US history — exactly the hindsight the paper
 removes, and removing it costs more than a percentage point of retirement
 income.
+
+## Does it rest on one country, or one era?
+
+`docs/19` rebuilds the panel sixteen times, once per country removed, and
+re-runs the headline. The deletion is genuine: a dropped market vanishes from
+every other country's international sleeve as well as from its own domestic
+column, so each run asks what this project would say had that market's history
+never been recorded.
+
+**The ordering survives all sixteen deletions.** Germany costs the most —
+removing it takes the lead from 5.79% to 3.46% — and it still leads. The United
+States is not the load-bearing market: removing it *raises* the lead by 0.39
+points. Re-seeding the bootstrap on an unmodified panel moves the lead by 0.20
+points, which is the floor a shift has to clear; eleven of sixteen countries
+clear it.
+
+The same runs form a delete-one jackknife, which is where the standard error in
+the headline block above comes from. It is the number to quote.
+
+**The ranking is also stable through time**, on expanding windows an investor
+could actually have stood in:
+
+| Data available through | Lead of all-international over 50/50 |
+|---|---|
+| 1950 | 4.41% |
+| 1970 | 5.26% |
+| 1990 | 5.82% |
+| 2020 | 5.79% |
+
+What none of this addresses is survivorship in the sample frame itself:
+deleting a country that is present says nothing about a country that was never
+there.
 
 ## Does the headline need an equal-weighted foreign sleeve?
 
@@ -543,7 +585,7 @@ pip install numpy pandas scipy matplotlib pyyaml openpyxl pytest
 
 python main.py --quick      # ~1 min smoke run at reduced N
 python main.py              # ~1 h full run: N = 100,000 plus sweeps and searches
-python -m pytest tests/ -q  # 660 tests
+python -m pytest tests/ -q  # 707 tests
 ```
 
 Selected steps and alternative configurations:
@@ -563,6 +605,7 @@ python main.py --steps 15           # the starting-valuation study
 python main.py --steps 16           # housing as a fifth asset
 python main.py --steps 17           # the mortgage on the housing sleeve
 python main.py --steps 18           # five international-sleeve weighting schemes
+python main.py --steps 19           # delete-one-country and sub-period robustness
 python main.py --config other.yaml  # a different parameterisation
 ```
 
@@ -594,6 +637,7 @@ python main.py --config other.yaml  # a different parameterisation
 │   ├── housing.py        # housing de-smoothed, and priced by its holding cost
 │   ├── mortgage.py       # the loan-to-value decision, solved by age
 │   ├── sleeve.py         # five international-sleeve weighting schemes
+│   ├── panel_robustness.py  # delete-one-country, jackknife, sub-periods
 │   ├── plots.py          # publication-quality figures
 │   └── report.py         # Markdown report generation
 ├── tests/                # 627 unit + integration tests

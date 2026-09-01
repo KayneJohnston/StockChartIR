@@ -33,6 +33,7 @@ from src import leverage as lev
 from src import lifecycle as lc
 from src import mortgage as mgg
 from src import observed as obs
+from src import panel_robustness as pr
 from src import plots
 from src import provenance as pvn
 from src import valuation as vln
@@ -107,6 +108,10 @@ def _apply_quick(cfg: Dict[str, Any]) -> Dict[str, Any]:
         cfg["mortgage"]["rounds"] = 1
     if "sleeve" in cfg:
         cfg["sleeve"]["n_paths"] = 2000
+    if "panel_robustness" in cfg:
+        cfg["panel_robustness"]["n_paths"] = 1000
+        cfg["panel_robustness"]["seeds"] = [101, 202]
+        cfg["panel_robustness"]["windows"] = [1950, 2020]
     if "accumulation" in cfg:
         cfg["accumulation"]["n_paths"] = 2000
         cfg["accumulation"]["response_grids"] = {
@@ -2396,6 +2401,80 @@ def step18_sleeve(cfg: Dict[str, Any],
     return state
 
 
+# ---------------------------------------------------------------------------
+# Step 19
+# ---------------------------------------------------------------------------
+def step19_panel(cfg: Dict[str, Any],
+                 state: Dict[str, Any]) -> Dict[str, Any]:
+    """Delete one country at a time, and one era at a time; write docs/19."""
+    pr_cfg = cfg.get("panel_robustness", {})
+    if not pr_cfg.get("enabled", False):
+        LOGGER.info("panel-robustness study disabled; skipping step 19")
+        return state
+    LOGGER.info("=== STEP 19: how much rests on any one country or era ===")
+    started = time.perf_counter()
+
+    spec = state.get("spec") or lc.spec_from_config(cfg)
+    strategies = state.get("strategies") or lc.build_strategies(cfg, spec)
+    n_paths = int(pr_cfg.get("n_paths", cfg["bootstrap"]["n_paths"]))
+
+    # The headline summariser itself, so a delete-one run and the headline are
+    # scored by the same code rather than by two copies of it.
+    def summarise(panel: dl.Panel, paths: int,
+                  override: Dict[str, Any] | None = None) -> pd.DataFrame:
+        return _run_variant(override or cfg, panel, spec, strategies, paths)
+
+    full_panel = dl.build_tier_a(cfg)
+    full = summarise(full_panel, n_paths)
+
+    floor = pr.noise_floor(cfg, summarise, n_paths,
+                           [int(s) for s in pr_cfg.get("seeds", pr.DEFAULT_SEEDS)])
+    floor_stats = pr.floor_summary(floor)
+    LOGGER.info("noise floor: the headline gap spans %.3f points across "
+                "%d seeds on an unchanged panel",
+                floor_stats["range_pct"], floor_stats["seeds"])
+
+    loco = pr.leave_one_out(cfg, summarise, n_paths, full_panel.countries)
+    infl = pr.influence(loco, full)
+    jack = pr.jackknife(infl)
+    LOGGER.info("jackknife: gap %.2f%% +/- %.2f (1 se), CI [%.2f, %.2f]",
+                jack["baseline_gap_pct"], jack["standard_error"],
+                jack["ci_low"], jack["ci_high"])
+
+    periods = pr.subperiods(full_panel, summarise, n_paths,
+                            [int(w) for w in pr_cfg.get("windows",
+                                                        pr.DEFAULT_WINDOWS)])
+    period = pr.period_summary(periods)
+    findings = pr.verdict(infl, jack, floor_stats, period)
+    LOGGER.info("panel verdict: survives every deletion=%s, all windows "
+                "hold=%s", findings["survives_every_deletion"],
+                findings.get("all_windows_hold"))
+
+    tables = cfg["run"]["table_dir"]
+    for frame, name in ((loco, "panel_leave_one_out"),
+                        (infl, "panel_influence"),
+                        (periods, "panel_subperiods"),
+                        (period, "panel_period_summary"),
+                        (floor, "panel_noise_floor")):
+        if len(frame):
+            _save_table(frame, tables, name)
+
+    figures = [str(plots.plot_panel_robustness(
+        infl, period, floor_stats, jack, cfg["run"]["figure_dir"]))]
+
+    elapsed = time.perf_counter() - started
+    rp.write_doc_19(
+        Path("docs") / "19_panel_robustness.md", cfg,
+        {"influence": infl, "period": period, "loco": loco},
+        figures, {"elapsed_seconds": elapsed, "n_paths": n_paths,
+                  "gamma": float(cfg["utility"]["baseline_risk_aversion"]),
+                  "verdict": findings, "jackknife": jack,
+                  "floor": floor_stats})
+    LOGGER.info("docs/19 written (%.0fs)", elapsed)
+    state["panel_influence"] = infl
+    return state
+
+
 STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
          4: step4_report, 5: step5_sensitivity, 6: step6_spending,
          7: step7_glide_path, 8: step8_hedging, 9: step9_retirement_timing,
@@ -2403,11 +2482,11 @@ STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
          12: step12_allocation, 13: step13_leverage,
          14: step14_provenance, 15: step15_valuation,
          16: step16_housing, 17: step17_mortgage,
-         18: step18_sleeve}
+         18: step18_sleeve, 19: step19_panel}
 
 
 def run(config_path: str = "config.yaml",
-        steps: Sequence[int] = tuple(range(1, 19)),
+        steps: Sequence[int] = tuple(range(1, 20)),
         quick: bool = False) -> Dict[str, Any]:
     """Execute the pipeline and return the accumulated state."""
     cfg = dl.load_config(config_path)
@@ -2437,8 +2516,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--steps", nargs="+", type=int,
-                        default=list(range(1, 19)),
-                        choices=list(range(1, 19)))
+                        default=list(range(1, 20)),
+                        choices=list(range(1, 20)))
     parser.add_argument("--quick", action="store_true",
                         help="small N for smoke tests")
     parser.add_argument("--verbose", action="store_true")

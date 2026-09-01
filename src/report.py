@@ -6507,3 +6507,202 @@ Runtime {float(notes['elapsed_seconds']):.0f}s at {int(notes['n_paths']):,} path
 weighting, γ = {gamma:g}. Tables in `{cfg['run']['table_dir']}/sleeve_*.csv`.
 """
     return _write(path, [intro, body])
+
+
+def write_doc_19(
+    path: str | Path,
+    cfg: Mapping[str, Any],
+    frames: Mapping[str, pd.DataFrame],
+    figures: Sequence[str],
+    notes: Mapping[str, Any],
+) -> Path:
+    """How much of the headline rests on any one country, or any one era."""
+    infl = frames["influence"]
+    period = frames["period"]
+    gamma = float(notes["gamma"])
+    found = notes["verdict"]
+    jack = notes["jackknife"]
+    floor = notes["floor"]
+    baseline = float(jack.get("baseline_gap_pct", float("nan")))
+    noise = float(floor.get("range_pct", float("nan")))
+
+    infl_tbl = md_table(_compact(
+        infl, ["dropped", "gap_pct", "shift_pct", "challenger_cec",
+               "incumbent_cec"],
+        {"dropped": "Country removed", "gap_pct": "Lead (%)",
+         "shift_pct": "Change in the lead (pp)",
+         "challenger_cec": "CEC, all-international",
+         "incumbent_cec": "CEC, 50/50"}), floatfmt="{:.4f}")
+
+    period_tbl = md_table(_compact(
+        period, ["window", "country_years", "gap_pct"],
+        {"window": "Window", "country_years": "Country-years",
+         "gap_pct": "Lead (%)"}), floatfmt="{:.3f}")
+
+    # -- verdicts, classified ---------------------------------------------
+    if found["survives_every_deletion"]:
+        headline = (
+            f"**No single country carries the result.** All-international "
+            f"leads the 50/50 split in all {found['n_countries']} delete-one "
+            f"panels. Removing {found['worst_country']} costs the most, "
+            f"taking the lead from {baseline:.2f}% to "
+            f"{found['worst_gap_pct']:.2f}%, and it still leads.")
+    else:
+        broken = int(found["n_deletions_that_break_it"])
+        headline = (
+            f"**The result does not survive every deletion.** In {broken} of "
+            f"{found['n_countries']} delete-one panels the 50/50 split "
+            f"overtakes all-international; the worst is "
+            f"{found['worst_country']}, which takes the lead to "
+            f"{found['worst_gap_pct']:.2f}%. On this evidence the headline "
+            f"is a statement about a particular set of markets rather than a "
+            f"general one.")
+
+    material = found.get("material_countries", [])
+    if np.isfinite(noise) and noise > 0:
+        noise_note = (
+            f"Re-seeding the bootstrap on the **unmodified** panel moves the "
+            f"lead across a range of {noise:.3f} points, which is the floor "
+            f"any of these shifts has to clear to mean anything. "
+            + (f"{len(material)} of {found['n_countries']} countries clear it "
+               f"({_and_list(material)}); the rest are indistinguishable from "
+               f"re-drawing the paths."
+               if material else
+               "No country clears it, so the panel shows no individually "
+               "influential market at all."))
+    else:
+        noise_note = ""
+
+    t_stat = float(jack.get("t_stat", float("nan")))
+    if found.get("excludes_zero") and jack.get("marginal"):
+        interval = (
+            f"The interval excludes zero, but only just: the implied "
+            f"t-statistic is {t_stat:.2f} against a threshold of 1.96, and "
+            f"the lower bound clears zero by "
+            f"{float(jack.get('ci_low', float('nan'))):.2f} points. The "
+            f"ordering is supported by the panel rather than only by the "
+            f"simulation, and it is supported *thinly*. A reader should treat "
+            f"the direction as established and the magnitude as barely "
+            f"resolved.")
+    elif found.get("excludes_zero"):
+        interval = (
+            f"The interval excludes zero comfortably — the implied "
+            f"t-statistic is {t_stat:.2f} — so the ordering is supported by "
+            f"the panel and not merely by the simulation.")
+    else:
+        interval = (
+            f"**The interval includes zero.** With sixteen countries the "
+            f"panel cannot distinguish this lead from no lead at all, whatever "
+            f"the Monte Carlo precision suggests, and the headline should be "
+            f"read as directional rather than established.")
+
+    if found.get("all_windows_hold"):
+        stability = (
+            f"**The ordering holds in every window.** The weakest is "
+            f"{found.get('weakest_window', '?')} at "
+            f"{float(found.get('weakest_window_gap_pct', float('nan'))):.2f}%. "
+            f"An investor standing in 1950 with only the record to that date "
+            f"would have reached the same ranking as one standing today.")
+    else:
+        held = int(found.get("windows_holding", 0))
+        stability = (
+            f"**The ordering does not hold in every window**: it survives "
+            f"{held} of {int(found.get('n_windows', 0))}. The weakest is "
+            f"{found.get('weakest_window', '?')} at "
+            f"{float(found.get('weakest_window_gap_pct', float('nan'))):.2f}%. "
+            f"That makes the finding era-dependent, and the era it depends on "
+            f"should be named whenever it is quoted.")
+
+    figure_list = "\n".join(f"* `{f}`" for f in figures)
+    intro = _header(
+        "19 - How Much Rests on One Country, or One Era",
+        "Delete-one-country influence, the standard error sixteen countries "
+        "actually support, and whether the ranking is stable through time.")
+
+    body = f"""
+## 1. The question the panel raises
+
+`docs/05` varies the preferences and the lifecycle. `docs/18` varies how the
+international sleeve is weighted. Neither touches what a sceptical reader asks
+about first: the panel is **sixteen developed markets that survived**, and a
+result assembled from sixteen histories could be one history wearing a
+disguise. If dropping the United States overturns the ranking, this project is
+about the United States.
+
+Three questions, on the same machinery and scored by the same summariser that
+produces the headline table itself:
+
+* **Influence.** Rebuild the panel once per country with that country removed,
+  and re-run.
+* **Uncertainty.** Those runs form a delete-one jackknife, which gives a
+  standard error reflecting the *panel's* size rather than the Monte Carlo's.
+* **Stability.** Re-run on expanding windows of history, and on the two halves.
+
+The deletion is genuine. A dropped market disappears from every other
+country's international sleeve as well as from the set its own domestic leg is
+drawn from, so each run answers "what would this project say if that market's
+history had never been recorded" rather than the much weaker "what if we had
+chosen not to invest there".
+
+## 2. The noise floor
+
+Every delete-one run draws its own bootstrap paths, so it will differ from the
+full panel even when the country it dropped carried no information at all.
+Before reading any shift as a finding, the study re-runs the **unmodified**
+panel under {int(floor.get('seeds', 0))} seeds.
+
+{noise_note}
+
+## 3. Removing one country at a time
+
+At γ = {gamma:g} over {int(notes['n_paths']):,} lifetimes per run, with the
+full-panel lead at {baseline:.2f}%:
+
+{infl_tbl}
+
+{headline}
+
+## 4. What sixteen countries actually support
+
+The delete-one runs give a jackknife standard error of
+**{float(jack.get('standard_error', float('nan'))):.2f} points** on a lead of
+{baseline:.2f}%, for a 95% interval of
+[{float(jack.get('ci_low', float('nan'))):.2f},
+{float(jack.get('ci_high', float('nan'))):.2f}].
+
+{interval}
+
+This is the number to quote, and it is much wider than the Monte Carlo error.
+A hundred thousand bootstrap paths make the simulation error negligible
+without adding a single country of evidence; the panel's own sampling error is
+untouched by how long the computer runs.
+
+## 5. Is the ranking stable through time?
+
+{period_tbl}
+
+{stability}
+
+## 6. What this changes
+
+* {"No single market carries the headline, so it is not a restatement of one country's history." if found["survives_every_deletion"] else "At least one deletion overturns the headline, so it should be stated as a property of this particular set of markets."}
+* The honest precision on the headline gap is the jackknife interval in
+  Section 4, not the Monte Carlo one. Every certainty equivalent in this
+  project is quoted to four decimal places because that is what the
+  simulation resolves; the *panel* resolves far less{" -- and at a t-statistic of " + f"{t_stat:.2f}" + " this particular result sits close enough to the threshold that it should be quoted with its interval, never alone" if jack.get("marginal") else ""}.
+* {"The ranking is stable across every window of history tested, which is the strongest of the three checks here: it is the one an investor could have acted on contemporaneously." if found.get("all_windows_hold") else "The ranking is not stable across every window, so it should be quoted with the era it depends on."}
+
+## 7. Figures
+
+{figure_list}
+
+## 8. Reproduction
+
+```bash
+python main.py --steps 19
+```
+
+Runtime {float(notes['elapsed_seconds']):.0f}s at {int(notes['n_paths']):,} paths per
+run, γ = {gamma:g}. Tables in `{cfg['run']['table_dir']}/panel_*.csv`.
+"""
+    return _write(path, [intro, body])

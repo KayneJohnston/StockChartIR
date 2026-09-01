@@ -258,6 +258,7 @@ SECTION_ORDER: Tuple[str, ...] = (
     # The result, and everything that tests whether it holds.
     "baseline",
     "sensitivity",
+    "panel",
     "sleeve",
     "hedging",
     # Can a better portfolio be found inside the same asset menu?
@@ -4693,6 +4694,199 @@ def section_mortgage(ctx: Any) -> List[Flowable]:
 
 
 # ---------------------------------------------------------------------------
+# How much rests on one country, or one era
+# ---------------------------------------------------------------------------
+def section_panel(ctx: Any) -> List[Flowable]:
+    f = ctx.f
+    infl = f.table("panel_influence")
+    period = f.table("panel_period_summary")
+    floorf = f.table("panel_noise_floor")
+
+    from src.panel_robustness import floor_summary, jackknife, verdict
+    floor = floor_summary(floorf)
+    # `shift_pct` is `gap_pct` minus the full-panel lead, so that lead is
+    # recoverable from any row. A DataFrame's attrs do not survive the CSV
+    # round trip, which is why it is reconstructed rather than read.
+    baseline = float(infl["gap_pct"].iloc[0] - infl["shift_pct"].iloc[0])
+    jack = jackknife(infl, baseline_gap=baseline)
+    found = verdict(infl, jack, floor, period)
+    cfg = f.cfg
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    n_paths = int(cfg.get("panel_robustness", {}).get(
+        "n_paths", cfg["bootstrap"]["n_paths"]))
+    n = int(found["n_countries"])
+    noise = float(found["noise_range_pct"])
+    se = float(jack["standard_error"])
+    t_stat = float(jack["t_stat"])
+
+    out: List[Flowable] = [ctx.h1("#panel. How Much Rests on One Country, or "
+                                  "One Era")]
+    out.append(ctx.p(
+        f"Section #sensitivity varies the preferences and the lifecycle. "
+        f"Neither it nor anything after it touches what a sceptical reader "
+        f"asks about first: the panel is {n} developed markets that survived, "
+        f"and a result assembled from {n} histories could be one history "
+        f"wearing a disguise. If dropping the United States overturns the "
+        f"ranking, this paper is about the United States. This section asks "
+        f"three questions on the same machinery, each scored by the "
+        f"summariser that produces Section #baseline's own table."))
+    out.extend(ctx.bullets([
+        "<b>Influence.</b> Rebuild the panel once per country with that "
+        "country removed, and re-run the headline.",
+        "<b>Uncertainty.</b> Those runs form a delete-one jackknife, which "
+        "gives a standard error reflecting the <i>panel's</i> size rather "
+        "than the Monte Carlo's.",
+        "<b>Stability.</b> Re-run on expanding windows of history, and on the "
+        "two halves of the sample.",
+    ]))
+    out.append(ctx.p(
+        "The deletion is genuine. A dropped market disappears from every "
+        "other country's international sleeve as well as from the set its own "
+        "domestic leg is drawn from, so each run answers what this paper "
+        "would say had that market's history never been recorded — not the "
+        "much weaker question of what it would say had we chosen not to "
+        "invest there."))
+
+    out.append(ctx.h2("#panel.1 The noise floor"))
+    out.append(ctx.p(
+        f"Every delete-one run draws its own bootstrap paths, so it differs "
+        f"from the full panel even when the country it dropped carried no "
+        f"information. Re-running the <b>unmodified</b> panel under "
+        f"{int(floor['seeds'])} seeds moves the lead across a range of "
+        f"{noise:.3f} points, and that is the floor any shift below has to "
+        f"clear. {found['n_material_countries']} of {n} countries clear it."))
+
+    out.append(ctx.h2("#panel.2 Removing one country at a time"))
+    out.extend(ctx.table(
+        rows_from(infl, ["dropped", "gap_pct", "shift_pct", "challenger_cec",
+                         "incumbent_cec"],
+                  ["Country removed", "Lead", "Change in the lead",
+                   "CEC, all-international", "CEC, 50/50"],
+                  {"dropped": str,
+                   "gap_pct": lambda v: f"{float(v):.2f}%",
+                   "shift_pct": lambda v: f"{float(v):+.2f} pp",
+                   "challenger_cec": lambda v: f2(v, 4),
+                   "incumbent_cec": lambda v: f2(v, 4)}),
+        f"The headline with each country removed, at \u03b3 = {gamma:g}",
+        note=f"{n_paths:,} lifetimes per run. The full-panel lead is "
+             f"{baseline:.2f}%. A negative change means the removed country "
+             f"was holding the result up."))
+    if found["survives_every_deletion"]:
+        out.append(ctx.p(
+            f"<b>No single country carries the result.</b> All-international "
+            f"leads the 50/50 split in all {n} delete-one panels. Removing "
+            f"{found['worst_country']} costs the most, taking the lead from "
+            f"{baseline:.2f}% to {float(found['worst_gap_pct']):.2f}%, and it "
+            f"still leads. Notably the United States is not the load-bearing "
+            f"market: removing it moves the lead by "
+            f"{float(infl.loc[infl['dropped'] == 'USA', 'shift_pct'].iloc[0]):+.2f} "
+            f"points."
+            if "USA" in set(infl["dropped"]) else
+            f"<b>No single country carries the result.</b> All-international "
+            f"leads in all {n} delete-one panels."))
+    else:
+        out.append(ctx.p(
+            f"<b>The result does not survive every deletion.</b> In "
+            f"{int(found['n_deletions_that_break_it'])} of {n} delete-one "
+            f"panels the 50/50 split overtakes all-international; the worst "
+            f"is {found['worst_country']}. On this evidence the headline is a "
+            f"statement about a particular set of markets rather than a "
+            f"general one."))
+
+    out.append(ctx.h2("#panel.3 What sixteen countries actually support"))
+    out.append(ctx.p(
+        f"The delete-one runs give a jackknife standard error of "
+        f"<b>{se:.2f} points</b> on a lead of {baseline:.2f}%, for a 95% "
+        f"interval of [{float(jack['ci_low']):.2f}, "
+        f"{float(jack['ci_high']):.2f}]."))
+    if found["excludes_zero"] and jack["marginal"]:
+        out.append(ctx.p(
+            f"The interval excludes zero, but only just: the implied "
+            f"t-statistic is {t_stat:.2f} against a threshold of 1.96, and "
+            f"the lower bound clears zero by {float(jack['ci_low']):.2f} "
+            f"points. The ordering is supported by the panel rather than only "
+            f"by the simulation, and it is supported <i>thinly</i>. The "
+            f"direction should be read as established and the magnitude as "
+            f"barely resolved."))
+    elif found["excludes_zero"]:
+        out.append(ctx.p(
+            f"The interval excludes zero comfortably, at a t-statistic of "
+            f"{t_stat:.2f}, so the ordering is supported by the panel and not "
+            f"merely by the simulation."))
+    else:
+        out.append(ctx.p(
+            f"<b>The interval includes zero.</b> At a t-statistic of "
+            f"{t_stat:.2f}, {n} countries cannot distinguish this lead from "
+            f"no lead at all, whatever the Monte Carlo precision suggests."))
+    out.append(ctx.p(
+        "This is the number to quote, and it is far wider than the Monte "
+        "Carlo error. Every certainty equivalent in this paper is reported to "
+        "four decimal places because that is what the simulation resolves; "
+        "the panel resolves much less, and a hundred thousand bootstrap paths "
+        "add precision to the former without adding a single country of "
+        "evidence to the latter. Nothing else in this paper carries an "
+        "interval of this kind, and the reader should assume every gap "
+        "reported elsewhere is estimated no more precisely than this one."))
+
+    out.append(ctx.h2("#panel.4 Is the ranking stable through time?"))
+    out.extend(ctx.table(
+        rows_from(period, ["window", "country_years", "gap_pct"],
+                  ["Window", "Country-years", "Lead"],
+                  {"window": str, "country_years": lambda v: f"{int(v):,}",
+                   "gap_pct": lambda v: f"{float(v):.2f}%"}),
+        "The headline on expanding windows of history, and on the two halves",
+        note="Each window masks the country-years outside it; the sleeve in "
+             "any year is the sleeve that year had, so a 1930 lifetime can "
+             "still see 1929."))
+    if found.get("all_windows_hold"):
+        out.append(ctx.p(
+            f"<b>The ordering holds in every window.</b> The weakest is "
+            f"{found.get('weakest_window', '?')} at "
+            f"{float(found.get('weakest_window_gap_pct', float('nan'))):.2f}%. "
+            f"An investor standing in 1950, with only the record to that "
+            f"date, would have reached the same ranking as one standing "
+            f"today — which is the strongest of the three checks here, "
+            f"because it is the one that could have been acted on "
+            f"contemporaneously."))
+    else:
+        out.append(ctx.p(
+            f"<b>The ordering does not hold in every window</b>: it survives "
+            f"{int(found.get('windows_holding', 0))} of "
+            f"{int(found.get('n_windows', 0))}. The weakest is "
+            f"{found.get('weakest_window', '?')}. That makes the finding "
+            f"era-dependent, and the era should be named whenever it is "
+            f"quoted."))
+
+    out.extend(ctx.figure(
+        "fig44_panel_robustness",
+        "Left: what removing each country does to the headline lead, against "
+        "the band a re-seeded run produces on an unchanged panel. Centre: the "
+        "lead by how much history is available. Right: the jackknife interval "
+        "sixteen countries support.",
+        max_height=8.0 * cm))
+
+    out.append(ctx.h2("#panel.5 What this changes"))
+    out.extend(ctx.bullets([
+        ("No single market carries the headline, so it is not a restatement "
+         "of one country's history — and in particular it is not a "
+         "restatement of the United States'."
+         if found["survives_every_deletion"] else
+         "At least one deletion overturns the headline, so it must be stated "
+         "as a property of this particular set of markets."),
+        f"The honest precision on the headline gap is ±{se:.2f} points, not "
+        f"the fourth decimal place of a certainty equivalent. This is the "
+        f"single largest caveat in the paper and Section #limitations.1 "
+        f"carries it.",
+        ("The ranking is stable across every window of history tested, "
+         "including windows an investor could have stood in."
+         if found.get("all_windows_hold") else
+         "The ranking is not stable across every window, so it should be "
+         "quoted with the era it depends on."),
+    ]))
+    return out
+
+
+# ---------------------------------------------------------------------------
 # 18. How the international sleeve is weighted
 # ---------------------------------------------------------------------------
 def section_sleeve(ctx: Any) -> List[Flowable]:
@@ -5128,6 +5322,17 @@ def section_limitations(ctx: Any) -> List[Flowable]:
         f"advanced-economy and entirely survivor: markets that closed and "
         f"never reopened are not in the source database, so the tail this "
         f"paper measures is the tail of markets that came back."))
+    out.append(ctx.p(
+        "Section #panel quantifies the part of this that is quantifiable. No "
+        "single country carries the headline, and the ranking is stable "
+        "across every window of history tested — but the delete-one "
+        "jackknife puts a standard error on the headline gap that is wide "
+        "enough to matter, and a reader should carry that interval to every "
+        "other number in the paper. Nothing here is estimated more precisely "
+        "than sixteen countries allow, however many decimal places the "
+        "simulation resolves. What Section #panel cannot address is the "
+        "survivorship in the sample frame itself: deleting a country that is "
+        "present says nothing about a country that was never there."))
 
     out.append(ctx.p(
         "The last five years of the series are separately flagged as "
@@ -5796,6 +6001,7 @@ def story(ctx: Any) -> List[Flowable]:
     # fails the build if the two ever drift apart.
     parts += section_baseline(ctx)
     parts += section_sensitivity(ctx)
+    parts += section_panel(ctx)
     parts += section_sleeve(ctx)
     parts += section_hedging(ctx)
     parts += section_glide(ctx)
