@@ -26,7 +26,7 @@ Two things worth noticing. The **sampler is essentially the same** — stationar
 
 I also model an individual with a deterministic horizon where they model a couple with random longevity, and I stop at annual frequency where they work monthly.
 
-The sampler is a calendar-joint stationary block bootstrap — whole (country, window) blocks, mean length 10 years — so cross-asset covariance, persistence and fat tails survive. Gaps (closures, war years) are respected rather than interpolated across, which matters because they cluster exactly where a survivorship-prone sample would quietly drop observations.
+One detail of mine that matters: blocks are drawn **calendar-jointly** — a whole (country, window) block at a time — so cross-asset covariance, persistence and fat tails survive, and gaps (closures, war years) are respected rather than interpolated across. They cluster exactly where a survivorship-prone sample would quietly drop observations.
 
 ## What replicated
 
@@ -65,24 +65,30 @@ So: their 50/50 is not contradicted by anything I can measure. What my panel say
 
 Two of my results look contradictory until you notice what differs between them.
 
-Levering the **portfolio** is barely worth doing: +5.1% at 1.75× with a *zero* borrowing spread, decaying fast in the spread. At real household margin rates it rounds to nothing, and what it buys comes out of the left tail. Read alone, that's a flat negative on *Lifecycle Investing*.
+**A constant leverage ratio is barely worth having.** One ratio, scaling every weight, held for life: +4.6% at a *zero* borrowing spread, +2.0% at 1%, and nothing at all by 2%. That reads like a flat negative on *Lifecycle Investing* — but it isn't one, because a constant ratio is not what Ayres and Nalebuff ask for. It's a verdict on margin accounts.
 
-But put the leverage on **housing** instead and the optimiser produces the Ayres–Nalebuff shape without being asked to. Solving loan-to-value at every age, capped at 80% and priced off the borrower's own real short rate: **75% LVR while working, 49% in retirement**, declining monotonically at every spread I tested. That shape is consistent with their human-capital argument — a working investor has decades of future earnings no lender can reach — though I should be clear I haven't isolated that channel, only observed the schedule it would predict.
+**Solve the ratio at every age and their shape appears unprompted.** 3× at 25 — the top of my grid, so possibly censored — falling monotonically through the decade means to about 1.1× by the sixties. And the shape is where the money is: at a 1% spread the solved schedule is worth +6.3% against +2.0% for the best constant ratio; at 2%, +3.3% against nothing.
 
-It isn't the borrowing rate. Both studies borrow at the same real bill rate plus the same swept spread, and at **identical spreads** the mortgage still wins by five to fifteen times:
+Sixty-eight free parameters scored on the paths they were solved on will always flatter themselves, so the check that matters is how much survives with *one* knob. A policy of "L× while working, 1× in retirement" gets +4.2% at a 1% spread and +1.6% at 2% — roughly two-thirds and half of the free solve. The declining shape is structural; the per-age wiggle is mostly optimisation gain.
 
-| Spread over short rate | Lever the portfolio | Mortgage on housing |
-|---|---|---|
-| 0% | +5.1% | **+25.6%** |
-| 1% | +2.0% | **+14.3%** |
-| 2% | +0.4% | **+5.9%** |
-| 3% | 0.0% | +1.0% |
+![Leverage detail](fig37_leverage_detail.png)
 
-It's diversification. Housing's *standalone* risk-adjusted return is slightly **worse** than international equity's — 4.8% real on 14.5% vol after a 2% holding cost, against 8.2% on 22.6%. What it has is a correlation of **+0.09** with the equity sleeve, where the two equity legs correlate at +0.40. Levering the portfolio just scales risk you already own; levering housing spends the borrowing on a near-uncorrelated asset.
+| Spread over the real short rate | Constant ratio | L× working, 1× retired | Solved at every age |
+|---|---|---|---|
+| 0% | +4.6% | +7.9% | +10.8% |
+| 1% | +2.0% | +4.2% | +6.3% |
+| 2% | 0.0% | +1.6% | +3.3% |
+| 3% | 0.0% | 0.0% | — |
 
-So the Ayres–Nalebuff shape survives, but not for the reason their argument turns on. Levering *equity* — their instrument — is worth almost nothing here once credit is priced realistically. The gain appears when leverage buys a diversifier. That the cheapest household leverage happens to be secured against that diversifier is a convenience, not the mechanism.
+*(Allocation held fixed across all three columns, so the comparison is about the leverage policy alone.)*
 
-Magnitudes are more modest than 2:1 — roughly 1.4:1 all-in at a 2% spread. And it's overwhelmingly sensitive to the margin: +25.6% at a zero spread, nothing by 4%. Your mortgage rate, not the return on housing, decides this.
+So the useful statement is not "leverage does nothing." It's that **when** you borrow matters more than **whether** — and the null result levered-portfolio backtests usually produce is largely an artefact of holding the ratio fixed for life.
+
+Now the second instrument. Put the borrowing on **housing** and the same age-declining shape falls out of a separate solve: loan-to-value capped at 80% and priced off the borrower's own real short rate gives **75% LVR while working, 49% in retirement**, monotone at every spread I tested. It is worth more than levering the portfolio — roughly two to four times more at matched spreads (+14.3% against +4.2% at 1%, +5.9% against +1.6% at 2%) — though the two studies measure against different unlevered baselines, so treat the multiple as indicative rather than exact.
+
+It isn't the borrowing rate; both price credit off the same real bill rate plus the same swept spread. It's diversification. Housing's *standalone* risk-adjusted return is slightly **worse** than international equity's — 4.8% real on 14.5% vol after a 2% holding cost, against 8.2% on 22.6%. What it has is a correlation of **+0.09** with the equity sleeve, where the two equity legs correlate at +0.40. Levering the portfolio scales risk you already own; a mortgage spends the borrowing on something near-uncorrelated.
+
+So the Ayres–Nalebuff *shape* survives twice over, on two different instruments, and their human-capital argument is consistent with both — though I haven't isolated that channel, only observed the schedule it would predict. What doesn't survive is the magnitude: roughly 1.4:1 all-in at a 2% spread, not 2:1. And it is overwhelmingly sensitive to the margin, worth nothing on either instrument by a 4% spread. Your borrowing rate, not the return on the asset, decides this.
 
 It is also the mirror image of the glide path this whole literature argues about: **what should decline with age is the borrowing, not the equity.**
 

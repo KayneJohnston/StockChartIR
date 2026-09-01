@@ -209,3 +209,62 @@ class TestSchedule:
                     "wipeout_share_of_years"):
             assert key in row
         assert 0.0 <= row["prob_ruin"] <= 1.0
+
+
+class TestTwoLevelComparison:
+    """The check that separates a real declining shape from optimisation gain.
+
+    ``optimise_leverage_schedule`` fits one parameter per age and scores the
+    result on the paths it was solved on, so its certainty equivalent alone
+    cannot establish that declining leverage beats a constant ratio. These
+    tests pin the properties ``docs/13`` §5.1 relies on.
+    """
+
+    def test_every_family_is_scored_against_the_same_unlevered_baseline(
+            self, setup) -> None:
+        paths, spec, income, cfg = setup
+        ev = lv.make_evaluator(paths, spec, income, cfg)
+        weights = np.tile([0.5, 0.5, 0.0, 0.0], (spec.horizon, 1))
+        frame = lv.two_level_comparison(
+            ev, 5.0, weights, [1.0, 1.5, 2.0], [0.0, 0.02], spec.n_working)
+        for spread in (0.0, 0.02):
+            block = frame[np.isclose(frame["spread"], spread)]
+            implied = block["cec"] / (1.0 + block["vs_unlevered_pct"] / 100.0)
+            assert implied.nunique() == 1 or np.allclose(
+                implied.to_numpy(), implied.iloc[0])
+
+    def test_a_family_that_only_loses_reports_not_borrowing(self, setup
+                                                            ) -> None:
+        # At a punitive spread no ratio should beat 1x, and the frame should
+        # say so as "1x, +0%" rather than reporting a negative best.
+        paths, spec, income, cfg = setup
+        ev = lv.make_evaluator(paths, spec, income, cfg)
+        weights = np.tile([0.5, 0.5, 0.0, 0.0], (spec.horizon, 1))
+        frame = lv.two_level_comparison(
+            ev, 5.0, weights, [1.0, 1.5, 2.0, 3.0], [0.50], spec.n_working)
+        assert (frame["vs_unlevered_pct"] >= -1e-9).all()
+        assert (frame.loc[frame["policy"] == "constant", "leverage"]
+                == 1.0).all()
+
+    def test_the_solved_schedule_is_scored_when_supplied(self, setup) -> None:
+        paths, spec, income, cfg = setup
+        ev = lv.make_evaluator(paths, spec, income, cfg)
+        weights = np.tile([0.5, 0.5, 0.0, 0.0], (spec.horizon, 1))
+        solved = pd.DataFrame({
+            "spread": 0.0, "age": spec.ages[:spec.horizon],
+            "leverage": np.linspace(2.0, 1.0, spec.horizon)})
+        frame = lv.two_level_comparison(
+            ev, 5.0, weights, [1.0, 1.5, 2.0], [0.0], spec.n_working,
+            solved=solved)
+        assert set(frame["policy"]) == {"constant", "two_level", "per_age"}
+
+    def test_a_mismatched_schedule_is_skipped_rather_than_misaligned(
+            self, setup) -> None:
+        paths, spec, income, cfg = setup
+        ev = lv.make_evaluator(paths, spec, income, cfg)
+        weights = np.tile([0.5, 0.5, 0.0, 0.0], (spec.horizon, 1))
+        short = pd.DataFrame({"spread": 0.0, "age": [25, 26],
+                              "leverage": [2.0, 1.5]})
+        frame = lv.two_level_comparison(
+            ev, 5.0, weights, [1.0, 1.5], [0.0], spec.n_working, solved=short)
+        assert "per_age" not in set(frame["policy"])

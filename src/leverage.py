@@ -334,3 +334,73 @@ def schedule_by_decade(schedule: pd.DataFrame) -> pd.DataFrame:
            .reset_index())
     return out.sort_values(["spread", "decade"]).reset_index(drop=True)
 
+
+
+def two_level_comparison(
+    evaluator: LeveredEvaluator,
+    gamma: float,
+    weights: np.ndarray,
+    leverage_grid: Sequence[float],
+    spreads: Sequence[float],
+    n_working: int,
+    solved: pd.DataFrame | None = None,
+) -> pd.DataFrame:
+    """How much of the age-varying gain survives with a single free parameter?
+
+    :func:`optimise_leverage_schedule` solves a ratio at every one of the 68
+    ages and scores the answer on the paths it was solved on. Sixty-eight free
+    parameters will always flatter themselves that way, so the schedule's
+    certainty equivalent cannot by itself establish that *declining* leverage
+    beats a constant ratio -- the gain could be nothing but optimisation gain.
+
+    The discriminating comparison is against a policy with one knob: hold
+    ``L`` while working and unlever at retirement. If that crude two-level
+    schedule already beats the best constant ratio, the declining shape is
+    structural and the per-age detail is the part to distrust. Every family is
+    scored on the same paths and the same allocation, so the comparison is
+    about the leverage policy alone.
+    """
+    horizon = evaluator.spec.horizon
+    grid = [float(v) for v in leverage_grid]
+    single = weights if weights.ndim == 2 else weights[0]
+    rows: List[Dict[str, Any]] = []
+    for spread in spreads:
+        evaluator.spread = float(spread)
+        labels: List[Tuple[str, float]] = []
+        candidates: List[np.ndarray] = []
+        for ratio in grid:
+            labels.append(("constant", ratio))
+            candidates.append(np.full(horizon, ratio))
+        for ratio in grid:
+            if ratio == 1.0:
+                continue          # identical to constant 1x; scoring it twice
+            schedule = np.ones(horizon)  # would only invite a tie to break
+            schedule[:n_working] = ratio
+            labels.append(("two_level", ratio))
+            candidates.append(schedule)
+        if solved is not None and len(solved):
+            block = solved[np.isclose(solved["spread"], float(spread))]
+            if len(block) == horizon:
+                labels.append(("per_age", float("nan")))
+                candidates.append(block.sort_values("age")["leverage"]
+                                  .to_numpy(dtype=float))
+        evaluator.set_leverage(np.stack(candidates, axis=1))
+        tensor = np.repeat(single[None], len(candidates), axis=0)
+        scores = np.asarray(evaluator.cec(tensor, gamma), dtype=float)
+
+        base = float(scores[labels.index(("constant", 1.0))])
+        for family in ("constant", "two_level", "per_age"):
+            picks = [i for i, lab in enumerate(labels) if lab[0] == family]
+            if not picks:
+                continue
+            # The unlevered portfolio is always available, so a family whose
+            # every member loses to it is reported as choosing not to borrow.
+            best = max(picks, key=lambda i: scores[i])
+            cec = float(scores[best])
+            ratio = labels[best][1]
+            if family != "per_age" and cec < base:
+                cec, ratio = base, 1.0
+            rows.append({"spread": float(spread), "policy": family,
+                         "leverage": ratio, "cec": cec,
+                         "vs_unlevered_pct": (cec / base - 1.0) * 100.0})
+    return pd.DataFrame.from_records(rows)

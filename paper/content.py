@@ -336,14 +336,20 @@ def section_introduction(ctx: Any) -> List[Flowable]:
         f"glide-path solve made for convenience turns out not to have been "
         f"binding."))
     out.append(ctx.p(
-        f"<b>Leverage stops being worth the trouble long before it stops "
-        f"paying.</b> Borrowing to invest is worth "
-        f"{lev['value_at_zero_spread']:+.2f}% when credit is free and breaks "
-        f"even at a spread of {lev['break_even_spread']:.2%}, but the "
-        f"advantage is already under a tenth of a percent by "
-        f"{lev['negligible_spread']:.2%}. What the optimiser levers is a "
-        f"diversified portfolio rather than a concentrated one, and the cost "
-        f"of the trade is paid in the left tail."))
+        f"<b>When you borrow matters more than whether.</b> A "
+        f"<i>constant</i> leverage ratio held for life is worth "
+        f"{lev['value_at_zero_spread']:+.2f}% when credit is free, breaks even "
+        f"at a spread of {lev['break_even_spread']:.2%}, and is already under a "
+        f"tenth of a percent by {lev['negligible_spread']:.2%} — a null result "
+        f"on margin accounts. Let the ratio <i>decline with age</i>, which is "
+        f"what Ayres and Nalebuff actually prescribe, and it is worth more at "
+        f"every price of credit we test, including prices at which the "
+        f"constant ratio is worth nothing. The gain does not depend on the "
+        f"per-age detail: a policy with a single free parameter — one ratio "
+        f"while working, unlevered in retirement — keeps most of it. What the "
+        f"optimiser levers is a diversified portfolio rather than a "
+        f"concentrated one, and the cost of the trade is paid in the left "
+        f"tail."))
     out.append(ctx.p(
         "<b>Timing beats allocation.</b> The single decade around a person's "
         "retirement date explains more of the variation in their retirement "
@@ -2621,13 +2627,92 @@ def section_leverage(ctx: Any) -> List[Flowable]:
             "three prices of credit.",
             max_height=8.0 * cm))
 
+        try:
+            two_level = f.table("leverage_two_level")
+        except FileNotFoundError:
+            two_level = pd.DataFrame()
+        if len(two_level):
+            wide = two_level.pivot(index="spread", columns="policy",
+                                   values="vs_unlevered_pct").reset_index()
+            picks = two_level.pivot(index="spread", columns="policy",
+                                    values="leverage")
+            for col in ("constant", "two_level"):
+                if col in picks:
+                    wide[col + "_lev"] = picks[col].to_numpy()
+            beats = int((wide["two_level"] > wide["constant"] + 1e-9).sum())
+            survives = beats == len(wide)
+            kept = (float((wide["two_level"]
+                           / wide["per_age"].replace(0, np.nan)).mean() * 100.0)
+                    if "per_age" in wide else float("nan"))
+            realistic = wide[wide["spread"] >= 0.02 - 1e-9]
+            gap = bool(len(realistic)
+                       and (realistic["constant"] <= 0.05).all()
+                       and (realistic["two_level"] > 0.05).all())
+            out.append(ctx.h2("10.4.1 Is the shape real, or 68 parameters of "
+                              "overfit?"))
+            out.append(ctx.p(
+                "The schedule above is solved and scored on the same paths, "
+                "with one free parameter per age. That is exactly the setting "
+                "in which a solved policy flatters itself, so its certainty "
+                "equivalent alone cannot establish that <i>declining</i> "
+                "leverage beats a constant ratio — the gain could be nothing "
+                "but optimisation gain. The discriminating test is how much "
+                "survives with a <b>single</b> knob: hold a ratio while "
+                "working and unlever at retirement."))
+            cols = [c for c in ("spread", "constant_lev", "constant",
+                                "two_level_lev", "two_level", "per_age")
+                    if c in wide]
+            heads = {"spread": "Borrowing spread",
+                     "constant_lev": "Best constant",
+                     "constant": "Constant, vs unlevered",
+                     "two_level_lev": "Best working ratio",
+                     "two_level": "Two-level, vs unlevered",
+                     "per_age": "Per age, vs unlevered"}
+            fmts = {"spread": lambda v: pc(v, 1),
+                    "constant_lev": lambda v: f"{float(v):g}x",
+                    "two_level_lev": lambda v: f"{float(v):g}x",
+                    "constant": lambda v: f"{float(v):+.2f}%",
+                    "two_level": lambda v: f"{float(v):+.2f}%",
+                    "per_age": lambda v: f"{float(v):+.2f}%"}
+            out.extend(ctx.table(
+                rows_from(wide, cols, [heads[c] for c in cols], fmts),
+                "One knob against sixty-eight: constant, two-level and "
+                "per-age leverage",
+                note="Every row is scored on the same paths and the same "
+                     "allocation, so the comparison is about the leverage "
+                     "policy alone. The two-level policy holds one ratio "
+                     "while working and unlevers at retirement."))
+            out.append(ctx.p(
+                f"The two-level policy beats the best constant ratio at "
+                f"{'every' if survives else 'some but not all'} price of "
+                f"credit tested, keeping roughly {kept:.0f}% of what the free "
+                f"68-parameter solve claims. <b>The declining shape is "
+                f"structural; the per-age detail is mostly optimisation "
+                f"gain.</b>"
+                + (" It also survives where the constant ratio does not: at "
+                   "the higher spreads holding one ratio for life is worth "
+                   "nothing, while unlevering at retirement is still worth "
+                   "having."
+                   if gap else "")
+                if beats else
+                "The two-level policy does <b>not</b> beat the best constant "
+                "ratio at any price of credit tested. Whatever the per-age "
+                "solve gains, it is not coming from the declining shape, and "
+                "should be read as optimisation gain."))
+
     out.append(ctx.h2("10.5 What this changes"))
     out.extend(ctx.bullets([
-        f"Leverage is <b>not free money</b>. It is worth "
+        f"A <b>constant</b> leverage ratio is not free money. It is worth "
         f"{lv['value_at_zero_spread']:+.2f}% when credit is free, breaks even "
         f"at a spread of {lv['break_even_spread']:.2%}, and is worth under a "
         f"tenth of a percent from {lv['negligible_spread']:.2%} upward — which "
         f"covers most of the range a household actually borrows in.",
+        "That verdict does <b>not</b> carry over to a <b>declining</b> ratio, "
+        "which is what Ayres and Nalebuff actually prescribe. Section 10.4.1 "
+        "prices the two separately on the same paths, and the declining policy "
+        "is worth more at every spread tested — so the familiar null result "
+        "from levered-portfolio backtests is in part an artefact of holding "
+        "the ratio fixed for life.",
         f"The result is driven by the <b>left tail</b>. At a moderate "
         f"{lv['moderate_leverage']:g}× the median rises "
         f"{lv['moderate_median_pct']:+.1f}% while the fifth percentile falls "

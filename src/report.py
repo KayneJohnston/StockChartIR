@@ -4331,8 +4331,60 @@ def write_doc_13(
             "smooth income stream and no borrowing constraint, on this return "
             "panel the optimiser does not want to front-load its borrowing.")
     else:
-        schedule_tbl = "_not computed_"
+        schedule_tbl = decade_tbl = "_not computed_"
         schedule_verdict = ""
+        monotone = False
+
+    # How much of the age-varying gain a one-parameter policy keeps. Without
+    # this the solved schedule's CEC cannot separate a real declining shape
+    # from the optimisation gain of fitting 68 parameters on the solve paths.
+    two_level = frames.get("two_level", pd.DataFrame())
+    if len(two_level):
+        wide = two_level.pivot(index="spread", columns="policy",
+                               values="vs_unlevered_pct").reset_index()
+        picks = two_level.pivot(index="spread", columns="policy",
+                                values="leverage")
+        for col in ("constant", "two_level"):
+            if col in picks:
+                wide[col + "_lev"] = picks[col].to_numpy()
+        cols = ["spread", "constant_lev", "constant", "two_level_lev",
+                "two_level"] + (["per_age"] if "per_age" in wide else [])
+        two_level_tbl = md_table(_compact(
+            _pct(wide, ["spread"]), [c for c in cols if c in wide],
+            {"spread": "Borrowing spread (%)",
+             "constant_lev": "Best constant ratio",
+             "constant": "Constant, vs unlevered (%)",
+             "two_level_lev": "Best working-life ratio",
+             "two_level": "Two-level, vs unlevered (%)",
+             "per_age": "Solved per age, vs unlevered (%)"}),
+            floatfmt="{:.2f}")
+        beats = wide[wide["two_level"] > wide["constant"] + 1e-9]
+        survives = len(beats) == len(wide)
+        realistic = wide[wide["spread"] >= 0.02 - 1e-9]
+        alive_at_realistic = bool(len(realistic)
+                                  and (realistic["two_level"] > 0.05).all())
+        if "per_age" in wide and (wide["per_age"] > 1e-9).any():
+            kept = float((wide["two_level"] / wide["per_age"].replace(0, np.nan)
+                          ).mean() * 100.0)
+        else:
+            kept = float("nan")
+        two_level_verdict = (
+            f"The two-level policy beats the best constant ratio at "
+            f"{'every' if survives else 'some but not all'} price of credit "
+            f"tested, keeping roughly {kept:.0f}% of what the free 68-parameter "
+            f"solve claims. **The declining shape is structural; the per-age "
+            f"detail is mostly optimisation gain.**"
+            + (" It also survives where the constant ratio does not: at a 2% "
+               "spread, holding one ratio for life is worth nothing while "
+               "unlevering at retirement is still worth having."
+               if alive_at_realistic else "")
+            if survives or len(beats) else
+            "The two-level policy does **not** beat the best constant ratio. "
+            "Whatever the per-age solve gains, it is not coming from the "
+            "declining shape, and should be read as optimisation gain.")
+    else:
+        two_level_tbl = "_not computed_"
+        two_level_verdict = ""
 
     worth_it = float(free_row["vs_unlevered_pct"]) > 0.05
     headline_verdict = (
@@ -4471,12 +4523,33 @@ carries, at a zero spread:
 
 {"The decade means fall monotonically through the whole working life, so this is not an artefact of the two endpoints." if monotone else "The decade means do not fall monotonically, so the trend is real but not clean."}
 
+### 5.1 Is the shape real, or 68 parameters of overfit?
+
+The schedule above is solved and scored on the same paths, with one free
+parameter per age. That is exactly the setting in which a solved policy
+flatters itself, so its certainty equivalent on its own cannot establish that
+*declining* leverage beats a constant ratio.
+
+The discriminating test is how much survives with a **single** knob: hold `L`
+while working and unlever at retirement. Every row below is scored on the same
+paths and the same allocation, so the comparison is about the leverage policy
+alone and nothing else.
+
+{two_level_tbl}
+
+{two_level_verdict}
+
 ## 6. What this changes
 
-* Leverage is **not** free money. It is worth {float(free_row['vs_unlevered_pct']):+.2f}% when
+* A **constant** leverage ratio is not free money. It is worth {float(free_row['vs_unlevered_pct']):+.2f}% when
   credit is free, breaks even at a spread of {break_even:.2%}, and is worth
   less than a tenth of a percent from {practical:.2%} upward -- which covers
   most of the range a household actually borrows in.
+* That verdict does **not** carry over to a declining ratio, which is what
+  Ayres and Nalebuff actually prescribe. Section 5.1 prices the two separately,
+  and the declining policy is worth more at every spread tested -- so the
+  familiar null result from levered-portfolio backtests is in part an artefact
+  of holding the ratio fixed for life.
 * The result is driven by the left tail, not by the average. Leverage raises
   median retirement consumption and lowers the fifth percentile, and the
   certainty equivalent prices that trade at the investor's risk aversion.

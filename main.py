@@ -1785,12 +1785,22 @@ def step13_leverage(cfg: Dict[str, Any],
     by_decade = lev.schedule_by_decade(schedule) if len(schedule) \
         else pd.DataFrame()
 
+    # A 68-parameter schedule scored on its own solve paths will always look
+    # good. This asks how much of the gain a one-parameter version keeps.
+    two_level = lev.two_level_comparison(
+        evaluator, gamma, np.repeat(best_weights[None, :], spec.horizon, axis=0),
+        [float(v) for v in schedule_cfg.get("grid", lev_cfg["leverage_grid"])],
+        [float(v) for v in schedule_cfg.get("spreads", [detail_spread])],
+        int(spec.n_working), solved=schedule) \
+        if schedule_cfg.get("enabled", False) else pd.DataFrame()
+
     tables = cfg["run"]["table_dir"]
     for frame, name in ((sweep, "leverage_sweep"),
                         (optimal, "leverage_optimal_by_cost"),
                         (detail, "leverage_outcome_detail"),
                         (schedule, "leverage_schedule"),
-                        (by_decade, "leverage_schedule_by_decade")):
+                        (by_decade, "leverage_schedule_by_decade"),
+                        (two_level, "leverage_two_level")):
         if len(frame):
             _save_table(frame, tables, name)
 
@@ -1805,7 +1815,8 @@ def step13_leverage(cfg: Dict[str, Any],
     rp.write_doc_13(
         Path("docs") / "13_leverage.md", cfg,
         {"sweep": sweep, "optimal": optimal, "detail": detail,
-         "schedule": schedule, "by_decade": by_decade},
+         "schedule": schedule, "by_decade": by_decade,
+         "two_level": two_level},
         figures, {"elapsed_seconds": elapsed, "n_paths": n_paths,
                   "break_even_spread": break_even, "gamma": gamma})
     LOGGER.info("docs/13 written (%.0fs)", elapsed)
