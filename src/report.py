@@ -6224,6 +6224,14 @@ paths, risk aversion {float(notes['gamma']):g}.
     return _write(path, [intro, body])
 
 
+#: Display names for the sleeve weighting schemes, so no table prints a bare
+#: config key.
+_SLEEVE_LABELS: Dict[str, str] = {
+    "equal": "Equal-weighted", "gdp": "Real GDP", "pop": "Population",
+    "gdp_pc": "GDP per capita", "inverse_vol": "Inverse volatility",
+}
+
+
 def write_doc_18(
     path: str | Path,
     cfg: Mapping[str, Any],
@@ -6232,126 +6240,165 @@ def write_doc_18(
     notes: Mapping[str, Any],
 ) -> Path:
     """Whether the headline needs an equal-weighted international sleeve."""
-    comparison = frames["comparison"]
     ranking = frames["ranking"]
     moments = frames["moments"]
     conc = frames["concentration"]
+    spectrum = frames["spectrum"]
     gamma = float(notes["gamma"])
     found = notes["verdict"]
-    cec_col = found["cec_column"]
 
-    equal, gdp = found.get("equal", {}), found.get("gdp", {})
-    n_markets = int(conc["markets"].max()) if len(conc) else 0
-    eff_first = float(conc["effective_markets"].iloc[0]) if len(conc) else float("nan")
-    eff_last = float(conc["effective_markets"].iloc[-1]) if len(conc) else float("nan")
-    top_last = float(conc["largest_share"].iloc[-1]) if len(conc) else float("nan")
-    top_name = str(conc["largest_market"].iloc[-1]) if len(conc) else "?"
+    schemes = [s for s in found.get("schemes", []) if s in set(ranking.columns)]
+    alternatives = [s for s in schemes if s != "equal"]
+    n_markets = int(conc["markets"].max())
+    ref = spectrum[spectrum["weighting"] == "equal"]
+    ref_gap = float(ref["gap_pct"].iloc[0]) if len(ref) else float("nan")
+    tightest = spectrum.iloc[0] if len(spectrum) else None
+    # Which scheme is kindest to the finding is a question for the data, not
+    # an assumption: the equal weighting is the obvious suspect but need not
+    # be the answer.
+    kindest = spectrum.loc[spectrum["gap_pct"].idxmax()] if len(spectrum) \
+        else None
+    equal_is_kindest = bool(kindest is not None
+                            and str(kindest["weighting"]) == "equal")
+    mean_equal_markets = float(ref["effective_markets"].iloc[0]) \
+        if len(ref) else float("nan")
 
-    conc_tbl = md_table(_compact(
-        _pct(conc[conc["year"] % 20 == 0], ["largest_share", "top3_share"]),
-        ["year", "markets", "effective_markets", "largest_market",
-         "largest_share", "top3_share"],
-        {"year": "Year", "markets": "Markets with data",
-         "effective_markets": "Effective markets (1/HHI)",
-         "largest_market": "Largest", "largest_share": "Largest share (%)",
-         "top3_share": "Top three (%)"}), floatfmt="{:.2f}")
+    spectrum_tbl = md_table(_compact(
+        _pct(spectrum, ["sd"]),
+        ["label", "tilts_towards", "effective_markets", "sd",
+         "correlation_with_domestic", "gap_pct"],
+        {"label": "Weighting", "tilts_towards": "Tilts towards",
+         "effective_markets": "Effective markets",
+         "sd": "Sleeve SD (%)",
+         "correlation_with_domestic": "Corr. with home",
+         "gap_pct": "All-intl over 50/50 (%)"}), floatfmt="{:.3f}")
 
     moments_tbl = md_table(_compact(
         _pct(moments, ["mean", "sd", "correlation_with_domestic"]),
-        ["label", "observations", "mean", "sd", "return_per_unit_risk",
+        ["label", "mean", "sd", "return_per_unit_risk",
          "correlation_with_domestic"],
-        {"label": "Sleeve", "observations": "Country-years",
-         "mean": "Mean (%)", "sd": "SD (%)",
+        {"label": "Sleeve", "mean": "Mean (%)", "sd": "SD (%)",
          "return_per_unit_risk": "Return per unit risk",
          "correlation_with_domestic": "Corr. with home market (%)"}),
         floatfmt="{:.3f}")
 
+    ranking_cols = ["label"] + schemes
     ranking_tbl = md_table(_compact(
-        _pct(ranking, ["ruin_equal", "ruin_gdp"]),
-        ["label", "equal", "gdp", "change_pct", "ruin_equal", "ruin_gdp"],
-        {"label": "Strategy", "equal": "CEC, equal-weighted",
-         "gdp": "CEC, GDP-weighted", "change_pct": "Change (%)",
-         "ruin_equal": "P(ruin) equal (%)", "ruin_gdp": "P(ruin) GDP (%)"}),
+        ranking, ranking_cols,
+        {"label": "Strategy",
+         **{s: _SLEEVE_LABELS.get(s, s) for s in schemes}}),
         floatfmt="{:.4f}")
+
+    change_cols = [f"{s}_change_pct" for s in alternatives
+                   if f"{s}_change_pct" in ranking.columns]
+    change_tbl = md_table(_compact(
+        ranking, ["label"] + change_cols,
+        {"label": "Strategy",
+         **{f"{s}_change_pct": _SLEEVE_LABELS.get(s, s) + " (%)"
+            for s in alternatives}}), floatfmt="{:.2f}") \
+        if change_cols else "_not computed_"
+
+    decades = conc[(conc["year"] % 30 == 0) & (conc["weighting"] != "equal")]
+    conc_tbl = md_table(_compact(
+        _pct(decades, ["largest_share"]),
+        ["label", "year", "effective_markets", "largest_market",
+         "largest_share"],
+        {"label": "Weighting", "year": "Year",
+         "effective_markets": "Effective markets",
+         "largest_market": "Largest", "largest_share": "Largest share (%)"}),
+        floatfmt="{:.2f}")
 
     # -- the verdict, classified rather than asserted ----------------------
     if found["winner_changes"]:
         headline = (
-            f"**The weighting changes which strategy wins.** On the "
-            f"equal-weighted sleeve the best strategy is "
-            f"{equal.get('winner_label', '?')}; on the GDP-weighted sleeve it "
-            f"is {gdp.get('winner_label', '?')}. The headline of this project "
-            f"is a property of how the international leg was built, and every "
-            f"result that leans on it should be read with that in mind.")
+            "**Some weighting changes which strategy wins.** The headline of "
+            "this project is a property of how the international leg was "
+            "built, and every result that leans on it should be read with "
+            "that in mind.")
     elif found["ordering_changes"]:
         headline = (
-            "**The weighting flips the ordering this project diverges on.** "
-            "All-international leads the 50/50 split under one construction "
-            "and trails it under the other, so the divergence from the "
+            "**Some weighting flips the ordering this project diverges on.** "
+            "All-international leads the 50/50 split under some constructions "
+            "and trails it under others, so the divergence from the "
             "replicated paper is a construction artefact rather than a "
             "finding about the world.")
     else:
+        worst = found.get("worst_scheme", "")
+        retained = found.get("worst_share_retained", float("nan"))
         headline = (
-            f"**The ordering survives the weighting.** All-international "
-            f"leads the 50/50 split by {equal.get('gap_pct', float('nan')):+.2f}% "
-            f"on the equal-weighted sleeve and "
-            f"{gdp.get('gap_pct', float('nan')):+.2f}% on the GDP-weighted one. "
-            f"The divergence from the replicated paper is not manufactured by "
-            f"the equal weighting, though the levels move.")
+            f"**The ordering survives every weighting tested.** "
+            f"All-international leads the 50/50 split by {ref_gap:+.2f}% on "
+            f"the equal-weighted sleeve. The harshest alternative is "
+            f"{_SLEEVE_LABELS.get(worst, worst)}, which leaves "
+            f"{float(found.get('worst_gap_pct', float('nan'))):+.2f}% -- "
+            f"{retained:.0%} of the reference gap. The divergence from the "
+            f"replicated paper narrows under a realistic sleeve but does not "
+            f"close.")
+
+    # Does the gap track concentration, or what the scheme tilts towards?
+    mech = ""
+    if len(spectrum) > 2:
+        corr = float(np.corrcoef(spectrum["effective_markets"],
+                                 spectrum["gap_pct"])[0, 1])
+        near = spectrum[spectrum["effective_markets"]
+                        >= 0.85 * float(n_markets)]
+        spread_near = (float(near["gap_pct"].max())
+                       - float(near["gap_pct"].min())) if len(near) > 1 \
+            else float("nan")
+        full_spread = float(spectrum["gap_pct"].max()) \
+            - float(spectrum["gap_pct"].min())
+        mech = (
+            f"The gap correlates {corr:+.2f} with the effective number of "
+            f"markets across the {len(spectrum)} schemes. "
+            + (f"The {len(near)} schemes that barely concentrate the sleeve "
+               f"({_and_list([str(v) for v in near['label']])}) span only "
+               f"{spread_near:.2f} points of gap between them, against "
+               f"{full_spread:.2f} across the whole set -- so it is the "
+               f"concentration that moves the answer, not the direction of "
+               f"the tilt."
+               if np.isfinite(spread_near)
+               and spread_near < 0.5 * full_spread else
+               f"The schemes that barely concentrate the sleeve still span "
+               f"{spread_near:.2f} points of gap, against {full_spread:.2f} "
+               f"across the whole set -- so what the scheme tilts towards "
+               f"matters as much as how far it concentrates."))
 
     # The weighting touches `intl_eq` and nothing else, so any strategy with
-    # no foreign exposure must come back bit-identical. That it does is the
-    # cheapest available check that the two panels differ only where intended.
+    # no foreign exposure must come back identical under every scheme. That it
+    # does is the cheapest available check that the panels differ only where
+    # intended.
     spread_note = ""
-    if len(ranking) and "change_pct" in ranking:
-        unchanged = ranking[ranking["change_pct"].abs() < 1e-9]
-        moved = ranking[ranking["change_pct"].abs() >= 1e-9] \
-            .sort_values("change_pct")
+    if change_cols:
+        moved_mask = ranking[change_cols].abs().max(axis=1) >= 1e-9
+        unchanged = ranking[~moved_mask]
+        moved = ranking[moved_mask]
         parts = []
         if len(moved):
-            biggest = moved.iloc[-1]
-            smallest = moved.iloc[0]
+            widest = moved.assign(
+                _span=moved[change_cols].max(axis=1)
+                - moved[change_cols].min(axis=1)).sort_values("_span")
             parts.append(
-                f"Of the strategies that hold any international equity, "
-                f"{str(biggest['label'])} moves most "
-                f"({float(biggest['change_pct']):+.2f}%) and "
-                f"{str(smallest['label'])} least "
-                f"({float(smallest['change_pct']):+.2f}%).")
+                f"Among the strategies holding international equity, "
+                f"{str(widest['label'].iloc[-1])} is the most "
+                f"weighting-sensitive, spanning "
+                f"{float(widest['_span'].iloc[-1]):.2f} percentage points "
+                f"across the schemes, and "
+                f"{str(widest['label'].iloc[0])} the least, at "
+                f"{float(widest['_span'].iloc[0]):.2f}.")
         if len(unchanged):
             parts.append(
                 f"The {len(unchanged)} strategies with no foreign exposure "
-                f"({_and_list([str(v) for v in unchanged['label']])}) come "
-                f"back unchanged to every decimal place, which is the "
-                f"cheapest available check that the two panels differ only in "
-                f"the sleeve.")
+                f"({_and_list([str(v) for v in unchanged['label']])}) are "
+                f"identical under every scheme to every decimal place, which "
+                f"is the cheapest available check that the panels differ only "
+                f"in the sleeve.")
         spread_note = " ".join(parts)
-
-    eq_row = moments[moments["weighting"] == "equal"]
-    gd_row = moments[moments["weighting"] == "gdp"]
-    mech = ""
-    if len(eq_row) and len(gd_row):
-        e, g = eq_row.iloc[0], gd_row.iloc[0]
-        d_sd = (float(g["sd"]) - float(e["sd"])) * 100.0
-        d_corr = (float(g["correlation_with_domestic"])
-                  - float(e["correlation_with_domestic"])) * 100.0
-        d_mean = (float(g["mean"]) - float(e["mean"])) * 100.0
-        mech = (
-            f"The mechanism is visible in the sleeve's own moments. Weighting "
-            f"by GDP moves the mean by {d_mean:+.2f} percentage points, the "
-            f"volatility by {d_sd:+.2f}, and the correlation with the home "
-            f"market by {d_corr:+.2f} points. "
-            + ("Risk rises faster than return, which is what a less "
-               "diversified portfolio does."
-               if d_sd > 0 and d_mean / max(d_sd, 1e-9) < float(e["mean"])
-               / float(e["sd"]) else
-               "Return rises faster than risk, so the concentration is not "
-               "purely a cost here."))
 
     figure_list = "\n".join(f"* `{f}`" for f in figures)
     intro = _header(
         "18 - How the International Sleeve Is Weighted",
         "Whether the headline needs an equal-weighted foreign leg, or "
-        "survives one an investor could actually have bought.")
+        "survives sleeves an investor could actually have bought.")
 
     body = f"""
 ## 1. The construction under test
@@ -6364,79 +6411,87 @@ person could have bought: it holds as much Portugal as it holds the United
 States, it rebalances into whatever has fallen, and it never lets one market
 dominate.
 
-Real investors hold something closer to a capitalisation-weighted index, which
-is concentrated by construction and grows *more* concentrated exactly when one
-market has run. That matters here specifically, because the headline finding --
-100% international beating the 50/50 domestic/international split that the
+That matters here specifically, because the headline finding -- 100%
+international beating the 50/50 domestic/international split that the
 replicated paper lands on -- is a claim about how much diversification the
 foreign sleeve delivers. If the equal weighting is doing that work, the
 divergence is an artefact rather than a finding.
 
-This section rebuilds the panel with a GDP-weighted sleeve and re-runs the
-headline comparison through the same summariser, so the two answers differ in
-the weighting and in nothing else.
+This section rebuilds the panel under {len(schemes)} weighting schemes and
+re-runs the headline comparison through the same summariser, so the answers
+differ in the weighting and in nothing else.
 
-## 2. What GDP weighting is, and is not
+## 2. The schemes, and why these ones
 
-The weights are Maddison real GDP per head times population, **lagged one
-year**, renormalised each year over the other markets that have a return.
-Three properties are worth stating plainly:
+JST supports very few honest cross-country weights. A series has to be in
+comparable units across countries and complete enough not to change the
+sleeve's membership from one year to the next; that rules out the nominal
+`gdp`, `exports`, `tloans` and `wage` columns, which carry country-specific
+currency units, and the ratio columns, which are gappy and are not sizes.
+What survives is population, Maddison real GDP per head, their product, and
+one scheme estimated from the returns themselves:
 
-* **It is a proxy for capitalisation weights, not a substitute.** It
-  reproduces the concentration that makes a real index a real index. It does
-  not reproduce the wedge between an economy's size and its listed market's.
-* **It is PPP-based.** Maddison is used because JST's own nominal `gdp` series
-  carries country-specific currency units -- pesetas for Spain, lire for Italy
-  -- with no consistent scaling, so cross-country ratios taken from it are
-  meaningless. The cost is that a PPP measure understates a market whose
-  currency is temporarily strong; Japan in the late 1980s is the clearest case.
-* **It is implementable.** The lag means no weight is formed from a number the
-  investor could not yet have seen, which is the same discipline `docs/15`
-  applies to valuation terciles.
+{spectrum_tbl}
 
-Both panels share `years`, `countries` and `available`, so the bootstrap draws
-identical calendar history for each and the comparison is paired rather than
-merely parallel.
+Three properties hold for all of them:
 
-## 3. How much concentration this actually adds
+* **Every weight is lagged.** Sizes are read from year `t-1` and the
+  inverse-volatility estimate uses a strictly prior window, so no weight is
+  formed from a number the investor could not yet have seen -- the same
+  discipline `docs/15` applies to valuation terciles.
+* **Every panel is paired.** All schemes share `years`, `countries` and
+  `available`, so the bootstrap draws identical calendar history for each.
+* **None of them is capitalisation weighting.** These are proxies. They
+  reproduce the concentration that makes a real index a real index; they do
+  not reproduce the wedge between an economy's size and its listed market's,
+  and the PPP-based ones understate a market whose currency is temporarily
+  strong -- Japan in the late 1980s most of all.
+
+The set is deliberately two-dimensional. Real GDP and population concentrate
+the sleeve heavily; GDP per capita and inverse volatility barely concentrate
+it at all while tilting it somewhere quite different. That is what lets
+Section 5 separate the effect of concentration from the effect of the tilt.
+
+## 3. How much concentration each adds
 
 {conc_tbl}
 
-Measured across all {n_markets} markets, equal weighting holds the effective
-number fixed at {n_markets} in every year. GDP weighting runs from about
-{eff_first:.1f} to {eff_last:.1f}, with {top_name} at {top_last:.0%} of the
-total by the end. Each investor's own sleeve is the other {n_markets - 1} of
-these, so the leave-one-out figures sit slightly below both, but the gap
-between the two schemes is what matters and it is large -- an effective four
-markets against sixteen is what makes this a real test rather than a
-formality.
+Equal weighting holds the effective number of markets at however many have
+data that year -- {n_markets} in most years, {mean_equal_markets:.1f} on
+average once the war-time gaps are counted -- which is the maximum any scheme
+can reach.
+{f"Averaged over the panel the most concentrated scheme is {str(tightest['label'])}, at an effective {float(tightest['effective_markets']):.1f} markets." if tightest is not None else ""}
 
-## 4. The headline, under both weightings
+## 4. The headline, under every weighting
 
 At γ = {gamma:g} over {int(notes['n_paths']):,} lifetimes:
 
 {ranking_tbl}
 
+As a change against the equal-weighted panel:
+
+{change_tbl}
+
 {headline}
 
 {spread_note}
 
-## 5. Why it moves the way it does
-
-{moments_tbl}
+## 5. Concentration, or the tilt?
 
 {mech}
 
+{moments_tbl}
+
 ## 6. What this changes
 
-* The equal-weighted sleeve is the more favourable construction, and the
-  levels in every table of this project reflect that. A reader should treat
-  the certainty equivalents as construction-dependent.
-* {"The ordering that this project diverges from the replicated paper on does not survive the reweighting, so that divergence should be attributed to panel construction." if found["ordering_changes"] else "The ordering that this project diverges from the replicated paper on does survive the reweighting, so the divergence is not manufactured by the equal weighting."}
-* GDP weighting is still not capitalisation weighting. The honest reading of
-  this section is that it brackets the answer rather than settling it: the
-  truth sits somewhere between an equal-weighted sleeve nobody could buy and a
-  PPP-GDP sleeve that misprices strong-currency markets.
+* {"The equal-weighted sleeve is the most favourable construction of those tested, and the levels in every table of this project reflect that." if equal_is_kindest else f"The equal weighting is **not** the construction most favourable to the finding. {str(kindest['label'])} produces a larger gap ({float(kindest['gap_pct']):+.2f}% against {ref_gap:+.2f}%), so the headline is not simply resting on the kindest sleeve available." if kindest is not None else ""}
+  Either way a reader should treat the certainty equivalents as
+  construction-dependent.
+* {"The ordering that this project diverges from the replicated paper on does not survive every reweighting, so that divergence should be attributed to panel construction." if found["ordering_changes"] else "The ordering that this project diverges from the replicated paper on survives every reweighting tested, so the divergence is not manufactured by the equal weighting -- though the margin narrows."}
+* None of these is capitalisation weighting. The honest reading is that this
+  section brackets the answer rather than settling it: the truth sits between
+  an equal-weighted sleeve nobody could buy and a PPP-GDP sleeve that
+  misprices strong-currency markets.
 
 ## 7. Figures
 

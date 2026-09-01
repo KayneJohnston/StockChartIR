@@ -55,24 +55,31 @@ Solving the glide path directly reproduces the all-equity corner. Freeing all fo
 
 Their headline is **50/50 domestic/international**, held for life. On my panel that is beaten by **100% international** — 1.108 against 1.048, with ruin at 9.0% against 11.7%. The all-equity conclusion survives; the *split* doesn't.
 
-My first instinct was to blame my own construction. My international leg is a leave-one-out **equal weighting** across the other fifteen markets, which is a more diversified object than any index anyone could have bought: it holds as much Portugal as it holds the United States, and it rebalances into whatever has fallen. So I tested it — rebuilt the whole panel with the sleeve weighted by **lagged GDP** (Maddison real GDP per head × population, one-year lag so the weights are ones you could actually have known), which drops the effective number of markets from 16 to about **four**, with the US at 47% of it by the end.
+My first instinct was to blame my own construction. My international leg is a leave-one-out **equal weighting** across the other fifteen markets, which is a more diversified object than any index anyone could have bought: it holds as much Portugal as it holds the United States, and it rebalances into whatever has fallen. So I tested it — rebuilt the whole panel under **five** sleeve constructions and re-ran the headline through the same code each time.
 
-| Strategy | CEC, equal-weighted | CEC, GDP-weighted | Change |
-|---|---|---|---|
-| 100% international | 1.1085 | 1.1098 | +0.1% |
-| 50/50 domestic/international | 1.0478 | 1.0701 | +2.1% |
-| Target-date glide path | 0.9425 | 0.9541 | +1.2% |
-| 100% domestic | 0.8818 | 0.8818 | 0.0% |
-| 60/40 | 0.8707 | 0.8707 | 0.0% |
-| Bills | 0.7390 | 0.7390 | 0.0% |
+JST supports very few honest cross-country weights: a series has to be in comparable units across countries and complete enough not to change the sleeve's membership year to year. That kills the nominal `gdp`, `exports`, `tloans` and `wage` columns, which carry country-specific currency units (Spain in pesetas, Italy in lire — `gdp/xrusd` puts Spain at 65× the US). What survives is population, Maddison real GDP per head, their product, and one scheme estimated from the returns themselves. All weights are **lagged**, so every sleeve is one you could actually have held.
+
+| Weighting | Tilts towards | Effective markets | Sleeve SD | Corr. with home | All-intl over 50/50 |
+|---|---|---|---|---|---|
+| Real GDP | large economies | 4.6 | 24.3% | 0.36 | **+3.71%** |
+| Population | populous countries | 6.3 | 26.0% | 0.33 | +4.36% |
+| Inverse volatility | stable markets | 13.8 | 20.8% | 0.44 | +4.41% |
+| GDP per capita | rich countries | 14.1 | 21.3% | 0.44 | **+6.75%** |
+| Equal-weighted | nothing | 15.7 | 21.7% | 0.43 | +5.79% |
 
 ![Sleeve weighting](fig43_sleeve_weighting.png)
 
-**The ordering survives, and the margin narrows.** All-international leads 50/50 by 5.79% equal-weighted and 3.71% GDP-weighted — so roughly **36% of my advantage over their split is attributable to the equal weighting**, and the rest isn't. (The three strategies with no foreign exposure come back identical to four decimal places, which is the cheapest available check that the two panels differ only in the sleeve.)
+**The ordering survives all five.** The harshest is real-GDP weighting, which leaves +3.71% — 64% of the equal-weighted gap. So a meaningful chunk of my advantage over their split is attributable to the equal weighting, and most of it isn't. (The three strategies with no foreign exposure are identical under every scheme to four decimals, which is the cheapest check that the panels differ only in the sleeve.)
 
-The mechanism was a genuine surprise to me. Concentrating the sleeve makes it riskier, as you'd expect — volatility 21.7% → 24.3%, return per unit of risk 0.384 → 0.372. But it also makes it **less** correlated with the home market, 0.43 → 0.36. Because the sleeve is leave-one-out, loading it onto the US and Japan makes a Danish investor's foreign holding *less* like Denmark than a basket of fifteen mostly-European markets is. The two effects largely offset.
+Two things surprised me.
 
-Caveat worth stating: GDP weighting is a proxy for cap weighting, not a substitute. It's PPP-based, so it understates a market whose currency is temporarily strong — Japan in the late 1980s above all. It brackets the answer rather than settling it.
+**Equal weighting isn't the kindest construction.** GDP-per-capita weighting gives a *larger* gap, +6.75%, so the headline isn't resting on the most favourable sleeve available to it.
+
+**Concentration isn't a sufficient statistic.** The set is deliberately two-dimensional — real GDP and population concentrate hard, GDP-per-capita and inverse-volatility barely concentrate at all while tilting somewhere else. The gap correlates +0.75 with effective market count, but the two *near-equal-concentration* schemes still span 2.34 of the 3.04 total points between them. Rich-country and stable-market tilts have almost identical Herfindahl indices and materially different consequences. So a single alternative weighting isn't really a robustness check.
+
+The mechanism has a wrinkle too. Concentrating by economy size makes the sleeve riskier (vol 21.7% → 24.3%) but *less* correlated with the home market (0.43 → 0.36). Because the sleeve is leave-one-out, loading it onto the US and Japan makes a Danish investor's foreign holding less like Denmark than a basket of fifteen mostly-European markets is. That works against the loss of diversification, which is why the CECs move less than the concentration does.
+
+Caveat: none of these is cap weighting. The PPP-based ones understate markets whose currency is temporarily strong — Japan in the late 1980s above all. This brackets the answer rather than settling it.
 
 So their 50/50 still isn't contradicted by anything I can measure. My domestic leg is a single draw from a sixteen-country set that includes some poor century-long performers — Portugal at 3.2% real, France at 3.6% — and with 39 countries and a broader international index the two legs sit far closer together than they do here. But I can now say the divergence isn't merely an artefact of how I built the sleeve.
 

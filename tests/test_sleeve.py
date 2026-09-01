@@ -117,7 +117,8 @@ class TestConcentration:
     def test_the_largest_market_matches_the_largest_share(self, real_config_or_skip
                                                           ) -> None:
         panel = dl.build_tier_a(real_config_or_skip, weighting="gdp")
-        frame = sv.concentration(real_config_or_skip, panel.countries, panel.years)
+        frame = sv.concentration(real_config_or_skip, panel.countries,
+                                 panel.years, ["gdp"])
         jst = dl.add_real_returns(dl.load_jst(real_config_or_skip))
         window = jst[jst["year"].between(int(panel.years[0]) - 1,
                                          int(panel.years[-1]))]
@@ -185,13 +186,16 @@ class TestVerdict:
         assert out["ordering_changes"] is True
         assert out["winner_changes"] is True
 
-    def test_ranking_shift_reports_the_change_for_each_strategy(self) -> None:
+    def test_ranking_shift_reports_the_change_against_the_reference(self
+                                                                     ) -> None:
         shift = sv.ranking_shift(self._frame(0.06, 0.04))
         assert set(shift["strategy"]) == {"international_equity",
                                           "balanced_all_equity"}
         row = shift[shift["strategy"] == "international_equity"].iloc[0]
-        assert float(row["change_pct"]) == pytest.approx(
+        assert float(row["gdp_change_pct"]) == pytest.approx(
             (1.04 / 1.06 - 1.0) * 100.0)
+        # The reference scheme gets no change column of its own.
+        assert "equal_change_pct" not in shift.columns
 
     def test_a_frame_without_a_cec_column_is_an_error(self) -> None:
         with pytest.raises(KeyError):
@@ -222,3 +226,97 @@ class TestEconomySize:
         out = dl.economy_size(frame, np.array([1950, 1951]), ["USA"])
         assert np.isnan(out[0, 0])
         assert out[1, 0] == pytest.approx(1000.0)
+
+
+class TestTheOtherSchemes:
+    """Population, GDP per capita and inverse volatility.
+
+    The set is chosen so that two schemes concentrate the sleeve heavily and
+    two barely concentrate it while tilting it elsewhere. If that separation
+    collapses, ``docs/18`` section 5 is answering a question the data cannot
+    distinguish, so it is pinned here.
+    """
+
+    def test_every_registered_scheme_builds_a_paired_panel(self,
+                                                           real_config_or_skip
+                                                           ) -> None:
+        panels = sv.build_panels(real_config_or_skip, dl.SLEEVE_SCHEMES)
+        assert set(panels) == set(dl.SLEEVE_SCHEMES)
+        ref = panels["equal"]
+        for name, panel in panels.items():
+            assert panel.countries == ref.countries
+            assert np.array_equal(panel.available, ref.available)
+            assert np.array_equal(np.isnan(panel.intl_eq),
+                                  np.isnan(ref.intl_eq))
+            if name != "equal":
+                assert not np.array_equal(panel.intl_eq, ref.intl_eq,
+                                          equal_nan=True)
+
+    def test_the_schemes_span_both_concentrated_and_near_equal(
+            self, real_config_or_skip) -> None:
+        panel = dl.build_tier_a(real_config_or_skip, weighting="equal")
+        frame = sv.concentration(real_config_or_skip, panel.countries,
+                                 panel.years, dl.SLEEVE_SCHEMES)
+        mean = frame.groupby("weighting")["effective_markets"].mean()
+        n = len(panel.countries)
+        assert mean["gdp"] < 0.5 * n and mean["pop"] < 0.6 * n
+        assert mean["gdp_pc"] > 0.8 * n and mean["inverse_vol"] > 0.8 * n
+        assert mean["equal"] == pytest.approx(mean.max())
+
+    def test_equal_weighting_is_the_concentration_ceiling(self,
+                                                          real_config_or_skip
+                                                          ) -> None:
+        panel = dl.build_tier_a(real_config_or_skip, weighting="equal")
+        frame = sv.concentration(real_config_or_skip, panel.countries,
+                                 panel.years, dl.SLEEVE_SCHEMES)
+        equal = frame[frame["weighting"] == "equal"].set_index("year")
+        for scheme in dl.SLEEVE_SCHEMES:
+            block = frame[frame["weighting"] == scheme].set_index("year")
+            ceiling = equal.loc[block.index, "effective_markets"]
+            assert (block["effective_markets"] <= ceiling + 1e-9).all(), scheme
+
+    def test_an_unknown_scheme_is_rejected_by_the_dispatcher(self) -> None:
+        with pytest.raises(NotImplementedError):
+            dl.sleeve_weights("market_cap", pd.DataFrame(),
+                              np.array([1990]), ["USA"])
+
+    def test_inverse_vol_needs_the_returns_it_is_estimated_from(self) -> None:
+        with pytest.raises(ValueError, match="gross return"):
+            dl.sleeve_weights("inverse_vol", pd.DataFrame(),
+                              np.array([1990]), ["USA"])
+
+
+class TestTrailingInverseVolatility:
+    def test_a_steadier_market_gets_the_larger_weight(self) -> None:
+        rng = np.random.default_rng(4)
+        calm = 1.0 + rng.normal(0.05, 0.05, size=40)
+        wild = 1.0 + rng.normal(0.05, 0.30, size=40)
+        weights = dl.trailing_inverse_volatility(np.column_stack([calm, wild]))
+        assert (weights[-1, 0] > weights[-1, 1])
+
+    def test_the_window_is_strictly_prior(self) -> None:
+        # A single enormous return must not affect its own year's weight, only
+        # later ones, or the scheme is not implementable.
+        base = np.full((30, 2), 1.05)
+        base[:, 1] += np.linspace(0, 0.01, 30)      # break the zero-variance tie
+        spiked = base.copy()
+        spiked[20, 0] = 5.0
+        before = dl.trailing_inverse_volatility(base)
+        after = dl.trailing_inverse_volatility(spiked)
+        assert np.allclose(before[:21], after[:21])
+        assert not np.allclose(before[21:], after[21:])
+
+    def test_the_burn_in_falls_back_to_neutral_rather_than_dropping(self
+                                                                    ) -> None:
+        gross = 1.0 + np.random.default_rng(1).normal(0.05, 0.2, size=(20, 4))
+        weights = dl.trailing_inverse_volatility(gross, window=10, min_obs=5)
+        # Every cell is finite, so no market is silently dropped from the
+        # sleeve during the burn-in.
+        assert np.isfinite(weights).all()
+        # And the first year, with no prior data at all, is flat.
+        assert len(set(np.round(weights[0], 12))) == 1
+
+    def test_weights_are_strictly_positive(self) -> None:
+        gross = 1.0 + np.random.default_rng(2).normal(0.05, 0.2, size=(50, 6))
+        weights = dl.trailing_inverse_volatility(gross)
+        assert (weights > 0.0).all()

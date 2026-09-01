@@ -49,13 +49,30 @@ from . import data_loader as dl
 
 LOGGER = logging.getLogger(__name__)
 
-#: The two constructions compared. ``equal`` is the project's headline panel.
-WEIGHTINGS: Tuple[str, ...] = ("equal", "gdp")
+#: The constructions compared. ``equal`` is the project's headline panel and
+#: the reference every other scheme is measured against.
+WEIGHTINGS: Tuple[str, ...] = dl.SLEEVE_SCHEMES
+
+#: The scheme every comparison is expressed relative to.
+REFERENCE: str = "equal"
 
 #: Human labels, so the tables never print a bare config key.
 LABELS: Dict[str, str] = {
-    "equal": "Equal-weighted (leave-one-out)",
-    "gdp": "GDP-weighted (lagged, leave-one-out)",
+    "equal": "Equal-weighted",
+    "gdp": "Real GDP",
+    "pop": "Population",
+    "gdp_pc": "GDP per capita",
+    "inverse_vol": "Inverse volatility",
+}
+
+#: What each scheme tilts towards, which is the axis that separates them once
+#: concentration is held roughly fixed.
+TILTS: Dict[str, str] = {
+    "equal": "nothing",
+    "gdp": "large economies",
+    "pop": "populous countries",
+    "gdp_pc": "rich countries",
+    "inverse_vol": "historically stable markets",
 }
 
 
@@ -81,17 +98,51 @@ def build_panels(cfg: Mapping[str, Any],
 
 
 def concentration(cfg: Mapping[str, Any], countries: Sequence[str],
-                  years: np.ndarray) -> pd.DataFrame:
-    """How concentrated the GDP weights are, year by year.
+                  years: np.ndarray,
+                  weightings: Sequence[str] = WEIGHTINGS) -> pd.DataFrame:
+    """How concentrated each scheme's weights are, year by year.
 
     Reports the Herfindahl index and its reciprocal, the *effective number of
-    markets*. The equal-weighted sleeve holds that number fixed at the count
-    of markets; a real index does not, and the gap between the two is the
-    quantity this whole section is about.
+    markets*. Equal weighting holds that number at the market count by
+    definition, which is its maximum; every other scheme sits below it, and
+    how far below is the axis this section is organised around.
     """
     jst = dl.add_real_returns(dl.load_jst(cfg))
+    years = np.asarray(years)
     window = jst[jst["year"].between(int(years[0]) - 1, int(years[-1]))]
-    size = dl.economy_size(window, np.asarray(years), list(countries))
+    # The inverse-volatility scheme is estimated from returns rather than
+    # read off a column, so it needs the same gross matrix the panel builder
+    # feeds it.
+    gross = dl._pivot(dl._usd_gross_equity(window), "usd_gross_eq", years,
+                      list(countries))
+    frames = [_concentration_one(scheme, window, years, countries, gross)
+              for scheme in weightings]
+    return pd.concat(frames, ignore_index=True)
+
+
+def _concentration_one(scheme: str, window: pd.DataFrame, years: np.ndarray,
+                       countries: Sequence[str], gross: np.ndarray
+                       ) -> pd.DataFrame:
+    """One scheme's year-by-year concentration."""
+    size = dl.sleeve_weights(scheme, window, years, list(countries),
+                             wide_gross=gross)
+    if size is not None:
+        # Measure over the markets that actually enter the sleeve. A market
+        # with a weight but no return that year is not in the portfolio, and
+        # counting it would make this frame disagree with the leg builder,
+        # which drops exactly those cells.
+        size = np.where(np.isfinite(gross), size, np.nan)
+    if size is None:                       # equal weighting, by definition
+        present = np.isfinite(gross).sum(axis=1)
+        return pd.DataFrame({
+            "weighting": scheme, "label": LABELS.get(scheme, scheme),
+            "year": years.astype(int), "markets": present,
+            "herfindahl": 1.0 / np.maximum(present, 1),
+            "effective_markets": present.astype(float),
+            "largest_share": 1.0 / np.maximum(present, 1),
+            "largest_market": "-",
+            "top3_share": np.minimum(3.0 / np.maximum(present, 1), 1.0),
+        })
     rows: List[Dict[str, Any]] = []
     for i, year in enumerate(years):
         row = size[i]
@@ -104,6 +155,8 @@ def concentration(cfg: Mapping[str, Any], countries: Sequence[str],
         # one, so a missing country never shifts the name off its weight.
         largest = int(np.nanargmax(np.where(np.isfinite(row), row, -np.inf)))
         rows.append({
+            "weighting": scheme,
+            "label": LABELS.get(scheme, scheme),
             "year": int(year),
             "markets": int(finite.size),
             "herfindahl": hhi,
@@ -174,25 +227,70 @@ def _cec_column(frame: pd.DataFrame) -> str:
 
 
 def ranking_shift(comparison: pd.DataFrame) -> pd.DataFrame:
-    """Every strategy's certainty equivalent under both weightings, side by side.
+    """Every strategy's certainty equivalent under every weighting.
 
-    The ``cost_of_gdp_weighting_pct`` column is the quantity the section
-    exists to report: what the headline gives up when the sleeve stops being
-    an equal-weighted portfolio nobody could have bought.
+    Each scheme's column carries a matching ``*_change_pct`` giving what the
+    headline gives up, or gains, when the sleeve stops being the equal-weighted
+    portfolio nobody could have bought.
     """
     cec = _cec_column(comparison)
     wide = comparison.pivot(index=["strategy", "label"], columns="weighting",
                             values=cec).reset_index()
-    if "equal" in wide and "gdp" in wide:
-        wide["change_pct"] = (wide["gdp"] / wide["equal"] - 1.0) * 100.0
+    schemes = [c for c in wide.columns if c not in ("strategy", "label")]
+    if REFERENCE in schemes:
+        for scheme in schemes:
+            if scheme != REFERENCE:
+                wide[f"{scheme}_change_pct"] = (
+                    wide[scheme] / wide[REFERENCE] - 1.0) * 100.0
     ruin = comparison.pivot(index=["strategy", "label"], columns="weighting",
                             values="prob_ruin").reset_index()
-    for scheme in ("equal", "gdp"):
-        if scheme in ruin:
-            wide[f"ruin_{scheme}"] = ruin[scheme].to_numpy()
-    ordered = wide.sort_values("equal", ascending=False) \
-        if "equal" in wide else wide
+    for scheme in schemes:
+        wide[f"ruin_{scheme}"] = ruin[scheme].to_numpy()
+    ordered = wide.sort_values(REFERENCE, ascending=False) \
+        if REFERENCE in wide else wide
     return ordered.reset_index(drop=True)
+
+
+def concentration_vs_outcome(comparison: pd.DataFrame,
+                             concentration_frame: pd.DataFrame,
+                             moments: pd.DataFrame,
+                             pair: Tuple[str, str] = (
+                                 "international_equity",
+                                 "balanced_all_equity")) -> pd.DataFrame:
+    """Each scheme's concentration and tilt against the gap it produces.
+
+    This is the table the section exists for. Two schemes concentrate the
+    sleeve heavily (real GDP, population) and two barely move it while tilting
+    it somewhere else (GDP per capita, inverse volatility). If the gap tracks
+    the concentration column and ignores the tilt column, concentration is
+    what matters; if it does not, the tilt is.
+    """
+    cec = _cec_column(comparison)
+    challenger, incumbent = pair
+    eff = concentration_frame.groupby("weighting")["effective_markets"].mean()
+    rows: List[Dict[str, Any]] = []
+    for scheme in comparison["weighting"].unique():
+        block = comparison[comparison["weighting"] == scheme]
+        by_key = {r["strategy"]: r for _, r in block.iterrows()}
+        if challenger not in by_key or incumbent not in by_key:
+            continue
+        gap = (float(by_key[challenger][cec]) / float(by_key[incumbent][cec])
+               - 1.0) * 100.0
+        mrow = moments[moments["weighting"] == scheme]
+        rows.append({
+            "weighting": scheme,
+            "label": LABELS.get(scheme, scheme),
+            "tilts_towards": TILTS.get(scheme, "-"),
+            "effective_markets": float(eff.get(scheme, float("nan"))),
+            "sd": float(mrow["sd"].iloc[0]) if len(mrow) else float("nan"),
+            "correlation_with_domestic": (
+                float(mrow["correlation_with_domestic"].iloc[0])
+                if len(mrow) else float("nan")),
+            "challenger_cec": float(by_key[challenger][cec]),
+            "gap_pct": gap,
+        })
+    frame = pd.DataFrame.from_records(rows)
+    return frame.sort_values("effective_markets").reset_index(drop=True)
 
 
 def verdict(comparison: pd.DataFrame, pair: Tuple[str, str] =
@@ -224,8 +322,20 @@ def verdict(comparison: pd.DataFrame, pair: Tuple[str, str] =
             "challenger_leads": bool(np.isfinite(gap) and gap > 0.0),
         }
     schemes = [k for k in out if k != "cec_column"]
+    out["schemes"] = schemes
     out["winner_changes"] = len({out[s]["winner"] for s in schemes}) > 1
     out["ordering_changes"] = len({out[s]["challenger_leads"]
                                    for s in schemes}) > 1
     out["survives"] = not out["ordering_changes"]
+    # Which scheme is hardest on the finding, and how much of the reference
+    # gap it leaves standing. Reporting the worst case rather than an average
+    # is what stops a favourable scheme from carrying the conclusion.
+    ref_gap = out.get(REFERENCE, {}).get("gap_pct", float("nan"))
+    alternatives = [s for s in schemes if s != REFERENCE]
+    if alternatives and np.isfinite(ref_gap) and ref_gap != 0.0:
+        worst = min(alternatives, key=lambda s: out[s]["gap_pct"])
+        out["worst_scheme"] = worst
+        out["worst_gap_pct"] = out[worst]["gap_pct"]
+        out["worst_share_retained"] = out[worst]["gap_pct"] / ref_gap
+        out["reference_gap_pct"] = ref_gap
     return out

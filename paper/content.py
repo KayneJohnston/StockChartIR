@@ -4610,20 +4610,22 @@ def section_sleeve(ctx: Any) -> List[Flowable]:
     ranking = f.table("sleeve_ranking")
     moments = f.table("sleeve_moments")
     conc = f.table("sleeve_concentration").sort_values("year")
+    spectrum = f.table("sleeve_spectrum")
     comparison = f.table("sleeve_comparison")
 
-    from src.sleeve import verdict
+    from src.sleeve import LABELS, verdict
     found = verdict(comparison)
-    equal, gdp = found.get("equal", {}), found.get("gdp", {})
     cfg = f.cfg
     gamma = float(cfg["utility"]["baseline_risk_aversion"])
     n_paths = int(cfg.get("sleeve", {}).get(
         "n_paths", cfg["bootstrap"]["n_paths"]))
+    schemes = [s for s in found.get("schemes", []) if s in ranking.columns]
+    alternatives = [s for s in schemes if s != "equal"]
     n_markets = int(conc["markets"].max())
-    eff_first = float(conc["effective_markets"].iloc[0])
-    eff_last = float(conc["effective_markets"].iloc[-1])
-    top_last = float(conc["largest_share"].iloc[-1])
-    top_name = str(conc["largest_market"].iloc[-1])
+    ref = spectrum[spectrum["weighting"] == "equal"]
+    ref_gap = float(ref["gap_pct"].iloc[0]) if len(ref) else float("nan")
+    kindest = spectrum.loc[spectrum["gap_pct"].idxmax()]
+    tightest = spectrum.iloc[0]
 
     out: List[Flowable] = [ctx.h1("18. How the International Sleeve Is "
                                   "Weighted")]
@@ -4645,103 +4647,141 @@ def section_sleeve(ctx: Any) -> List[Flowable]:
         "50/50 domestic/international split — is a claim about how much "
         "diversification the foreign sleeve delivers. If the equal weighting "
         "is doing that work, the divergence is an artefact of panel "
-        "construction rather than a finding about the world. This section "
-        "rebuilds the panel with a GDP-weighted sleeve and re-runs the "
-        "headline comparison through the same summariser, so the two answers "
-        "differ in the weighting and in nothing else."))
+        f"construction rather than a finding about the world. This section "
+        f"rebuilds the panel under {len(schemes)} weighting schemes and "
+        f"re-runs the headline comparison through the same summariser, so the "
+        f"answers differ in the weighting and in nothing else."))
 
-    out.append(ctx.h2("18.1 What GDP weighting is, and is not"))
+    out.append(ctx.h2("18.1 The schemes, and why these ones"))
     out.append(ctx.p(
-        "The weights are Maddison real GDP per head times population, "
-        "<b>lagged one year</b>, renormalised each year over the other "
-        "markets that have a return. Maddison is used rather than the "
-        "database's own nominal GDP series because that series carries "
-        "country-specific currency units — pesetas for Spain, lire for Italy "
-        "— with no consistent scaling, so cross-country ratios taken from it "
-        "are meaningless. Three properties are worth stating plainly. It is a "
-        "<i>proxy</i> for capitalisation weights: it reproduces the "
-        "concentration that makes a real index a real index, but not the "
-        "wedge between an economy's size and its listed market's. It is "
-        "PPP-based, which understates a market whose currency is temporarily "
-        "strong — Japan in the late 1980s is the clearest case. And the lag "
-        "makes it implementable: no weight is formed from a number the "
-        "investor could not yet have seen, the same discipline Section 15 "
-        "applies to valuation terciles."))
-    out.append(ctx.p(
-        "Both panels share their years, their countries and their "
-        "availability mask, so the bootstrap draws identical calendar history "
-        "for each and the comparison is paired rather than merely parallel."))
-
-    out.append(ctx.h2("18.2 How much concentration this adds"))
-    decades = conc[conc["year"] % 20 == 0]
+        "The database supports very few honest cross-country weights. A "
+        "series has to be in comparable units across countries and complete "
+        "enough not to change the sleeve's membership from one year to the "
+        "next. That rules out the nominal GDP, exports, loans and wage "
+        "columns, which carry country-specific currency units — pesetas for "
+        "Spain, lire for Italy — and the ratio columns, which are gappy and "
+        "are not sizes in any case. What survives is population, Maddison "
+        "real GDP per head, their product, and one scheme estimated from the "
+        "returns themselves."))
     out.extend(ctx.table(
-        rows_from(decades, ["year", "effective_markets", "largest_market",
-                            "largest_share", "top3_share"],
-                  ["Year", "Effective markets (1/HHI)", "Largest",
-                   "Largest share", "Top three"],
-                  {"year": lambda v: f"{int(v)}",
-                   "effective_markets": lambda v: f2(v, 2),
-                   "largest_market": str,
-                   "largest_share": lambda v: pc(v, 1),
-                   "top3_share": lambda v: pc(v, 1)}),
-        "Concentration of the GDP-weighted international sleeve",
-        note=f"Measured across all {n_markets} markets. Equal weighting "
-             f"holds the effective number fixed at {n_markets} in every "
-             f"year; each investor's own sleeve is the other "
-             f"{n_markets - 1} of them, so the leave-one-out figures sit "
-             f"slightly below both."))
+        rows_from(spectrum, ["label", "tilts_towards", "effective_markets",
+                             "sd", "correlation_with_domestic", "gap_pct"],
+                  ["Weighting", "Tilts towards", "Effective markets",
+                   "Sleeve SD", "Corr. with home",
+                   "All-intl over 50/50"],
+                  {"label": str, "tilts_towards": str,
+                   "effective_markets": lambda v: f2(v, 1),
+                   "sd": lambda v: pc(v, 1),
+                   "correlation_with_domestic": lambda v: f2(v, 3),
+                   "gap_pct": lambda v: f"{float(v):+.2f}%"}),
+        "The weighting schemes, ordered by how much they concentrate the "
+        "sleeve",
+        note="Effective markets is the panel average of one over the "
+             "Herfindahl index. The final column is the advantage "
+             "all-international holds over the 50/50 split under that "
+             "scheme — the quantity this section exists to stress."))
+    out.extend(ctx.bullets([
+        "<b>Every weight is lagged.</b> Sizes are read from the prior year "
+        "and the inverse-volatility estimate uses a strictly prior window, so "
+        "no weight is formed from a number the investor could not yet have "
+        "seen — the same discipline Section 15 applies to valuation terciles.",
+        "<b>Every panel is paired.</b> All schemes share their years, "
+        "countries and availability mask, so the bootstrap draws identical "
+        "calendar history for each.",
+        "<b>None of them is capitalisation weighting.</b> These are proxies. "
+        "They reproduce the concentration that makes a real index a real "
+        "index; they do not reproduce the wedge between an economy's size and "
+        "its listed market's, and the PPP-based ones understate a market "
+        "whose currency is temporarily strong — Japan in the late 1980s most "
+        "of all.",
+    ]))
     out.append(ctx.p(
-        f"GDP weighting runs from an effective {eff_first:.1f} markets to "
-        f"{eff_last:.1f}, with {top_name} at {top_last:.0%} of the total by "
-        f"the end, against a flat {n_markets} for equal weighting. An "
-        f"effective four markets against sixteen is a large difference in "
-        f"concentration, which is what makes this a test rather than a "
-        f"formality."))
+        f"The set is deliberately two-dimensional. Real GDP and population "
+        f"concentrate the sleeve heavily, to an effective "
+        f"{float(tightest['effective_markets']):.1f} markets at the tightest. "
+        f"GDP per capita and inverse volatility barely concentrate it at all "
+        f"while tilting it somewhere quite different — towards rich countries "
+        f"and towards historically stable ones respectively. That is what "
+        f"lets Section 18.3 separate the effect of concentration from the "
+        f"effect of the tilt."))
 
-    out.append(ctx.h2("18.3 The headline under both weightings"))
+    out.append(ctx.h2("18.2 The headline under every weighting"))
     out.extend(ctx.table(
-        rows_from(ranking, ["label", "equal", "gdp", "change_pct",
-                            "ruin_equal", "ruin_gdp"],
-                  ["Strategy", "CEC, equal", "CEC, GDP", "Change",
-                   "P(ruin) equal", "P(ruin) GDP"],
-                  {"label": str, "equal": lambda v: f2(v, 4),
-                   "gdp": lambda v: f2(v, 4),
-                   "change_pct": lambda v: f"{float(v):+.2f}%",
-                   "ruin_equal": lambda v: pc(v, 1),
-                   "ruin_gdp": lambda v: pc(v, 1)}),
-        f"Every strategy under both sleeve constructions, at "
-        f"\u03b3 = {gamma:g}",
+        rows_from(ranking, ["label"] + schemes,
+                  ["Strategy"] + [LABELS.get(s, s) for s in schemes],
+                  {"label": str,
+                   **{s: (lambda v: f2(v, 4)) for s in schemes}}),
+        f"Certainty-equivalent consumption for every strategy under every "
+        f"sleeve construction, at \u03b3 = {gamma:g}",
         note=f"{n_paths:,} lifetimes per weighting, drawn from identical "
              "calendar history. The strategies holding no international "
-             "equity are unchanged by construction, which is the cheapest "
-             "available check that the panels differ only in the sleeve."))
+             "equity are unchanged across every column by construction, "
+             "which is the cheapest available check that the panels differ "
+             "only in the sleeve."))
 
     if found["winner_changes"]:
-        call = (f"<b>The weighting changes which strategy wins.</b> On the "
-                f"equal-weighted sleeve the best strategy is "
-                f"{equal.get('winner_label', '?')}; on the GDP-weighted "
-                f"sleeve it is {gdp.get('winner_label', '?')}. The headline "
-                f"of this paper is a property of how the international leg "
-                f"was built.")
+        call = ("<b>Some weighting changes which strategy wins.</b> The "
+                "headline of this paper is a property of how the "
+                "international leg was built.")
     elif found["ordering_changes"]:
-        call = ("<b>The weighting flips the ordering this paper diverges "
-                "on.</b> All-international leads the 50/50 split under one "
-                "construction and trails it under the other, so the "
-                "divergence should be attributed to panel construction "
-                "rather than read as a finding.")
+        call = ("<b>Some weighting flips the ordering this paper diverges "
+                "on.</b> All-international leads the 50/50 split under some "
+                "constructions and trails it under others, so the divergence "
+                "should be attributed to panel construction rather than read "
+                "as a finding.")
     else:
-        call = (f"<b>The ordering survives the weighting.</b> "
-                f"All-international leads the 50/50 split by "
-                f"{equal.get('gap_pct', float('nan')):+.2f}% on the "
-                f"equal-weighted sleeve and "
-                f"{gdp.get('gap_pct', float('nan')):+.2f}% on the "
-                f"GDP-weighted one. Roughly "
-                f"{100 * (1 - gdp.get('gap_pct', float('nan')) / equal.get('gap_pct', float('nan'))):.0f}% "
-                f"of the advantage is attributable to the equal weighting, "
-                f"and the rest is not.")
+        worst = found.get("worst_scheme", "")
+        call = (f"<b>The ordering survives every weighting tested.</b> "
+                f"All-international leads the 50/50 split by {ref_gap:+.2f}% "
+                f"on the equal-weighted sleeve. The harshest alternative is "
+                f"{LABELS.get(worst, worst)}, which leaves "
+                f"{float(found.get('worst_gap_pct', float('nan'))):+.2f}% — "
+                f"{float(found.get('worst_share_retained', float('nan'))):.0%} "
+                f"of the reference gap. The divergence from the replicated "
+                f"study narrows under a realistic sleeve but does not close.")
     out.append(ctx.p(call))
 
-    out.append(ctx.h2("18.4 Why it moves the way it does"))
+    equal_is_kindest = str(kindest["weighting"]) == "equal"
+    if not equal_is_kindest:
+        out.append(ctx.p(
+            f"Worth noting against our own interest in the other direction "
+            f"too: the equal weighting is <b>not</b> the construction most "
+            f"favourable to the finding. {str(kindest['label'])} produces a "
+            f"larger gap still, {float(kindest['gap_pct']):+.2f}% against "
+            f"{ref_gap:+.2f}%, so the headline is not resting on the kindest "
+            f"sleeve available to it."))
+
+    out.append(ctx.h2("18.3 Concentration, or the tilt?"))
+    corr = float(np.corrcoef(spectrum["effective_markets"],
+                             spectrum["gap_pct"])[0, 1])
+    near = spectrum[spectrum["effective_markets"] >= 0.85 * n_markets]
+    spread_near = (float(near["gap_pct"].max()) - float(near["gap_pct"].min())
+                   ) if len(near) > 1 else float("nan")
+    full_spread = float(spectrum["gap_pct"].max()) \
+        - float(spectrum["gap_pct"].min())
+    concentration_explains = bool(np.isfinite(spread_near)
+                                  and spread_near < 0.5 * full_spread)
+    out.append(ctx.p(
+        f"The obvious hypothesis is that concentration alone drives the "
+        f"result: the more the sleeve collapses onto a few markets, the less "
+        f"diversification it delivers and the smaller all-international's "
+        f"advantage. The schemes are chosen to test that, because two of them "
+        f"barely concentrate the sleeve at all while tilting it somewhere "
+        f"quite different. Across the {len(spectrum)} schemes the gap "
+        f"correlates {corr:+.2f} with the effective number of markets."))
+    out.append(ctx.p(
+        f"But the {len(near)} schemes that leave concentration essentially "
+        f"intact still span {spread_near:.2f} points of gap between them, "
+        f"against {full_spread:.2f} points across the whole set. "
+        + ("Most of the variation is therefore concentration, and the "
+           "direction of the tilt is second-order."
+           if concentration_explains else
+           "So the direction of the tilt matters roughly as much as the "
+           "degree of concentration: a sleeve tilted towards rich countries "
+           "and one tilted towards historically stable countries have almost "
+           "the same Herfindahl index and materially different consequences. "
+           "Concentration is not a sufficient statistic for what a weighting "
+           "scheme does to a lifetime.")))
     out.extend(ctx.table(
         rows_from(moments, ["label", "mean", "sd", "return_per_unit_risk",
                             "correlation_with_domestic"],
@@ -4757,57 +4797,61 @@ def section_sleeve(ctx: Any) -> List[Flowable]:
 
     e = moments[moments["weighting"] == "equal"].iloc[0]
     g = moments[moments["weighting"] == "gdp"].iloc[0]
-    d_mean = (float(g["mean"]) - float(e["mean"])) * 100.0
-    d_sd = (float(g["sd"]) - float(e["sd"])) * 100.0
     d_corr = float(g["correlation_with_domestic"]) \
         - float(e["correlation_with_domestic"])
     out.append(ctx.p(
-        f"Weighting by GDP moves the sleeve's mean by {d_mean:+.2f} "
-        f"percentage points and its volatility by {d_sd:+.2f}, so return per "
-        f"unit of risk "
-        f"{'falls' if float(g['return_per_unit_risk']) < float(e['return_per_unit_risk']) else 'rises'} "
-        f"from {float(e['return_per_unit_risk']):.3f} to "
-        f"{float(g['return_per_unit_risk']):.3f} — concentration costs "
-        f"something, as it should."))
-    out.append(ctx.p(
-        f"The correlation with the home market moves the other way, "
-        f"{'down' if d_corr < 0 else 'up'} by {abs(d_corr):.3f}. That reads "
-        f"as a surprise and is not one: the sleeve is leave-one-out, so "
-        f"concentrating it into the largest economies makes the typical "
-        f"investor's foreign holding <i>less</i> like their own market, not "
-        f"more. A Danish investor's equal-weighted sleeve is mostly other "
-        f"small European markets that move with Denmark; their GDP-weighted "
-        f"sleeve is mostly the United States and Japan, which do not. The two "
-        f"effects push in opposite directions, and the certainty equivalents "
-        f"in Section 18.3 are where they net out."
-        if d_corr < 0 else
-        f"The correlation with the home market moves the same way, up by "
-        f"{abs(d_corr):.3f}, so the concentrated sleeve is both riskier and "
-        f"less distinct from the home market — costly on both counts."))
+        f"The correlation column carries a result that reads as a surprise "
+        f"and is not one. Concentrating the sleeve by economy size moves its "
+        f"correlation with the home market {'down' if d_corr < 0 else 'up'} "
+        f"by {abs(d_corr):.3f}. Because the sleeve is leave-one-out, loading "
+        f"it onto the largest economies makes the typical investor's foreign "
+        f"holding <i>less</i> like their own market, not more: a Danish "
+        f"investor's equal-weighted sleeve is mostly other small European "
+        f"markets that move with Denmark, while their GDP-weighted sleeve is "
+        f"mostly the United States and Japan, which do not. That effect works "
+        f"against the loss of diversification, which is why the certainty "
+        f"equivalents move less than the Herfindahl indices do."))
 
     out.extend(ctx.figure(
         "fig43_sleeve_weighting",
         "Left: the effective number of markets in the sleeve under each "
         "weighting. Centre: certainty-equivalent consumption for every "
-        "strategy under both. Right: what moved in the sleeve itself.",
+        "strategy under all of them. Right: whether all-international's "
+        "advantage over the 50/50 split tracks concentration or the tilt.",
         max_height=8.0 * cm))
 
-    out.append(ctx.h2("18.5 What this changes"))
+    out.append(ctx.h2("18.4 What this changes"))
     out.extend(ctx.bullets([
-        "The equal-weighted sleeve is the more favourable construction, and "
-        "the levels in every table of this paper reflect that. The certainty "
-        "equivalents should be read as construction-dependent.",
+        ("The equal-weighted sleeve is the most favourable construction of "
+         "those tested, and the levels in every table of this paper reflect "
+         "that."
+         if equal_is_kindest else
+         f"The equal weighting is not the construction most favourable to "
+         f"the finding — {str(kindest['label'])} produces a larger gap — so "
+         f"the headline is not resting on the kindest sleeve available. The "
+         f"levels do move with the construction, and should be read as "
+         f"construction-dependent."),
         ("The ordering this paper diverges from the replicated study on does "
-         "<b>not</b> survive the reweighting, so that divergence is a "
+         "<b>not</b> survive every reweighting, so that divergence is a "
          "property of panel construction."
          if found["ordering_changes"] else
          "The ordering this paper diverges from the replicated study on "
-         "<b>does</b> survive the reweighting, so the divergence is not "
-         "manufactured by the equal weighting — though the margin narrows."),
-        "GDP weighting is still not capitalisation weighting. This section "
-        "brackets the answer rather than settling it: the truth sits between "
-        "an equal-weighted sleeve nobody could buy and a PPP-GDP sleeve that "
-        "misprices strong-currency markets. Section 20.1 carries this as a "
+         "<b>does</b> survive every reweighting tested, so the divergence is "
+         "not manufactured by the equal weighting — though the margin "
+         "narrows."),
+        ("Concentration is not a sufficient statistic for a weighting scheme. "
+         "Two sleeves with nearly the same Herfindahl index and different "
+         "tilts give materially different answers, which is a caution against "
+         "reading any single alternative construction as <i>the</i> "
+         "robustness check."
+         if not concentration_explains else
+         "Concentration accounts for most of what a weighting scheme does "
+         "here, which makes the effective number of markets a reasonable "
+         "one-number summary of a sleeve."),
+        "None of these is capitalisation weighting. This section brackets the "
+        "answer rather than settling it: the truth sits between an "
+        "equal-weighted sleeve nobody could buy and PPP-based proxies that "
+        "misprice strong-currency markets. Section 20.1 carries this as a "
         "limitation.",
     ]))
     return out

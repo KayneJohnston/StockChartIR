@@ -710,4 +710,4 @@ sleeve:
   # The headline runs at bootstrap.n_paths; this matches it so the two tables
   # are directly comparable rather than merely similar.
   n_paths: 100000
-  weightings: ["equal", "gdp"]
+  weightings: ["equal", "gdp", "pop", "gdp_pc", "inverse_vol"]

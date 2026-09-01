@@ -443,14 +443,14 @@ def build_international_leg(
     ``(T, C)`` real return, in each country's own consumption units, of an
     equally weighted portfolio of the *other* countries' equity markets.
     """
-    if weighting not in ("equal", "gdp"):
+    if weighting not in SLEEVE_SCHEMES:
         raise NotImplementedError(f"weighting {weighting!r} is not implemented")
-    if weighting == "gdp" and wide_weight is None:
-        raise ValueError("gdp weighting needs wide_weight, the (T, C) economy "
-                         "size known at the start of each year")
+    if weighting != "equal" and wide_weight is None:
+        raise ValueError(f"{weighting} weighting needs wide_weight, the (T, C) "
+                         "relative size known at the start of each year")
 
     valid = np.isfinite(wide_usd_gross)
-    if weighting == "gdp":
+    if weighting != "equal":
         size = np.asarray(wide_weight, dtype=float)
         if size.shape != wide_usd_gross.shape:
             raise ValueError(f"wide_weight is {size.shape}, expected "
@@ -624,6 +624,88 @@ def _pivot(frame: pd.DataFrame, column: str, years: np.ndarray,
     return wide.to_numpy(dtype=float)
 
 
+#: The international-sleeve weighting schemes ``docs/18`` compares. Every one
+#: is unit-consistent across countries and uses only information dated before
+#: the year it weights, so each is a sleeve a person could actually have held.
+SLEEVE_SCHEMES: Tuple[str, ...] = ("equal", "gdp", "pop", "gdp_pc",
+                                   "inverse_vol")
+
+#: Trailing window, in years, for the inverse-volatility weighting.
+VOL_WINDOW: int = 10
+
+#: Fewest observations in that window before a volatility estimate is used.
+VOL_MIN_OBS: int = 5
+
+
+def trailing_inverse_volatility(wide_gross: np.ndarray,
+                                window: int = VOL_WINDOW,
+                                min_obs: int = VOL_MIN_OBS) -> np.ndarray:
+    """``(T, C)`` risk-parity weights: one over trailing return volatility.
+
+    The window for year ``t`` is the ``window`` years **strictly before** it,
+    so no weight is formed from a return the investor had not yet seen. Where
+    a market has too few prior observations the weight falls back to the row's
+    mean, which keeps the market in the sleeve at a neutral weight rather than
+    dropping it and quietly changing the sleeve's composition.
+
+    This is the one scheme here that is not a measure of size. It concentrates
+    into *stable* markets rather than large ones, which is what makes it the
+    control for whether concentration or the tilt is doing the work.
+    """
+    gross = np.asarray(wide_gross, dtype=float)
+    n_years, n_countries = gross.shape
+    weights = np.full((n_years, n_countries), np.nan)
+    for t in range(n_years):
+        lo = max(0, t - int(window))
+        block = gross[lo:t, :]
+        if block.shape[0] == 0:
+            continue
+        counts = np.isfinite(block).sum(axis=0)
+        with warnings.catch_warnings():
+            # A column with one prior observation has no sample standard
+            # deviation; `usable` discards it a line later.
+            warnings.simplefilter("ignore", RuntimeWarning)
+            sd = np.nanstd(block, axis=0, ddof=1)
+        usable = (counts >= int(min_obs)) & np.isfinite(sd) & (sd > 0.0)
+        weights[t, usable] = 1.0 / sd[usable]
+    # Neutral fill, row by row, so a burn-in year is equal-weighted rather
+    # than empty.
+    for t in range(n_years):
+        row = weights[t]
+        finite = row[np.isfinite(row)]
+        weights[t] = np.where(np.isfinite(row), row,
+                              finite.mean() if finite.size else 1.0)
+    return weights
+
+
+def sleeve_weights(scheme: str, frame: pd.DataFrame, years: np.ndarray,
+                   isos: Sequence[str],
+                   wide_gross: np.ndarray | None = None
+                   ) -> np.ndarray | None:
+    """Weights for one international-sleeve scheme, or ``None`` for equal.
+
+    Dispatching here rather than at each call site keeps the no-look-ahead
+    guarantee in one place: every branch below reads either a lagged pivot or
+    a strictly-prior window.
+    """
+    if scheme == "equal":
+        return None
+    if scheme == "gdp":
+        return economy_size(frame, years, isos)
+    if scheme == "pop":
+        lagged = _pivot(frame, "pop", years - 1, isos)
+        return np.where(np.isfinite(lagged) & (lagged > 0.0), lagged, np.nan)
+    if scheme == "gdp_pc":
+        lagged = _pivot(frame, "rgdpmad", years - 1, isos)
+        return np.where(np.isfinite(lagged) & (lagged > 0.0), lagged, np.nan)
+    if scheme == "inverse_vol":
+        if wide_gross is None:
+            raise ValueError("inverse_vol weighting needs the gross return "
+                             "matrix it is estimated from")
+        return trailing_inverse_volatility(wide_gross)
+    raise NotImplementedError(f"weighting {scheme!r} is not implemented")
+
+
 def economy_size(frame: pd.DataFrame, years: np.ndarray,
                  isos: Sequence[str]) -> np.ndarray:
     """``(T, C)`` relative economy size, lagged one year, for GDP weighting.
@@ -680,8 +762,8 @@ def build_tier_a(cfg: Mapping[str, Any], hedge_ratio: float = 0.0,
         usd_gross, fx_gain, infl_all,
         weighting=scheme,
         winsor_pct=winsor,
-        wide_weight=(economy_size(window, years, all_isos)
-                     if scheme == "gdp" else None),
+        wide_weight=sleeve_weights(scheme, window, years, all_isos,
+                                   wide_gross=usd_gross),
     )
     if hedge_ratio > 0.0:
         hedged_all = build_hedged_international_leg(

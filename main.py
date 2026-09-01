@@ -2365,7 +2365,8 @@ def step18_sleeve(cfg: Dict[str, Any],
     ranking = slv.ranking_shift(comparison)
     moments = slv.sleeve_moments(panels)
     conc = slv.concentration(cfg, panels[weightings[0]].countries,
-                             panels[weightings[0]].years)
+                             panels[weightings[0]].years, weightings)
+    spectrum = slv.concentration_vs_outcome(comparison, conc, moments)
     findings = slv.verdict(comparison)
     LOGGER.info("sleeve verdict: winner changes=%s, ordering changes=%s",
                 findings["winner_changes"], findings["ordering_changes"])
@@ -2374,18 +2375,19 @@ def step18_sleeve(cfg: Dict[str, Any],
     for frame, name in ((comparison, "sleeve_comparison"),
                         (ranking, "sleeve_ranking"),
                         (moments, "sleeve_moments"),
-                        (conc, "sleeve_concentration")):
+                        (conc, "sleeve_concentration"),
+                        (spectrum, "sleeve_spectrum")):
         if len(frame):
             _save_table(frame, tables, name)
 
     figures = [str(plots.plot_sleeve_weighting(
-        conc, ranking, moments, cfg["run"]["figure_dir"]))]
+        conc, ranking, spectrum, cfg["run"]["figure_dir"]))]
 
     elapsed = time.perf_counter() - started
     rp.write_doc_18(
         Path("docs") / "18_sleeve_weighting.md", cfg,
         {"comparison": comparison, "ranking": ranking, "moments": moments,
-         "concentration": conc},
+         "concentration": conc, "spectrum": spectrum},
         figures, {"elapsed_seconds": elapsed, "n_paths": n_paths,
                   "gamma": float(cfg["utility"]["baseline_risk_aversion"]),
                   "verdict": findings})

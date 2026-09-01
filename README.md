@@ -78,7 +78,7 @@ the paper cannot drift away from the pipeline that produced it. See
 | [`docs/15_starting_valuation.md`](docs/15_starting_valuation.md) | Conditioning the result on how expensive the market was when a lifetime began, using only the dividend yield an investor could actually observe |
 | [`docs/16_housing.md`](docs/16_housing.md) | Housing as a fifth asset: undoing the appraisal smoothing in the index, then sweeping the annual holding cost to find the price at which it stops being worth holding |
 | [`docs/17_mortgage.md`](docs/17_mortgage.md) | How much of the house to borrow and at what age: the loan-to-value ratio solved against the domestic short rate plus a swept mortgage spread, capped at 80% |
-| [`docs/18_sleeve_weighting.md`](docs/18_sleeve_weighting.md) | Whether the headline needs an equal-weighted international sleeve, or survives one weighted by lagged economy size |
+| [`docs/18_sleeve_weighting.md`](docs/18_sleeve_weighting.md) | Whether the headline needs an equal-weighted international sleeve, or survives five constructions: equal, real GDP, population, GDP per capita and inverse volatility |
 
 All fourteen are **generated** by `main.py` from live pipeline objects -- edit
 `src/report.py`, not the Markdown.
@@ -503,7 +503,7 @@ pip install numpy pandas scipy matplotlib pyyaml openpyxl pytest
 
 python main.py --quick      # ~1 min smoke run at reduced N
 python main.py              # ~1 h full run: N = 100,000 plus sweeps and searches
-python -m pytest tests/ -q  # 651 tests
+python -m pytest tests/ -q  # 660 tests
 ```
 
 Selected steps and alternative configurations:
@@ -522,7 +522,7 @@ python main.py --steps 14           # the data provenance audit
 python main.py --steps 15           # the starting-valuation study
 python main.py --steps 16           # housing as a fifth asset
 python main.py --steps 17           # the mortgage on the housing sleeve
-python main.py --steps 18           # equal- vs GDP-weighted international sleeve
+python main.py --steps 18           # five international-sleeve weighting schemes
 python main.py --config other.yaml  # a different parameterisation
 ```
 
@@ -553,7 +553,7 @@ python main.py --config other.yaml  # a different parameterisation
 │   ├── valuation.py      # the starting dividend yield, with no look-ahead
 │   ├── housing.py        # housing de-smoothed, and priced by its holding cost
 │   ├── mortgage.py       # the loan-to-value decision, solved by age
-│   ├── sleeve.py         # equal- vs GDP-weighted international sleeve
+│   ├── sleeve.py         # five international-sleeve weighting schemes
 │   ├── plots.py          # publication-quality figures
 │   └── report.py         # Markdown report generation
 ├── tests/                # 627 unit + integration tests
