@@ -125,12 +125,41 @@ def front_matter(ctx: Any) -> List[Flowable]:
     alloc_params, alloc_lead = alloc["free_parameters"], alloc["lead_pct"]
     lev = f.leverage
     lev_free, break_even = lev["value_at_zero_spread"], lev["break_even_spread"]
+    # The three robustness studies, and the retirement-timing figure the
+    # abstract used to round by hand.
+    from src.fees import verdict as _fee_verdict
+    from src.panel_robustness import jackknife as _jackknife
+    infl = f.table("panel_influence")
+    panel_base = float(infl["gap_pct"].iloc[0] - infl["shift_pct"].iloc[0])
+    jack = _jackknife(infl, baseline_gap=panel_base)
+    n_deletions = int(len(infl))
+    survives_all = bool((infl["gap_pct"] > 0).all())
+    spectrum = f.table("sleeve_spectrum")
+    n_schemes = int(len(spectrum))
+    sleeve_worst = float(spectrum["gap_pct"].min())
+    fee_anchors = f.table("fee_anchors")
+    fee_found = _fee_verdict(f.table("fee_common"), f.table("fee_differential"),
+                             ("international_equity", "balanced_all_equity"),
+                             fee_anchors)
+    fee_be_bp = float(fee_found["break_even_differential_bp"])
+    retire = f.table("retirement_value_of_conditioning")
+    retire_base = retire[np.isclose(retire["working_income_floor"], 0.25)
+                         & retire["variant"].str.contains("Wealth trigger")]
+    retire_value = float(retire_base["value_of_conditioning_pct"].mean())
+    families = f.table("spending_rule_best_per_family").sort_values(
+        "cec_gamma5", ascending=False)
+    n_families = int(len(families))
+    spend_best = str(families["variant"].iloc[0]).split(" (")[0]
+    spend_worst = str(families["variant"].iloc[-1]).split(" (")[0]
+    spend_spread = (float(families["cec_gamma5"].iloc[0])
+                    / float(families["cec_gamma5"].iloc[-1]) - 1.0) * 100.0
 
     out: List[Flowable] = [
         Spacer(1, 1.1 * cm),
         Paragraph("Beyond the Status Quo, Revisited", s["title"]),
-        Paragraph("A Computational Re-Examination of Lifecycle Asset "
-                  "Allocation, with Thirteen Extensions", s["subtitle"]),
+        Paragraph(f"A Computational Re-Examination of Lifecycle Asset "
+                  f"Allocation, with {extension_count_word()} Further "
+                  f"Studies", s["subtitle"]),
         Spacer(1, 0.2 * cm),
         Paragraph("A replication and extension study", s["author"]),
         Spacer(1, 0.25 * cm),
@@ -164,44 +193,47 @@ def front_matter(ctx: Any) -> List[Flowable]:
         f"the four-percent convention on every strategy "
         f"({pc(swr_eq, 1)} for all-equity, {pc(swr_tdf, 1)} for the target-date "
         f"fund at a five-percent ruin tolerance). "
-        f"We then push past replication with thirteen extensions. Solving the "
-        f"glide path directly by coordinate ascent under common random numbers "
-        f"reproduces the all-equity corner rather than an interior optimum, "
-        f"and freeing all four portfolio weights at every age — {alloc_params} "
-        f"parameters on the simplex — adds {alloc_lead:.2f}% over the best "
-        f"fixed benchmark while still producing no glide path. Relaxing the "
-        f"long-only constraint, borrowing to invest is worth "
-        f"{lev_free:+.2f}% at a zero borrowing spread over the real bill rate "
-        f"but decays quickly in that spread, breaking even by "
-        f"{break_even:.2%} — and what the optimiser levers is a diversified "
-        f"portfolio rather than a concentrated one. Currency hedging the "
-        f"international leg loses certainty-equivalent consumption at every "
-        f"ratio tested, even when the hedge is free. Making the retirement date a "
-        f"wealth-triggered decision rather than a birthday is worth about 3% "
-        f"of certainty-equivalent consumption against a date matched on the "
-        f"same mean retirement age. Conditioning the savings rate on the "
-        f"funded ratio is worth a further {funded_net:.1f}%, and a deep "
-        f"decomposition of that signal — across functional form, target "
-        f"definition, asymmetry, feasibility bands and eight competing state "
-        f"variables — finds that the strongest available signal is not the "
-        f"portfolio at all but the investor's own pay cheque "
-        f"({income_net:.1f}%). Finally, the decade around the retirement date "
-        f"explains {pc(float(lottery['r2_retirement_window']), 0)} of the "
-        f"variation in retirement outcomes, a lottery no allocation rule can "
-        f"diversify away. "
-f"Conditioning a lifetime on how expensive its market was at the "
-        f"moment it began — using the trailing dividend yield an investor "
-        f"could observe, ranked against tercile boundaries computed only "
-        f"from country-years that had already happened — "
-        + (f"leaves the ranking intact in all {len(val_adv)} valuation "
-           f"buckets while moving the level: "
-           if bool((val_adv['advantage_pct'] > 0).all())
-           else f"reverses the ranking in "
-                f"{int((val_adv['advantage_pct'] <= 0).sum())} of "
-                f"{len(val_adv)} valuation buckets: ")
-        + f"lifetimes begun in the dearest third reach retirement with less "
-        f"and run out of money more often than those begun in the cheapest. "
-        f"Adding housing to the investable set — de-smoothed to undo the "
+        f"We then push past replication with "
+        f"{extension_count_word().lower()} further studies, taken in the "
+        f"order the paper presents them. Four ask whether the result holds "
+        f"up. Deleting each country in "
+        f"turn and rebuilding the panel around its absence "
+        + (f"leaves the ranking intact in all {n_deletions} cases"
+           if survives_all else
+           f"overturns the ranking in "
+           f"{int((infl['gap_pct'] <= 0).sum())} of {n_deletions} cases")
+        + f"; the same runs form a delete-one jackknife that puts a standard "
+        f"error of {float(jack['standard_error']):.2f} points on the "
+        f"{panel_base:.2f}-point lead all-international holds over the 50/50 "
+        f"split, a 95% interval of [{float(jack['ci_low']):.2f}, "
+        f"{float(jack['ci_high']):.2f}] that is far wider than the Monte "
+        f"Carlo error and is the precision a reader should carry to every "
+        f"other number here — including the headline ones above. Rebuilding "
+        f"the international sleeve under "
+        f"{NUMBER_WORDS.get(n_schemes, str(n_schemes)).lower()} weighting "
+        f"schemes — equal, real GDP, population, GDP "
+        f"per capita and inverse volatility — narrows that lead to "
+        f"{sleeve_worst:.2f} points at worst without closing it, so the "
+        f"divergence is not manufactured by the equal weighting. Charging "
+        f"fund fees on the panel, which fall unequally because "
+        f"all-international pays the foreign expense ratio on everything and "
+        f"the 50/50 split on half, needs a differential of "
+        f"{fee_be_bp:.0f} basis points to cancel the lead — beyond any "
+        f"index-fund pair. Currency hedging the international leg loses "
+        f"certainty-equivalent consumption at every ratio tested, even when "
+        f"the hedge is free. "
+        f"Three more ask whether a better portfolio exists inside the same "
+        f"asset menu. Solving the glide path directly by coordinate ascent "
+        f"under common random numbers reproduces the all-equity corner rather "
+        f"than an interior optimum; freeing all four portfolio weights at "
+        f"every age — {alloc_params} parameters on the simplex — adds "
+        f"{alloc_lead:.2f}% over the best fixed benchmark while still "
+        f"producing no glide path; and relaxing the long-only constraint, "
+        f"borrowing to invest is worth {lev_free:+.2f}% at a zero borrowing "
+        f"spread over the real bill rate but decays quickly in that spread, "
+        f"breaking even by {break_even:.2%}, with the optimiser levering a "
+        f"diversified portfolio rather than a concentrated one. "
+        f"Two widen the menu. Adding housing — de-smoothed to undo the "
         f"appraisal lag the published index carries — "
         + (f"earns {pc(float(house_free['mean_housing']), 0)} of the "
            f"portfolio when it is free to hold and "
@@ -211,10 +243,9 @@ f"Conditioning a lifetime on how expensive its market was at the "
               "survives every holding cost tested")
            if float(house_free["mean_housing"]) > 0.01 else
            "earns no place in the portfolio at any price, including free")
-        + ". "
-        f"Financing that house with a mortgage — the one asset an ordinary "
-        f"household can borrow against at close to the government's rate — "
-        f"produces a loan-to-value schedule that "
+        + f"; financing that house with a mortgage — the one asset an "
+        f"ordinary household can borrow against at close to the government's "
+        f"rate — produces a loan-to-value schedule that "
         + (f"declines with age, {pc(mort_work, 0)} while working against "
            f"{pc(mort_ret, 0)} in retirement, reproducing from optimisation "
            f"the pattern households follow in practice"
@@ -223,10 +254,45 @@ f"Conditioning a lifetime on how expensive its market was at the "
            f"{pc(mort_ret, 0)} in retirement, contrary to observed household "
            f"behaviour")
         + ". "
-        f"The panel's principal limitation is its breadth: "
+        f"The last five leave the portfolio alone and search the rest of the "
+        f"plan, in the order a life meets it. Conditioning a lifetime on how "
+        f"expensive its market was at the moment it began — using the "
+        f"trailing dividend yield an investor could observe, ranked against "
+        f"tercile boundaries computed only from country-years that had "
+        f"already happened — "
+        + (f"leaves the ranking intact in all {len(val_adv)} valuation "
+           f"buckets while moving the level: "
+           if bool((val_adv['advantage_pct'] > 0).all())
+           else f"reverses the ranking in "
+                f"{int((val_adv['advantage_pct'] <= 0).sum())} of "
+                f"{len(val_adv)} valuation buckets: ")
+        + f"lifetimes begun in the dearest third reach retirement with less "
+        f"and run out of money more often than those begun in the cheapest. "
+        f"Conditioning the savings rate on the funded ratio is worth "
+        f"{funded_net:.1f}% once every candidate signal is scored on a common "
+        f"basis, and a deep decomposition of that signal — across "
+        f"functional form, target definition, asymmetry, feasibility bands "
+        f"and eight competing state variables — finds that the strongest "
+        f"available signal is not the portfolio at all but the investor's own "
+        f"pay cheque ({income_net:.1f}%). Making the retirement date a "
+        f"wealth-triggered decision rather than a birthday is worth "
+        f"{retire_value:.1f}% against a date matched on the same mean "
+        f"retirement age, while the decade around that date explains "
+        f"{pc(float(lottery['r2_retirement_window']), 1)} of the variation in "
+        f"retirement outcomes — a lottery no allocation rule can diversify "
+        f"away. And comparing {n_families} families of retirement spending "
+        f"rule, each on its own optimised rate, spreads certainty-equivalent "
+        f"consumption by {spend_spread:.0f}% between the best "
+        f"({spend_best}) and the worst ({spend_worst}) — a range comparable "
+        f"to the gap between the best and worst allocation strategies. "
+        f"The paper's principal limitation is the breadth of the panel: "
         f"{pr['n_countries']} developed markets, so the international leg "
         f"spans {pr['n_countries'] - 1} foreign markets, all advanced "
-        f"economies with long recorded histories."
+        f"economies with long recorded histories that survived. The "
+        f"jackknife interval above is what that breadth costs in precision; "
+        f"what it costs in generality cannot be measured from inside the "
+        f"sample, because deleting a country that is present says nothing "
+        f"about one that was never there."
     )
     out.append(Paragraph(abstract, s["abstract"]))
     out.append(Paragraph(
@@ -302,6 +368,27 @@ _SECTION_NUMBER: Dict[str, int] = {
 SECTION_TOKEN = re.compile(r"#([a-z_]+)((?:\.\d+)*)")
 
 
+#: The studies that come after the replication and before the closing
+#: material. The count appears in the title and the abstract, so it is derived
+#: from the reading order rather than typed -- it went stale twice before this
+#: was here.
+EXTENSION_SECTIONS: Tuple[str, ...] = SECTION_ORDER[
+    SECTION_ORDER.index("panel"):SECTION_ORDER.index("discussion")]
+
+#: Cardinals spelled out, for a title that should not contain a numeral.
+NUMBER_WORDS: Dict[int, str] = {
+    10: "Ten", 11: "Eleven", 12: "Twelve", 13: "Thirteen", 14: "Fourteen",
+    15: "Fifteen", 16: "Sixteen", 17: "Seventeen", 18: "Eighteen",
+    19: "Nineteen", 20: "Twenty",
+}
+
+
+def extension_count_word() -> str:
+    """`Fourteen`, or the numeral if the paper ever grows past the table."""
+    n = len(EXTENSION_SECTIONS)
+    return NUMBER_WORDS.get(n, str(n))
+
+
 def section_number(key: str) -> int:
     """The number this section carries in the current reading order."""
     try:
@@ -329,6 +416,10 @@ def section_introduction(ctx: Any) -> List[Flowable]:
     adv_tdf = f.advantage("balanced_all_equity", "target_date_fund")
     adv_6040 = f.advantage("balanced_all_equity", "sixty_forty")
     adv_dom = f.advantage("balanced_all_equity", "domestic_equity")
+    _retire = f.table("retirement_value_of_conditioning")
+    _base = _retire[np.isclose(_retire["working_income_floor"], 0.25)
+                    & _retire["variant"].str.contains("Wealth trigger")]
+    intro_retire = float(_base["value_of_conditioning_pct"].mean())
     ruin_eq = float(f.strategy_row("balanced_all_equity")["prob_ruin"])
     ruin_tdf = float(f.strategy_row("target_date_fund")["prob_ruin"])
     dominance = f.table("dominance_check")
@@ -366,9 +457,10 @@ def section_introduction(ctx: Any) -> List[Flowable]:
         "scratch on an independently constructed panel, with the full "
         "diagnostic apparatus made visible rather than asserted. Second, it "
         "stress-tests the result across a large parameter space, so that the "
-        "reader can see where the conclusion is robust and where it is thin. "
-        "Third — and this is where most of the length lies — it takes thirteen "
-        "extensions that the original design leaves open and works each of "
+        f"reader can see where the conclusion is robust and where it is thin. "
+        f"Third — and this is where most of the length lies — it takes "
+        f"{extension_count_word().lower()} questions that the original design "
+        f"leaves open and works each of "
         "them out, several of which produce results that run against the "
         "intuition that motivated them."))
 
@@ -435,10 +527,10 @@ def section_introduction(ctx: Any) -> List[Flowable]:
         "<b>Timing beats allocation.</b> The single decade around a person's "
         "retirement date explains more of the variation in their retirement "
         "outcome than the choice between any two of the allocation strategies "
-        "we test. Making the retirement date itself a decision — retire when "
-        "wealth reaches a multiple of income, rather than on a birthday — is "
-        "worth roughly three percent of certainty-equivalent consumption "
-        "against a fixed date matched on the same mean retirement age."))
+        f"we test. Making the retirement date itself a decision — retire when "
+        f"wealth reaches a multiple of income, rather than on a birthday — is "
+        f"worth {intro_retire:.1f}% of certainty-equivalent consumption "
+        f"against a fixed date matched on the same mean retirement age."))
     out.append(ctx.p(
         "<b>The accumulation side has more room than the allocation side.</b> "
         "Conditioning how much you save on whether you are ahead of or behind "
@@ -472,8 +564,9 @@ def section_introduction(ctx: Any) -> List[Flowable]:
 
     out.append(ctx.h2("#introduction.2 What is new here"))
     out.append(ctx.p(
-        "Relative to the paper being replicated, this study contributes a "
-        "methodological discipline and thirteen substantive extensions. The "
+        f"Relative to the paper being replicated, this study contributes a "
+        f"methodological discipline and {extension_count_word().lower()} "
+        f"substantive extensions. The "
         "discipline is a set of comparison rules applied uniformly: every "
         "policy is scored against a <i>matched</i> baseline that differs from "
         "it in exactly one dimension; every optimiser runs under common random "
@@ -3026,7 +3119,9 @@ def section_hedging(ctx: Any) -> List[Flowable]:
 
     out: List[Flowable] = [ctx.h1("#hedging. Currency Hedging the International Leg")]
     out.append(ctx.p(
-        "The international leg of the headline strategy is unhedged: a "
+        "Section #fees priced one cost of holding the foreign sleeve. This "
+        "section prices the other, which is a choice rather than a fee: the "
+        "international leg of the headline strategy is unhedged, so a "
         "domestic investor holding it bears both foreign equity risk and "
         "foreign currency risk. Whether that currency exposure is a cost or a "
         "diversifier is an old question, and it has a clean answer in this "
@@ -3276,12 +3371,15 @@ def section_saving(ctx: Any) -> List[Flowable]:
 
     out: List[Flowable] = [ctx.h1("#saving. Conditioning the Savings Rate")]
     out.append(ctx.p(
-        "The sections above search the portfolio. This one and the three that "
-        "follow leave it alone and search the rest of the plan instead, in the "
-        "order a life meets them: how much you save, what signal that saving "
-        "should respond to, when you stop, and how you draw down. The first "
-        "question is whether the savings rate should vary over a career at "
-        "all, and whether it should respond to the portfolio."))
+        "Section #valuation began the part of this paper that leaves the "
+        "portfolio alone: it asked what the market charged on the day a "
+        "lifetime opened, and found that the answer moves the outcome without "
+        "changing the allocation. This section and the three after it carry "
+        "that further, in the order a life meets them — how much you save, "
+        "what that saving should respond to, when you stop, and how you draw "
+        "down. The first question is whether the savings rate should vary "
+        "over a career at all, and whether it should respond to the "
+        "portfolio."))
     out.append(ctx.p(
         "Two quite different things could make the rate vary, and a comparison "
         "that does not separate them will credit the wrong one. <b>Shape</b> "
@@ -3510,11 +3608,25 @@ def section_accumulation(ctx: Any) -> List[Flowable]:
                                    feas, windows, by_gamma, by_strategy,
                                    by_income))
 
+    # Read the saving section's own matched-comparison table rather than
+    # restating its finding from memory, which is how this claim drifted
+    # before. A section number in a comment goes stale like any other.
+    matched = f.table("saving_matched_rate")
+    on_track = matched[matched["variant"].astype(str).str.contains("On-track")]
+    best_on_track = float(on_track["value_of_shape_pct"].max())
+
     out: List[Flowable] = [ctx.h1("#accumulation. The Accumulation Signal, Decomposed")]
     out.append(ctx.p(
-        f"Section #saving established that conditioning the savings rate on the "
-        f"funded ratio is worth roughly three percent of certainty-equivalent "
-        f"consumption. That result rests on five choices that were made once "
+        f"Section #saving established that conditioning the savings rate on "
+        f"the funded ratio is worth {best_on_track:.1f}% of "
+        f"certainty-equivalent consumption at its best setting, measured "
+        f"against a constant rate matched on the same realised career "
+        f"average. Section #accumulation.5 re-scores it on a common basis "
+        f"against eight competing signals and puts it at "
+        f"{f.signal_net('funded_ratio'):.1f}%; the two differ because they "
+        f"hold different things fixed, and both are reported rather than "
+        f"reconciled into one. That result "
+        f"rests on five choices that were made once "
         f"and never varied: the gap was measured in income multiples, the "
         f"target was the model's own median path, one coefficient governed "
         f"both directions, the rate was free to move anywhere between "
@@ -4895,9 +5007,9 @@ def section_panel(ctx: Any) -> List[Flowable]:
     out: List[Flowable] = [ctx.h1("#panel. How Much Rests on One Country, or "
                                   "One Era")]
     out.append(ctx.p(
-        f"Section #sensitivity varies the preferences and the lifecycle. "
-        f"Neither it nor anything after it touches what a sceptical reader "
-        f"asks about first: the panel is {n} developed markets that survived, "
+        f"Section #sensitivity varies the preferences and the lifecycle, and "
+        f"Section #sleeve will vary how the international sleeve is built. "
+        f"Neither touches what a sceptical reader asks about first: the panel is {n} developed markets that survived, "
         f"and a result assembled from {n} histories could be one history "
         f"wearing a disguise. If dropping the United States overturns the "
         f"ranking, this paper is about the United States. This section asks "
@@ -5445,6 +5557,24 @@ def section_discussion(ctx: Any) -> List[Flowable]:
         "the twentieth century delivered is a structural feature or a "
         "realised surprise."))
     out.append(ctx.p(
+        "The robustness exercise is worth naming, because surviving one is a "
+        "claim that has been made for weaker evidence. Four things were "
+        "varied and none overturned the ranking: the preference and lifecycle "
+        "parameters (Section #sensitivity), the membership of the panel one "
+        "country at a time and the era it is drawn from (Section #panel), the "
+        "weighting of the international sleeve across five constructions "
+        "(Section #sleeve), and the fund costs of implementing it "
+        "(Section #fees). That exercise also produced the paper's most "
+        "uncomfortable number. The delete-one jackknife of Section #panel.4 "
+        "puts a standard error on the headline gap wide enough that the "
+        "interval barely excludes zero, and it applies to every other "
+        "comparison here: sixteen countries is sixteen countries however many "
+        "bootstrap paths are drawn through them. The direction of the results "
+        "in this paper is better established than their magnitudes, and the "
+        "magnitudes are quoted to more decimal places than the panel can "
+        "support because that is what the simulation resolves, not what the "
+        "evidence does."))
+    out.append(ctx.p(
         "That distinction matters most for the sceptic's strongest objection, "
         "which we take seriously: the sample is a sample of survivors at the "
         "level of the <i>system</i> even where it is not at the level of the "
@@ -5460,7 +5590,7 @@ def section_discussion(ctx: Any) -> List[Flowable]:
         "attention implies."))
     out.extend(ctx.bullets([
         f"<b>When you retire dominates.</b> The decade around the retirement "
-        f"date explains {pc(float(lottery['r2_retirement_window']), 0)} of the "
+        f"date explains {pc(float(lottery['r2_retirement_window']), 1)} of the "
         f"variation in retirement consumption — more than the gap between any "
         f"two allocation strategies tested here. It is also the one dimension "
         f"no allocation rule can diversify.",
@@ -5475,10 +5605,13 @@ def section_discussion(ctx: Any) -> List[Flowable]:
         "<b>What you hold matters, but mostly through diversification.</b> The "
         "all-equity advantage is real, and it is driven by the international "
         "leg rather than by equity exposure as such.",
-        "<b>Currency hedging is close to irrelevant</b> at any realistic cost, "
-        "the fine structure of the glide path is worth less than a basis point "
-        "at most ages, and freeing every portfolio weight at every age adds "
-        "less than the difference between two adjacent spending rules.",
+        "<b>Currency hedging is not a lever but a leak</b>: Section #hedging "
+        "finds it loses certainty-equivalent consumption at every ratio "
+        "tested before a single basis point of cost is charged, so there is "
+        "no price at which it becomes worth doing. The fine structure of the "
+        "glide path is worth less than a basis point at most ages, and "
+        "freeing every portfolio weight at every age adds less than the "
+        "difference between two adjacent spending rules.",
         "<b>Levering the portfolio is barely a lever</b> at household "
         "borrowing costs. The advantage rounds to nothing across most of the "
         "plausible range of spreads, and what it does buy is bought out of "
@@ -5790,7 +5923,7 @@ def section_conclusion(ctx: Any) -> List[Flowable]:
     out.append(ctx.p(
         f"But the extensions matter more than the replication. The single "
         f"decade around a person's retirement date explains "
-        f"{pc(float(lottery['r2_retirement_window']), 0)} of the variation in "
+        f"{pc(float(lottery['r2_retirement_window']), 1)} of the variation in "
         f"their retirement outcome — more than the entire allocation question. "
         f"Conditioning the savings rate on financial position is worth more "
         f"than every allocation refinement we test. And when we decompose that "
@@ -5819,6 +5952,17 @@ def section_conclusion(ctx: Any) -> List[Flowable]:
         "expected, and the machinery for telling those apart — matched "
         "baselines, common random numbers, deviation profiles, grid-edge "
         "checks — is as much a contribution here as any individual number."))
+    out.append(ctx.p(
+        "One caution belongs in the summary rather than the appendix. "
+        "Deleting each country in turn and rebuilding the panel around its "
+        "absence leaves the ranking intact every time, and the ranking is "
+        "stable across every window of history we can stand in — but the "
+        "same runs, read as a jackknife, put a standard error on the "
+        "headline gap wide enough that the interval barely excludes zero. "
+        "Sixteen countries is sixteen countries. Everything above should be "
+        "read as well established in direction and thinly established in "
+        "magnitude, and a reader who wants one thing from this paper should "
+        "take the ordering rather than the size of any gap in it."))
     out.append(ctx.p(
         "The practical summary is short. On this evidence, an investor's "
         "attention is best spent, in order, on when they retire, on how much "
