@@ -111,6 +111,15 @@ lifecycle:
                           # bequest is measured at age 93
   savings_rate: 0.10
 
+  # A compulsory employer contribution to a separate retirement fund, on top
+  # of `savings_rate` rather than instead of it, taxed on the way in.  Zero
+  # everywhere except step 25, where it carries Australia's Superannuation
+  # Guarantee (12% of ordinary time earnings, 15% contributions tax, so 10.2%
+  # reaching the fund).  It does not reduce take-home pay: the statutory
+  # incidence is on the employer.  See docs/25.
+  super_guarantee_rate: 0.0
+  super_contributions_tax: 0.15
+
   income:
     # Deterministic real log-income profile:
     #   log Y(a) = log Y0 + b1*(a-a0) + b2*(a-a0)^2
@@ -774,6 +783,56 @@ human_capital:
   # A correlation, not a loading: raising it changes which part of career
   # risk is systematic, not how much career risk there is.
   correlation_grid: [0.0, 0.1, 0.2, 0.3, 0.4, 0.6]
+  # Three readings of the same correlation, which disagree about the answer.
+  #   home     -> load on the domestic market, let the foreign correlation
+  #               fall where the markets' own correlation puts it.
+  #   strict   -> home correlated, foreign pinned to zero (needs a negative
+  #               foreign loading, so it is the most favourable reading).
+  #   diagonal -> both markets correlated equally. This is the objection: a
+  #               pay cheque that is a claim on world equity leaves no home
+  #               market to tilt away from.
+  modes: [home, strict, diagonal]
+
+# ---------------------------------------------------------------------
+# Step 25 - a pension system that is not the American one
+# ---------------------------------------------------------------------
+pension:
+  enabled: true
+  n_paths: 50000
+  challenger: international_equity
+  incumbent: balanced_all_equity
+  # Rates read 2 September 2026. Age Pension single homeowner, March 2026
+  # indexation; assets-test thresholds from 1 July 2026; Superannuation
+  # Guarantee 12% from 1 July 2025. Sources are cited in `src/pension.py`.
+  # Held as multiples of economy-wide average earnings so the schedule
+  # travels across the panel's currencies.
+  awote_annual_aud: 106657.20
+  full_rate_annual_aud: 31223.40
+  free_area_aud: 321500.0
+  # The model's investor owns no home, and the assets test has a separate,
+  # higher free area for non-homeowners because the family home is exempt.
+  # Neither case fits a model with no housing at all, so both are run.
+  free_area_non_homeowner_aud: 600000.0
+  taper_per_1000_fortnight: 3.0
+  sg_rate: 0.12
+  sg_contributions_tax: 0.15
+
+# ---------------------------------------------------------------------
+# Step 26 - what the schedule costs to trade
+# ---------------------------------------------------------------------
+turnover:
+  enabled: true
+  n_paths: 50000
+  # The solved age-by-asset surface from step 12, against the best fixed
+  # portfolio. The optimiser never paid for the trades it chose.
+  challenger: solved_simplex
+  incumbent: balanced_all_equity
+  # One-way proportional cost on the value traded, in fractions. Extended
+  # past anything an investor could plausibly pay on purpose: the break-even
+  # is worth measuring even when it sits far outside the realistic range,
+  # because the distance to it is the margin of safety. The same reasoning
+  # as the fee grid in step 20.
+  cost_grid: [0.0, 0.0005, 0.0010, 0.0025, 0.0050, 0.0100, 0.0200, 0.0300]
 
 # ---------------------------------------------------------------------
 # Step 24 - death at a random age

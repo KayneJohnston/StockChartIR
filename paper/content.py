@@ -167,9 +167,12 @@ def front_matter(ctx: Any) -> List[Flowable]:
     _coh_ci = _coh.cluster_bootstrap(coh_detail, n_boot=2000)
     coh_ci = (float(_coh_ci["ci_low"]), float(_coh_ci["ci_high"]))
     hc_curve = f.table("human_capital_gap")
-    hc_found = _hcp.verdict(hc_curve, _hcp.sensitivity(hc_curve),
-                            ("international_equity", "balanced_all_equity"))
+    hc_modes = f.table("human_capital_modes")
+    hc_found = _hcp.verdict(hc_curve, _hcp.sensitivity(hc_curve, mode="home"),
+                            ("international_equity", "balanced_all_equity"),
+                            mode="home", comparison=hc_modes)
     hc_change = float(hc_found["change_pp"])
+    hc_diag = float(hc_found.get("change_diagonal_pp", float("nan")))
     hc_changes = bool(hc_found["winner_ever_changes"])
     mort_curve = f.table("mortality_gap")
     mort_found = _mrt.verdict(f.table("mortality_comparison"), mort_curve,
@@ -184,6 +187,33 @@ def front_matter(ctx: Any) -> List[Flowable]:
     oos_runs = int(oos_found["runs"])
     oos_forward = float(oos_found["forward_gain_pct"])
     oos_backward = float(oos_found["backward_gain_pct"])
+    from src import pension as _pns
+    from src import turnover as _tno
+    pen_gaps = f.table("pension_gap")
+    pen_found = _pns.verdict(pen_gaps)
+    pen_rows = pen_gaps.set_index("system")
+    pen_base = float(pen_rows.loc["us_social_security", "gap_pct"])
+    pen_au_gap = float(pen_rows.loc["australia_as_legislated", "gap_pct"])
+    pen_au_winner = str(pen_rows.loc["australia_as_legislated", "winner"])
+    pen_cec = float(pen_found["australia_lift_pct"])
+    pen_mean = float(pen_found["australia_mean_lift_pct"])
+    pen_p5 = float(pen_found["australia_p5_lift_pct"])
+    pen_saving = float(pen_found["extra_saving_lift_pct"])
+    pen_splits = bool(pen_found["mean_and_cec_disagree"])
+    pen_au_reorders = bool((pen_au_gap > 0.0) != (pen_base > 0.0))
+    tno_measured = f.table("turnover_measured")
+    tno_curve = f.table("turnover_gap")
+    tno_challenger = str(f.cfg["turnover"]["challenger"])
+    tno_incumbent = next((c[4:] for c in tno_curve.columns
+                          if c.startswith("cec_") and c[4:] != tno_challenger),
+                         "international_equity")
+    tno_found = _tno.verdict(
+        tno_curve, tno_measured,
+        _tno.cost_of_the_schedule(tno_measured, tno_challenger, tno_incumbent),
+        tno_challenger, tno_incumbent)
+    tno_be = float(tno_found["break_even_bp"])
+    tno_lead = float(tno_found["baseline_gap_pct"])
+    tno_turn = float(tno_found["busiest_turnover"])
 
     out: List[Flowable] = [
         Spacer(1, 1.1 * cm),
@@ -272,10 +302,42 @@ def front_matter(ctx: Any) -> List[Flowable]:
         f"range running past anything a labour economist would defend, "
         + ("without changing the order"
            if not hc_changes else "and does change the order")
-        + f"; replacing the certain ninety-third birthday with a Gompertz "
-        f"lifespan moves it by at most {mort_change:.2f} points and "
+        + f", though correlating it with world equity rather than with the "
+        f"home market specifically keeps only {hc_diag:+.2f} points of that, "
+        f"so most of the effect is about home bias and not about human "
+        f"capital being risky; replacing the certain ninety-third birthday "
+        f"with a Gompertz lifespan moves the lead by at most "
+        f"{mort_change:.2f} points and "
         + ("leaves the ranking identical"
            if not mort_changes else "does reorder the strategies")
+        + f". The assumption that turns out to matter most is the one the "
+        f"panel makes silently: every result outside one section pays the US "
+        f"social-security schedule in all sixteen countries. Replacing it "
+        f"with Australia's — a means-tested Age Pension alongside a "
+        f"compulsory 12% Superannuation Guarantee that sits on top of "
+        f"voluntary saving rather than instead of it — "
+        + (f"raises mean retirement consumption {pen_mean:+.0f}% and lowers "
+           f"certainty-equivalent consumption {pen_cec:+.0f}%, because the "
+           f"fifth percentile falls {pen_p5:+.0f}%: compulsory saving buys a "
+           f"larger portfolio and the means test removes the floor it would "
+           f"have sat on. Crossing the two features shows the contribution "
+           f"rate alone is worth {pen_saving:+.0f}% and the assets test is "
+           f"what takes it back"
+           if pen_splits else
+           f"moves certainty-equivalent retirement consumption "
+           f"{pen_cec:+.0f}% and mean retirement consumption "
+           f"{pen_mean:+.0f}%")
+        + (f". It also reverses the allocation ranking — the only place in "
+           f"this paper where that happens: the lead of {pen_base:.2f}% "
+           f"becomes {pen_au_gap:.2f}% and the best strategy becomes the "
+           f"{_pretty_strategy(pen_au_winner).lower()}, because inside the "
+           f"assets-tested band a dollar of extra wealth costs more pension "
+           f"a year than any asset here reliably earns, so the de-risking "
+           f"schedule is rewarded for staying small"
+           if pen_au_reorders else
+           f". The allocation ranking survives it intact "
+           f"({pen_au_gap:.2f}% against {pen_base:.2f}%), because the "
+           f"guarantee lifts this saver clear of the means test altogether")
         + f". "
         f"{group_count_word('portfolio')} ask whether a better portfolio "
         f"exists inside the same asset menu, and whether solving for one "
@@ -302,7 +364,15 @@ def front_matter(ctx: Any) -> List[Flowable]:
            if oos_found["asymmetric"] else
            f"leaves {oos_wins} of {oos_runs} ahead of the best constant mix")
         + f"; the strategy that transfers is a fixed allocation held "
-        f"unchanged for a lifetime. "
+        f"unchanged for a lifetime. Charging that solved schedule for the "
+        f"trades it makes points the same way: it turns over "
+        f"{tno_turn:.0%} of the portfolio a year against nothing for a "
+        f"single-asset holding and about three percent for a fixed mix, and "
+        f"its {tno_lead:.2f}% edge over the best fixed portfolio "
+        + (f"is gone by {tno_be:.0f} basis points of one-way trading cost"
+           if np.isfinite(tno_be) else
+           "survives every trading cost tested")
+        + f". "
         f"{group_count_word('menu')} widen the menu. Adding housing — de-smoothed to undo the "
         f"appraisal lag the published index carries — "
         + (f"earns {pc(float(house_free['mean_housing']), 0)} of the "
@@ -432,11 +502,14 @@ SECTION_ORDER: Tuple[str, ...] = (
     "fees",
     "human_capital",
     "mortality",
+    "pension",
     # What else the investor decides. The portfolio, and whether solving for
-    # it survives contact with data it did not see.
+    # it survives contact with two things it was never shown: the cost of the
+    # trades it makes, and data it was not fitted to.
     "glide",
     "allocation",
     "leverage",
+    "turnover",
     "out_of_sample",
     # Widening the menu.
     "housing",
@@ -475,8 +548,9 @@ EXTENSION_SECTIONS: Tuple[str, ...] = SECTION_ORDER[
 #: abstract announcing "four" and then describing five.
 EXTENSION_GROUPS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("robustness", ("cohorts", "panel", "sleeve", "hedging", "valuation",
-                    "fees", "human_capital", "mortality")),
-    ("portfolio", ("glide", "allocation", "leverage", "out_of_sample")),
+                    "fees", "human_capital", "mortality", "pension")),
+    ("portfolio", ("glide", "allocation", "leverage", "turnover",
+                   "out_of_sample")),
     ("menu", ("housing", "mortgage")),
     ("plan", ("saving", "accumulation", "retirement", "spending")),
 )
@@ -5856,21 +5930,32 @@ def section_limitations(ctx: Any) -> List[Flowable]:
         "a wartime hole contributes fewer long blocks, so the sampler is "
         "mildly biased away from exactly the disrupted histories that motivate "
         "the exercise. We quantify this rather than correct it.",
+        "<b>The realised backtest selects on windows, not just on "
+        "countries.</b> Section #cohorts avoids the sampler entirely by "
+        "running the lifetimes history actually served, but the filter that "
+        "makes that possible — an unbroken run the length of a working "
+        "life and a retirement — removes every window that straddles a "
+        "catastrophe rather than following one. The markets whose equity was "
+        "destroyed therefore contribute only the lifetimes that begin at the "
+        "floor of the recovery. That biases the comparison toward domestic "
+        "equity, so the lead reported there is conservative in direction; it "
+        "also means the spread across countries in that section is not the "
+        "spread a randomly chosen saver faced.",
     ]))
 
     out.append(ctx.h2("#limitations.3 What the lifecycle model omits"))
     hs, wg = pr.get("housing", {}), pr.get("wages", {})
     housing_bullet = (
-        "<b>No housing.</b> For most households the primary residence is the "
-        "largest asset and the mortgage the largest liability, and both "
-        "interact with inflation in ways the financial portfolio does not. "
-        "This is the single largest omission and it is not a small one."
-        + (f" We do hold the data: Section #data.6.2 audits "
-           f"{hs['country_years']:,} country-years of observed housing "
-           f"returns and explains why an appraisal-smoothed index is not a "
-           f"fourth sleeve. That is a reason not to use it as written, not a "
-           f"reason the omission does not matter." if hs.get("countries")
-           else ""))
+        "<b>No housing in the baseline.</b> For most households the primary "
+        "residence is the largest asset and the mortgage the largest "
+        "liability, and both interact with inflation in ways the financial "
+        "portfolio does not. Sections #housing and #mortgage add housing and "
+        "leverage against it to the opportunity set, but every other result "
+        "in this paper is computed without them."
+        + (f" Section #data.6.2 audits the {hs['country_years']:,} "
+           f"country-years of observed housing returns behind that, and "
+           f"explains why an appraisal-smoothed index cannot be used as "
+           f"written." if hs.get("countries") else ""))
     wage_bullet = (
         f"<b>No economy-wide wage growth.</b> The income profile is an age "
         f"effect only. Section #data.6.3 measures what that leaves out — a median "
@@ -5885,21 +5970,40 @@ def section_limitations(ctx: Any) -> List[Flowable]:
         "the same allocation, and the asymmetric treatment of capital gains "
         "and income would change the ranking of spending rules in Section #spending "
         "more than it would change the allocation ranking.",
-        "<b>No fees.</b> A constant annual fee differential between an "
-        "all-equity index and a target-date fund would move the results in the "
-        "direction of the cheaper vehicle, which on current pricing is usually "
-        "the index.",
+        "<b>Every return is gross.</b> No fee is charged anywhere in the "
+        "baseline. Section #fees prices the omission rather than repairing "
+        "it, by finding the fee differential that would undo the headline, "
+        "and Section #turnover does the same for the cost of trading. Both "
+        "leave the baseline itself gross, so every level quoted outside "
+        "those two sections is a number no investor receives.",
         housing_bullet,
         wage_bullet,
         "<b>No annuities.</b> A real annuity is the natural competitor to a "
         "withdrawal rule and is absent entirely.",
+        "<b>One country's pension behind sixteen countries' returns.</b> "
+        "Every result outside Section #pension pays the US "
+        "primary-insurance-amount schedule, and that is not a neutral "
+        "choice: an earnings-related benefit paid regardless of wealth is a "
+        "risk-free real annuity, which puts a floor under retirement "
+        "consumption and flatters equity. Section #pension is the one place "
+        "this is tested, against Australia's means-tested Age Pension and "
+        "compulsory Superannuation Guarantee, and it moves the level further "
+        "than any parameter swept anywhere else in this paper. The ranking "
+        "survives there only because the guarantee lifts the model's saver "
+        "clear of the means test; a saver inside the taper band gets a "
+        "different answer, and nothing else in this paper speaks to them.",
         "<b>No disutility of labour.</b> This is why the retirement-timing "
         "results of Section #retirement require a matched comparison, and it means the "
         "model can never say when someone <i>should</i> retire, only what "
         "conditioning the date is worth.",
-        "<b>Deterministic mortality.</b> Death at 93 with certainty. Real "
-        "longevity risk is two-sided and would raise the value of the "
-        "actuarial spending rules relative to the fixed-horizon ones.",
+        "<b>A fixed horizon everywhere but one section.</b> Death arrives at "
+        "93 with certainty in every result except Section #mortality, which "
+        "re-weights the headline under four Gompertz survival laws and finds "
+        "the ranking unmoved. That is a narrower finding than it sounds: it "
+        "re-weights a policy that does not itself respond to longevity, so a "
+        "small answer is partly built in. Nothing here prices an annuity, or "
+        "a spending rule that adapts to a mortality table, and both are where "
+        "the value of longevity risk actually sits.",
         "<b>No behavioural constraints.</b> Every rule here assumes the "
         "investor executes it. Section #accumulation.6 prices the cost of a constrained "
         "contribution but nothing prices the probability that a saver "
@@ -5984,6 +6088,24 @@ def section_limitations(ctx: Any) -> List[Flowable]:
         "coordinate-ascent procedures on a grid: exact per coordinate under "
         "common random numbers, but with no guarantee of a global optimum in "
         "the joint space. Multiple restarts are reported where it matters."))
+    out.extend(ctx.bullets([
+        f"<b>The cohort interval rests on {p['n_countries']} clusters.</b> "
+        f"The confidence interval in Section #cohorts is a cluster bootstrap "
+        f"over countries, and a percentile interval built on "
+        f"{p['n_countries']} clusters has poorer coverage than its width "
+        f"suggests. The cohorts are also unequally distributed across those "
+        f"clusters, so the pooled mean is implicitly weighted by how much "
+        f"unbroken history a country happens to have. Both readings are "
+        f"reported there; the country-equal-weighted one is the conservative "
+        f"one.",
+        "<b>One split is one experiment.</b> Section #out_of_sample cuts the "
+        "record once and solves on either side. The asymmetry it finds is "
+        "real in the sense that it is what the data say, but a single cut "
+        "cannot separate a schedule that was overfitted from a world that "
+        "changed, and with one experiment there is no distribution to judge "
+        "the asymmetry against. It should be read as a caution rather than "
+        "as a test with a size.",
+    ]))
     return out
 
 
@@ -5994,6 +6116,11 @@ def section_conclusion(ctx: Any) -> List[Flowable]:
     f = ctx.f
     adv_tdf = f.advantage("balanced_all_equity", "target_date_fund")
     lottery = f.table("retirement_lottery_stats").iloc[0]
+    pen_rows = f.table("pension_gap").set_index("system")
+    pen_base = float(pen_rows.loc["us_social_security", "gap_pct"])
+    pen_au_gap = float(pen_rows.loc["australia_as_legislated", "gap_pct"])
+    pen_au_winner = str(pen_rows.loc["australia_as_legislated", "winner"])
+    pen_au_reorders = bool((pen_au_gap > 0.0) != (pen_base > 0.0))
     out: List[Flowable] = [ctx.h1("#conclusion. Conclusion")]
     out.append(ctx.p(
         f"We set out to reproduce a specific empirical claim and ended up with "
@@ -6044,6 +6171,61 @@ def section_conclusion(ctx: Any) -> List[Flowable]:
         "expected, and the machinery for telling those apart — matched "
         "baselines, common random numbers, deviation profiles, grid-edge "
         "checks — is as much a contribution here as any individual number."))
+    out.append(ctx.p(
+        "One assumption deserves to outrank the rest of the caveats, because "
+        "it moves the numbers further than any parameter we sweep. Every "
+        "result outside Section #pension pays the same public pension in all "
+        "sixteen countries — the American one, progressive in career "
+        "earnings and paid whatever else the retiree owns. That is a "
+        "risk-free real annuity, and a great deal of what looks like "
+        "portfolio performance in this paper is standing on it. Replacing it "
+        "with the Australian pair — a means-tested Age Pension and a "
+        "compulsory Superannuation Guarantee on top of voluntary saving — "
+        "raises average retirement consumption and lowers the certainty "
+        "equivalent at the same time, because the compulsory contribution "
+        "buys a larger portfolio and the means test removes the floor that "
+        "portfolio would have sat on. Both halves of that are true, and "
+        "which one a reader should care about depends on whether they are "
+        "planning for the average case or the bad one."))
+    out.append(ctx.p(
+        (f"The allocation ranking does not survive that substitution, and "
+         f"this is the only place in the paper where it fails. Under the "
+         f"Australian pair the lead of {pen_base:.2f}% becomes "
+         f"{pen_au_gap:.2f}% and the best strategy becomes "
+         f"<i>{_pretty_strategy(pen_au_winner)}</i> — the de-risking glide "
+         f"path this paper spends most of its length arguing against. The "
+         f"mechanism is the taper, not the returns: inside the "
+         f"assets-tested band every extra dollar of assets costs more "
+         f"pension a year than any asset in this panel reliably earns, so a "
+         f"portfolio that stays smaller keeps an entitlement that a "
+         f"portfolio that grows loses. A glide path does exactly that, and "
+         f"under a means test it is being rewarded for it. Nothing about "
+         f"the return panel has changed; the objective function has."
+         if pen_au_reorders else
+         "The allocation ranking survives that substitution — but the "
+         "reason is worth more than the result. It survives because the "
+         "guarantee makes this saver wealthy enough that the assets test "
+         "never reaches them, so they are back to living off a portfolio, "
+         "which is the situation the rest of the paper already describes.")))
+    out.append(ctx.p(
+        "The lesson is not about countries. It is that this paper, like the "
+        "study it replicates, models an investor whose retirement income is "
+        "a portfolio plus an unconditional annuity, and its conclusions are "
+        "conclusions about that investor. A saver whose public entitlement is "
+        "withdrawn at the margin as their balance grows faces a different "
+        "problem, and the answer to it is different. Which of the two a "
+        "reader is depends on their balance and their country's schedule, "
+        "not on anything in the return data."))
+    out.append(ctx.p(
+        "Two further audits of the optimisation sections point the same way "
+        "as each other and should be read together. Solving a schedule on "
+        "one half of the record and scoring it on the other leaves a "
+        "constant mix as the benchmark to beat in every run; charging the "
+        "same solved schedule for the trades it makes takes most of what "
+        "remains. Neither touches the paper's headline, which compares fixed "
+        "portfolios fitted to nothing — but both say that the gains from "
+        "solving for an allocation are smaller, and more fragile, than the "
+        "in-sample numbers make them look."))
     out.append(ctx.p(
         "One caution belongs in the summary rather than the appendix. "
         "Deleting each country in turn and rebuilding the panel around its "
@@ -6574,6 +6756,19 @@ def section_cohorts(ctx: Any) -> List[Flowable]:
         f"catastrophe and rides the recovery. This design is structurally "
         f"kinder to domestic equity than the bootstrap is, and that should be "
         f"held in mind for everything that follows."))
+    out.append(ctx.p(
+        f"It is worth being precise about what is selected, because it is "
+        f"more than the usual complaint. The panel is already restricted to "
+        f"markets that survived; this section restricts it again, to "
+        f"<i>windows</i> that ran unbroken for {horizon} years. Those are not "
+        f"the same filter. The second one removes every lifetime that "
+        f"straddles a catastrophe while keeping the ones that follow it, so "
+        f"the markets with the worst equity histories in the panel appear "
+        f"here only through their recoveries. The consequence is that the "
+        f"lead below is conservative in <i>direction</i> — the missing "
+        f"lifetimes are ones a home market would have lost badly — while the "
+        f"spread across markets is not the spread a randomly chosen saver "
+        f"faced, and should not be read as one."))
 
     out.append(ctx.h2("#cohorts.2 What the realised lifetimes paid"))
     out.extend(ctx.table(
@@ -6607,6 +6802,24 @@ def section_cohorts(ctx: Any) -> List[Flowable]:
         + f"Counting by market rather than by cohort — which gives the United "
         f"States sixty-four votes instead of one — the lead holds in "
         f"{signs['countries_won']} of {signs['countries_total']} markets."))
+    out.append(ctx.p(
+        f"That pooled mean is weighted by history, not by market. A country "
+        f"enters it once per runnable lifetime, so the five markets with a "
+        f"full unbroken run carry sixteen times the weight of Germany’s "
+        f"{int(census.loc[census['iso'] == 'DEU', 'cohorts'].iloc[0]) if (census['iso'] == 'DEU').any() else 4}. "
+        f"Giving each market one vote instead moves the lead to "
+        f"{interval['equal_weighted_gap_pct']:.1f}% "
+        f"({interval['weighting_shift_pp']:+.1f} points), with an interval of "
+        f"[{interval['equal_ci_low']:.1f}, {interval['equal_ci_high']:.1f}]"
+        + (" that still excludes zero. " if interval["equal_excludes_zero"]
+           else " that contains zero. ")
+        + f"A percentile interval on {interval['n_clusters']} clusters "
+        f"under-covers, so the Student-t interval on the between-market "
+        f"spread is the conservative reading: "
+        f"[{interval['t_ci_low']:.1f}, {interval['t_ci_high']:.1f}]"
+        + (", which excludes zero." if interval["t_excludes_zero"]
+           else ", which contains zero. The direction is what this section "
+                "establishes; the magnitude is not.")))
     if len(losers):
         out.append(ctx.p(
             "The exceptions are the interesting rows: "
@@ -6660,9 +6873,13 @@ def section_cohorts(ctx: Any) -> List[Flowable]:
         "realised record, without resampling, in "
         f"{signs['countries_won']} of {signs['countries_total']} markets.",
         f"The honest interval on the realised lead is "
-        f"[{interval['ci_low']:.1f}, {interval['ci_high']:.1f}] from "
-        f"{independent} independent lifetimes. This section adds confidence "
-        f"in the <i>direction</i> and almost none in the magnitude.",
+        f"[{interval['ci_low']:.1f}, {interval['ci_high']:.1f}] pooled, "
+        f"[{interval['equal_ci_low']:.1f}, {interval['equal_ci_high']:.1f}] "
+        f"with each market given one vote, and "
+        f"[{interval['t_ci_low']:.1f}, {interval['t_ci_high']:.1f}] on the "
+        f"parametric reading — all from {independent} independent lifetimes. "
+        f"Take the widest. This section adds confidence in the "
+        f"<i>direction</i> and almost none in the magnitude.",
         "The design cannot see the worst domestic histories in the panel, "
         "because a lifetime cannot step over a market closure. The bootstrap "
         "can, which is one of the reasons it stays the headline.",
@@ -6670,8 +6887,516 @@ def section_cohorts(ctx: Any) -> List[Flowable]:
     return out
 
 
+def section_pension(ctx: Any) -> List[Flowable]:
+    f = ctx.f
+    gaps = f.table("pension_gap")
+    entitlement = f.table("pension_entitlement")
+    replacement = f.table("pension_replacement")
+
+    from src import pension as pns
+    cfg = f.cfg
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    n_paths = int(cfg["pension"]["n_paths"])
+    params = pns.from_config(cfg)
+    found = pns.verdict(gaps)
+    rows = gaps.set_index("system")
+    saving = float(cfg["lifecycle"]["savings_rate"])
+    sg = float(cfg["pension"].get("sg_rate", pns.SG_RATE))
+    sg_tax = float(cfg["pension"].get("sg_contributions_tax",
+                                      pns.SG_CONTRIBUTIONS_TAX))
+    net = sg * (1.0 - sg_tax)
+    total = saving + net
+    cut_out = params["pension_free_area"] + (params["pension_full_rate"]
+                                             / params["pension_taper"])
+
+    def _row(key: str, column: str) -> float:
+        return (float(rows.loc[key, column]) if key in rows.index
+                and column in gaps.columns else float("nan"))
+
+    au_cec = _row("australia_as_legislated", "best_lift_pct")
+    au_mean = _row("australia_as_legislated", "mean_lift_pct")
+    au_p5 = _row("australia_as_legislated", "p5_lift_pct")
+    au_gap = _row("australia_as_legislated", "gap_pct")
+    base_gap = _row("us_social_security", "gap_pct")
+    saving_cec = _row("us_matched_saving", "best_lift_pct")
+    untested_cec = _row("age_pension_untested", "best_lift_pct")
+    poor_gap = _row("age_pension_matched", "gap_pct")
+    poor_winner = str(rows.loc["age_pension_matched", "winner"]) \
+        if "age_pension_matched" in rows.index else ""
+    au_reorders = bool(np.isfinite(au_gap) and (au_gap > 0.0) != (base_gap > 0.0))
+    poor_reorders = bool(np.isfinite(poor_gap)
+                         and (poor_gap > 0.0) != (base_gap > 0.0))
+
+    out: List[Flowable] = [
+        ctx.h1("#pension. One Country’s Pension Behind Sixteen Countries’ "
+               "Returns")]
+    out.append(ctx.p(
+        f"Every result to this point pays the same public pension in all "
+        f"{f.panel['n_countries']} markets: the US primary-insurance-amount "
+        f"schedule, progressive in career earnings and paid in full whatever "
+        f"else the retiree owns. It is the schedule of exactly one country in "
+        f"the panel, and the panel’s whole point is that countries differ."))
+    out.append(ctx.p(
+        "It is also the shape most flattering to the argument. An "
+        "earnings-related pension paid regardless of wealth is a <b>risk-free "
+        "real annuity</b>: it arrives whatever the portfolio does, which puts "
+        "a floor under retirement consumption, crowds fixed income out of the "
+        "financial portfolio and pushes the optimal equity share up. Nothing "
+        "in this paper has tested how much of the result that floor is "
+        "carrying."))
+    out.append(ctx.p(
+        f"Australia is the developed world’s counter-example, and it differs "
+        f"in two ways at once. The <b>pension</b> is flat rather than "
+        f"earnings-related and is <b>means-tested</b>: assessable assets "
+        f"above a free area withdraw it on a taper until it cuts out. And "
+        f"the <b>contribution</b> is compulsory: the Superannuation Guarantee "
+        f"pays {sg:.0%} of ordinary time earnings into a separate fund, on "
+        f"top of whatever the worker saves voluntarily. The two push in "
+        f"opposite directions, so the sweep crosses them rather than running "
+        f"one Australia-versus-America row that would confound them."))
+
+    out.append(ctx.h2("#pension.1 Calibration"))
+    out.extend(ctx.table(
+        [["Quantity", "Statutory", "In average earnings"],
+         ["Maximum single rate", "$1,200.90 a fortnight",
+          f"{params['pension_full_rate']:.3f}"],
+         ["Assets-test free area (homeowner)", "$321,500",
+          f"{params['pension_free_area']:.3f}"],
+         ["Assets-test free area (non-homeowner)", "$600,000",
+          f"{params['pension_free_area_non_homeowner']:.3f}"],
+         ["Taper", "$3 a fortnight per $1,000",
+          f"{params['pension_taper']:.3f} a year"],
+         ["Cut-out (homeowner)", "$722,000", f"{cut_out:.3f}"],
+         ["Superannuation Guarantee",
+          f"{sg:.0%} of earnings, taxed {sg_tax:.0%} on entry",
+          f"{net:.3f} reaching the fund"]],
+        "The Age Pension for a single retiree, March 2026 indexation, with "
+        "assets-test thresholds from July 2026, against Australian average "
+        "weekly ordinary time earnings of $2,051.10 (ABS, November 2025).",
+        note="Rates are held as multiples of economy-wide average earnings so "
+             "the schedule travels across the panel’s currencies unchanged."))
+    out.append(ctx.p(
+        f"<b>The guarantee is a second contribution stream, not a larger "
+        f"first one.</b> The worker still saves this paper’s own "
+        f"{saving:.0%} out of take-home pay; the employer pays "
+        f"{sg:.0%} on top, {sg_tax:.0%} of it is taken as contributions tax, "
+        f"and the remaining {net:.1%} is invested in the same strategy and "
+        f"assessed by the same means test. Total contributions are "
+        f"{total:.1%} of income against the American saver’s {saving:.0%}. "
+        f"Because both pots hold the same strategy and face no differential "
+        f"tax on earnings in this model, they are financially one pot and are "
+        f"simulated as one; the guarantee supplies "
+        f"{net / total:.0%} of everything contributed."))
+    out.append(ctx.note(
+        "Working-life consumption is unchanged by the guarantee here, because "
+        "its statutory incidence is on the employer. If the true incidence is "
+        "on workers through lower wages — which is what most of the empirical "
+        "literature finds — an Australian is paying for it in forgone pay and "
+        "the comparison below is generous to them by that amount. It does not "
+        "touch the certainty equivalents, because the utility window in this "
+        "paper is retirement only. It does mean this is a comparison of "
+        "<i>systems as legislated</i> rather than of two workers with the "
+        "same lifetime resources, which is why the matched-contribution rows "
+        "are there."))
+    out.append(ctx.p(
+        f"<b>The taper is the other mechanism, and it is steep.</b> A dollar "
+        f"of assessable assets inside the tapered band costs "
+        f"{params['pension_taper']:.1%} of pension every year it is held. No "
+        f"asset in this panel earns that reliably in real terms, so inside "
+        f"the band the marginal return on wealth is negative — and run "
+        f"backwards, a retiree whose portfolio falls is met by a pension that "
+        f"rises. A means test is a floor and a ceiling at once, which is why "
+        f"it is assessed on assets as they stand, year by year, rather than "
+        f"settled once at retirement."))
+
+    out.append(ctx.h2("#pension.2 Crossing the two features"))
+    out.extend(ctx.table(
+        [["System", "Certainty equivalent (%)", "Mean consumption (%)",
+          "5th percentile (%)", "All-intl over 50/50 (%)", "Best strategy"]]
+        + [[str(r["label"]),
+            f"{float(r['best_lift_pct']):+.1f}"
+            if "best_lift_pct" in gaps.columns else "—",
+            f"{float(r['mean_lift_pct']):+.1f}"
+            if "mean_lift_pct" in gaps.columns else "—",
+            f"{float(r['p5_lift_pct']):+.1f}"
+            if "p5_lift_pct" in gaps.columns else "—",
+            f"{float(r['gap_pct']):+.2f}",
+            _pretty_strategy(str(r["winner"]))]
+           for _, r in gaps.iterrows()],
+        f"Retirement consumption relative to the US baseline, γ = {gamma:g}, "
+        f"{n_paths:,} lifetimes per regime.",
+        note="The first three columns are levels — how much retirement "
+             "consumption a system delivers. The fifth is the ranking "
+             "question — which portfolio it leads its investor to hold. They "
+             "are different questions and here they have different answers."))
+    out.append(ctx.p(
+        (f"<b>The Australian system raises the average and lowers the "
+         f"certainty equivalent.</b> As legislated it delivers "
+         f"{au_mean:+.1f}% mean retirement consumption against the American "
+         f"baseline and {au_cec:+.1f}% certainty-equivalent consumption. Both "
+         f"are right, and the distance between them is the whole result: the "
+         f"fifth percentile is {au_p5:+.1f}%. Compulsory saving buys a bigger "
+         f"portfolio and the means test takes away the floor that portfolio "
+         f"would otherwise sit on, so the good outcomes get better and the "
+         f"bad ones get worse. A criterion as averse to the lower tail as a "
+         f"certainty equivalent at γ = {gamma:g} prefers the annuity."
+         if found["mean_and_cec_disagree"] else
+         f"The Australian system delivers {au_cec:+.1f}% "
+         f"certainty-equivalent and {au_mean:+.1f}% mean retirement "
+         f"consumption against the American baseline.")))
+    if len(replacement):
+        rep = replacement.set_index("system")
+        au_pension = (float(rep.loc["australia_as_legislated", "mean_pension"])
+                      if "australia_as_legislated" in rep.index
+                      else float("nan"))
+        # Both pensions expressed against the same yardstick, computed from
+        # the specs rather than quoted: the US schedule evaluated at a career
+        # average of one unit of economy-wide earnings, and the Age Pension's
+        # own maximum rate.
+        from src import lifecycle as _lc
+        base_spec = _lc.spec_from_config(cfg)
+        earnings = float(base_spec.deterministic_income().mean())
+        us_rate = float(base_spec.social_security_benefit(
+            np.array([earnings]))[0]) / earnings
+        au_max = float(params["pension_full_rate"])
+        if np.isfinite(au_pension):
+            out.append(ctx.p(
+                f"The crux is one number. Under the American schedule this "
+                f"investor collects a public pension worth {us_rate:.0%} of "
+                f"economy-wide average earnings, every year of retirement, "
+                f"unconditionally and for life. The Australian maximum rate "
+                f"is {au_max:.0%} to begin with — and this investor collects "
+                f"a mean of {au_pension / earnings:.1%}, because the "
+                f"guarantee has made them wealthy enough that the assets test "
+                f"withdraws almost all of it. They have swapped a large "
+                f"risk-free real annuity for a larger portfolio. That is a "
+                f"good trade on the average and a bad one in the tail, which "
+                f"is exactly what the three level columns above report."))
+    out.append(ctx.p(
+        f"The crossing says where each piece of that comes from. Holding the "
+        f"American pension and paying the Australian contribution rate is "
+        f"worth {saving_cec:+.1f}%: compulsory saving on its own is a large "
+        f"gain. Holding the contribution rate and cutting the pension to the "
+        f"Age Pension’s flat rate, still paid to everybody, costs "
+        f"{untested_cec:+.1f}% "
+        + ("and changes nothing about the ordering — it is a smaller "
+           "annuity, not a different kind of one"
+           if str(rows.loc["age_pension_untested", "winner"])
+           == str(rows.loc["us_social_security", "winner"])
+           else "and moves the ordering with it")
+        + f". Adding the assets "
+        f"test to that is what does the damage. Together they land at "
+        f"{au_cec:+.1f}%: the guarantee does not buy back what the means test "
+        f"removes."))
+
+    out.append(ctx.h2("#pension.3 What it does to the ranking"))
+    out.append(ctx.p(
+        (f"<b>The ranking does not survive the means test.</b> "
+         f"All-international leads the 50/50 split by {base_gap:.2f}% under "
+         f"the American schedule and by {au_gap:.2f}% under the Australian "
+         f"one, where the best strategy becomes "
+         f"<i>{_pretty_strategy(str(rows.loc['australia_as_legislated', 'winner']))}</i>. "
+         f"This is the only place in this paper where the headline ordering "
+         f"fails, and it fails for a reason that has nothing to do with the "
+         f"return panel."
+         if au_reorders else
+         f"<b>The ranking survives the means test.</b> All-international "
+         f"leads the 50/50 split by {au_gap:.2f}% against {base_gap:.2f}% "
+         f"under the American schedule, and the same strategy wins. That is "
+         f"not because the means test is harmless — it is because the "
+         f"guarantee makes this saver rich enough that the test never "
+         f"reaches them.")))
+    out.append(ctx.p(
+        f"The mechanism is the taper. Inside the assets-tested band every "
+        f"extra dollar of assets costs {params['pension_taper']:.1%} of "
+        f"pension a year, which is more than any asset in this panel earns "
+        f"reliably in real terms. A portfolio that stays small keeps an "
+        f"entitlement that a portfolio that grows loses, so the means test "
+        f"pays a retiree to hold less risk — and it pays them at a rate the "
+        f"risk premium cannot match. Nothing about the returns has changed "
+        f"between these rows. The objective has."))
+    if poor_reorders and au_reorders:
+        out.append(ctx.p(
+            f"<b>How far it goes depends on the balance, not the country.</b> "
+            f"Run the same means test on a saver with no guarantee behind "
+            f"them — {saving:.0%} voluntary saving and nothing else — and the "
+            f"lead falls further, to {poor_gap:.2f}%, with "
+            f"<i>{_pretty_strategy(poor_winner)}</i> taking first place "
+            f"rather than "
+            f"<i>{_pretty_strategy(str(rows.loc['australia_as_legislated', 'winner']))}</i>. "
+            f"The poorer the saver, the deeper into the taper they sit and "
+            f"the further the distortion goes: at {total:.1%} of income the "
+            f"answer is a de-risking schedule, at {saving:.0%} it is cash. "
+            f"The compulsory contribution does not remove the distortion, it "
+            f"softens it."))
+    elif poor_reorders:
+        out.append(ctx.p(
+            f"<b>The reversal is real, but it belongs to a poorer saver.</b> "
+            f"Run the means test at this paper’s own {saving:.0%} savings "
+            f"rate — an Australian with no guarantee behind them — and the "
+            f"lead goes to {poor_gap:.2f}% and the best strategy becomes "
+            f"<i>{_pretty_strategy(poor_winner)}</i>. That row is where the "
+            f"taper actually binds."))
+    out.append(ctx.p(
+        f"Two things follow, and they should be kept apart. The first is "
+        f"about this model: its investor contributes {total:.1%} of a rising "
+        f"income for "
+        f"{int(cfg['lifecycle']['age_retire']) - int(cfg['lifecycle']['age_start'])} "
+        f"years and compounds it at historical real equity returns with no "
+        f"tax on fund earnings, which makes them far wealthier than a median "
+        f"Australian and puts them at the top of the taper rather than in "
+        f"the middle of it. The second is about the paper as a whole: every "
+        f"other section models a retiree whose public income is an "
+        f"unconditional annuity, and a retiree whose public income is "
+        f"withdrawn at the margin is solving a different problem. The answer "
+        f"here is not that Australians should hold a glide path. It is that "
+        f"a means test changes what the portfolio is for."))
+
+    if np.isfinite(found.get("non_homeowner_lift_pct", float("nan"))):
+        out.append(ctx.p(
+            (f"The assets test has a higher free area for retirees who do not "
+             f"own a home, and the model’s investor owns nothing outside the "
+             f"portfolio. Running the non-homeowner thresholds — a free area "
+             f"of {params['pension_free_area_non_homeowner']:.2f} times "
+             f"average earnings rather than "
+             f"{params['pension_free_area']:.2f} — moves the certainty "
+             f"equivalent to {found['non_homeowner_lift_pct']:+.1f}%"
+             + (", which does not change the conclusion: this saver clears "
+                "even the more generous cut-out."
+                if not found["thresholds_change_the_answer"] else
+                ", which is enough to matter and is reported alongside."))))
+
+    if len(entitlement):
+        key = ("australia_as_legislated"
+               if "australia_as_legislated" in set(entitlement["system"])
+               else str(entitlement["system"].iloc[0]))
+        block = entitlement[entitlement["system"] == key]
+        every_tenth = block[block["age"] % 10 == 0]
+        out.extend(ctx.table(
+            [["Age", "Full rate", "Part rate", "No pension",
+              "Mean pension (× average earnings)"]]
+            + [[f"{int(r['age'])}", f"{float(r['share_full_rate']):.1%}",
+                f"{float(r['share_part_rate']):.1%}",
+                f"{float(r['share_no_pension']):.1%}",
+                f"{float(r['mean_pension_x_earnings']):.3f}"]
+               for _, r in every_tenth.iterrows()],
+            "Where retirees sit on the taper under the system as legislated, "
+            "holding the 50/50 portfolio.",
+            note="A means test that never binds is a flat pension in "
+                 "disguise; one that always binds to zero is no pension at "
+                 "all. This table says which of the two this saver faces."))
+    if len(replacement):
+        out.extend(ctx.table(
+            [["System", "Mean pension", "Share of retirement consumption"]]
+            + [[str(r["label"]), f"{float(r['mean_pension']):.3f}",
+                f"{float(r['pension_share_of_consumption']):.1%}"]
+               for _, r in replacement.iterrows()],
+            "How much of retirement the state is paying for."))
+
+    out.extend(ctx.figure(
+        "fig50_pension",
+        "Top left: retirement consumption under each regime against the "
+        "American baseline. Top right: what each regime does to the choice "
+        "between portfolios. Bottom left: where retirees sit on the "
+        "assets-test taper as the portfolio draws down. Bottom right: how "
+        "much of retirement consumption the public pension supplies."))
+
+    out.append(ctx.h2("#pension.4 What this changes"))
+    out.extend(ctx.bullets([
+        (f"<b>A pension schedule is not an innocent modelling choice.</b> "
+         f"Swapping one developed country's for another's moves "
+         f"certainty-equivalent retirement consumption by {au_cec:.0f}% "
+         f"while the return panel, the preferences and the portfolios stay "
+         f"exactly where they were. Every level quoted elsewhere in this "
+         f"paper is conditional on the American schedule."),
+        (f"<b>The average and the certainty equivalent disagree, and both "
+         f"are true.</b> Compulsory saving raises mean retirement "
+         f"consumption {au_mean:+.0f}% and lowers the fifth percentile "
+         f"{au_p5:+.0f}%. A reader who cares about expected consumption "
+         f"should read the first; one who cares about the bad case should "
+         f"read the second. The paper's own criterion reads the second."
+         if found["mean_and_cec_disagree"] else
+         f"The average and the certainty equivalent agree: {au_mean:+.0f}% "
+         f"and {au_cec:+.0f}%."),
+        (f"<b>The allocation ranking reverses.</b> This is the only place "
+         f"in this paper where it does. Under the means test the best "
+         f"strategy becomes "
+         f"<i>{_pretty_strategy(str(rows.loc['australia_as_legislated', 'winner']))}</i>, "
+         f"and for a saver poorer than this one it goes further still. Every "
+         f"other section models a retiree whose public income arrives "
+         f"regardless of what they own; that is the assumption the ranking "
+         f"rests on."
+         if au_reorders else
+         f"<b>The allocation ranking survives the system as legislated</b> "
+         f"— but only because the guarantee lifts this saver clear of the "
+         f"means test. For a saver inside the taper band the ordering "
+         f"reverses, and most real Australians are inside it."
+         if poor_reorders else
+         "The allocation ranking is the same under every regime tested."),
+        "<b>What is not modelled</b>: the income test, the family home’s "
+        "exemption from the assets test — the largest single feature of the "
+        "real system — the tax on fund earnings in accumulation, and every "
+        "other tax in this paper. Nor is an annuity, which is what the "
+        "American schedule is and what an Australian retiree would have to "
+        "buy to match it.",
+    ]))
+    return out
+
+
+def section_turnover(ctx: Any) -> List[Flowable]:
+    f = ctx.f
+    measured = f.table("turnover_measured")
+    curve = f.table("turnover_gap")
+
+    from src import turnover as tno
+    cfg = f.cfg
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    n_paths = int(cfg["turnover"]["n_paths"])
+    challenger = str(cfg["turnover"]["challenger"])
+    incumbent = next((c[4:] for c in curve.columns
+                      if c.startswith("cec_") and c[4:] != challenger),
+                     str(cfg["turnover"]["incumbent"]))
+    cross = tno.cost_of_the_schedule(measured, challenger, incumbent)
+    found = tno.verdict(curve, measured, cross, challenger, incumbent)
+    be = found["break_even_bp"]
+    rows = measured.set_index("strategy")
+
+    out: List[Flowable] = [
+        ctx.h1("#turnover. What the Solved Schedule Costs to Trade")]
+    out.append(ctx.p(
+        "Section #fees prices the expense ratio and finds the differential "
+        "that would undo the headline. It says nothing about the other cost "
+        "of running a portfolio, which is trading it, and that omission lands "
+        "hardest on the part of this paper most exposed to it. A fixed 50/50 "
+        "portfolio trades because its assets drifted apart. A schedule solved "
+        "age by age over the whole weight simplex trades for that reason "
+        "<i>and</i> because it decided to hold something different this year "
+        "— and the optimiser that chose the difference was charged nothing "
+        "for it."))
+
+    out.append(ctx.h2("#turnover.1 Measuring the trade"))
+    out.append(ctx.p(
+        "Turnover is reported one-way: half the sum of absolute weight "
+        "changes, so selling one asset to buy another counts once. It splits "
+        "three ways. <b>Total</b> is the trade actually required each year on "
+        "simulated paths. <b>Drift</b> is what a portfolio whose target never "
+        "moved would have had to trade anyway — the floor no schedule can get "
+        "under. <b>Schedule</b> is the deterministic move the target makes "
+        "between two ages: what following the plan would cost in a world "
+        "where nothing ever drifted."))
+    out.extend(ctx.table(
+        [["Strategy", "Traded a year", "Drift alone", "Schedule alone",
+          "Excess over drift", "Over a lifetime"]]
+        + [[_pretty_strategy(str(r["strategy"])),
+            f"{float(r['turnover_total']):.2%}",
+            f"{float(r['turnover_drift_only']):.2%}",
+            f"{float(r['turnover_schedule_only']):.2%}",
+            f"{float(r['excess_over_drift']):+.2%}",
+            f"{float(r['lifetime_turnover']):.1f}×"]
+           for _, r in measured.iterrows()],
+        "One-way turnover, averaged over paths and years.",
+        note="A single-asset portfolio never drifts away from itself, so it "
+             "trades nothing. A constant-weight portfolio's total and drift "
+             "columns are equal by construction, which is the check that the "
+             "decomposition is doing what it claims."))
+    if cross.get("measured"):
+        out.append(ctx.p(
+            f"<b>The solved schedule turns over "
+            f"{cross['solved_turnover']:.1%} of the portfolio a year.</b> "
+            + ("The benchmark it has to beat is a single-asset portfolio, "
+               "which never drifts away from itself and so never rebalances "
+               "at all — it trades nothing, ever. "
+               if cross.get("fixed_trades_nothing") else
+               f"The fixed comparison turns over "
+               f"{cross['fixed_turnover']:.1%}, "
+               f"{cross['ratio']:.1f} times less. ")
+            + f"Almost all of the schedule's trading is it choosing to move "
+            f"rather than drift forcing it: the excess over the drift floor "
+            f"is {float(rows.loc[challenger, 'excess_over_drift']):.1%} a "
+            f"year, which is the cost the optimiser never saw."))
+    out.append(ctx.p(
+        "The three columns do not add up, and the reason is worth stating. A "
+        "schedule that cuts equity in a year equity outperformed is trading "
+        "<i>with</i> the drift rather than against it, so its total can sit "
+        "below its drift counterfactual. A glide path is partly "
+        "self-rebalancing, which is a point in its favour that a naive "
+        "turnover count would miss."))
+
+    out.append(ctx.h2("#turnover.2 Charging for it"))
+    out.append(ctx.p(
+        f"The cost is proportional to the value turned over and taken at the "
+        f"rebalance, before that year’s return compounds on what is left. "
+        f"Every strategy pays it on the same paths, so the question is never "
+        f"whether costs hurt — they hurt everybody — but which portfolio they "
+        f"hurt more. The comparison is against <i>{_pretty_strategy(incumbent)}</i>, "
+        f"which is the best fixed portfolio judged before any cost is "
+        f"introduced; letting the incumbent be re-chosen at each level would "
+        f"slide it to meet the challenger and make the break-even vacuous."))
+    out.extend(ctx.table(
+        [["One-way cost (basis points)",
+          "Solved schedule over the best fixed portfolio (%)",
+          "Best strategy"]]
+        + [[f"{float(r['basis_points']):.0f}", f"{float(r['gap_pct']):+.2f}",
+            _pretty_strategy(str(r["winner"]))]
+           for _, r in curve.iterrows()],
+        f"γ = {gamma:g}, {n_paths:,} lifetimes per level."))
+    out.append(ctx.p(
+        (f"<b>The solved schedule pays for its own trading.</b> Its lead "
+         f"starts at {found['baseline_gap_pct']:.2f}% and is still "
+         f"{found['gap_at_highest_pct']:.2f}% at "
+         f"{found['highest_cost_bp']:.0f} basis points a trade — a cost no "
+         f"index investor pays."
+         if found["survives_whole_grid"] else
+         f"<b>The solved schedule’s edge is thin and it is spent on "
+         f"trading.</b> Its advantage over the best fixed portfolio is "
+         f"{found['baseline_gap_pct']:.2f}% before costs, and reaches zero at "
+         f"<b>{be:.0f} basis points</b> one-way. "
+         + ("That is above an index fund's spread but inside what a retail "
+            "investor trading small parcels pays, and it is a small enough "
+            "number that the advantage should be read as an upper bound "
+            "rather than as a result."
+            if be > 10.0 else
+            "That is inside what any real investor pays, so the advantage "
+            "measured in section #allocation is an artefact of a "
+            "frictionless rebalance."))))
+    out.append(ctx.note(
+        f"Section #out_of_sample reaches the same place by a different road. "
+        f"There the solved schedules are asked to work on data they were not "
+        f"fitted to; here they are asked to pay for the trades they make. "
+        f"Both find that a constant mix, held unchanged and fitted to "
+        f"nothing, is a harder benchmark than the in-sample gains suggest."))
+
+    out.extend(ctx.figure(
+        "fig51_turnover",
+        "Left: what each strategy trades a year, against the drift it could "
+        "not have avoided. Middle: the trading each schedule demands of "
+        "itself with returns switched off. Right: the solved schedule’s lead "
+        "over the best fixed portfolio as trading gets more expensive."))
+
+    out.append(ctx.h2("#turnover.3 What this changes"))
+    out.extend(ctx.bullets([
+        (f"The gains in section #allocation should be read net of a cost "
+         f"they were solved without. The break-even is {be:.0f} basis points "
+         f"one-way." if np.isfinite(be) else
+         "The gains in section #allocation survive every trading cost on the "
+         "grid."),
+        "The headline of this paper is unaffected. The strategies it "
+        "compares are constant mixes, and their turnover is drift alone — "
+        "the same trade every rebalanced portfolio makes.",
+        "<b>What is not modelled</b>: costs are proportional and symmetric, "
+        "with no bid-ask asymmetry, no market impact and no minimum ticket. "
+        "Contributions during accumulation are invested pro-rata rather than "
+        "steered toward the underweight asset, which overstates turnover for "
+        "a real saver — so the break-even here is, if anything, reached too "
+        "easily. Tax on realised gains is a cost of trading and is absent, "
+        "along with every other tax in this paper.",
+    ]))
+    return out
+
+
 def section_out_of_sample(ctx: Any) -> List[Flowable]:
     f = ctx.f
+    p = f.panel
     transfer = f.table("oos_transfer")
     benchmarks = f.table("oos_benchmarks")
 
@@ -6792,6 +7517,24 @@ def section_out_of_sample(ctx: Any) -> List[Flowable]:
          f"changing between the halves rather than the search overfitting, "
          f"and this test cannot separate the two.")))
 
+    out.append(ctx.p(
+        f"<b>One split is one experiment, and that is the limit of this "
+        f"test.</b> The record is cut once, at {cut}, because there is only "
+        f"one place to cut it that leaves enough calendar time on each side "
+        f"to solve {int(cfg['lifecycle']['age_death']) - int(cfg['lifecycle']['age_start'])}-year "
+        f"schedules. That leaves no distribution to judge the result against: "
+        f"we cannot say how often a split of this record would show an "
+        f"asymmetry this large by chance, because there is no second split to "
+        f"compare it with. Nor can a single cut separate the two explanations "
+        f"the table admits — a schedule that learned noise, and a world that "
+        f"changed underneath it — because both predict the same pattern. "
+        f"Rolling-origin splits, or a placebo distribution over randomly "
+        f"chosen cut years, would separate them; neither fits inside a "
+        f"{p['last_year'] - p['first_year'] + 1}-year "
+        f"record that already has to hold two disjoint working lives. Read "
+        f"this section as a caution with a direction, not as a test with a "
+        f"size."))
+
     out.extend(ctx.figure(
         "fig47_out_of_sample",
         "Left: the gain each solved schedule reports where it was solved, "
@@ -6804,6 +7547,15 @@ def section_out_of_sample(ctx: Any) -> List[Flowable]:
         f"should be read as <b>upper bounds</b>. The transferable part "
         f"averages {found['mean_transfer_gain_pct']:.2f}% against "
         f"{found['mean_in_sample_gain_pct']:.2f}% in sample.",
+        f"<b>The benchmark that keeps winning is "
+        f"<i>{_pretty_strategy(winner)}</i>, in every one of the "
+        f"{found['runs']} runs.</b> That is the most useful thing in this "
+        f"section and it deserves stating plainly rather than as an aside: "
+        f"a constant mix, held unchanged for a lifetime and fitted to "
+        f"nothing, is what a solved schedule has to beat on data it did not "
+        f"see, and mostly does not. Section #turnover reaches the same "
+        f"conclusion by a different route, by charging the solved schedule "
+        f"for the trades it makes.",
         "The headline of this paper does not depend on any of it. The "
         "comparison that carries the paper is between fixed strategies, none "
         "of which is fitted to anything.",
@@ -6825,8 +7577,11 @@ def section_human_capital(ctx: Any) -> List[Flowable]:
     n_paths = int(cfg["human_capital"]["n_paths"])
     pair = (str(cfg["human_capital"]["challenger"]),
             str(cfg["human_capital"]["incumbent"]))
-    fitted = hcp.sensitivity(curve)
-    found = hcp.verdict(curve, fitted, pair)
+    modes = f.table("human_capital_modes")
+    fitted = hcp.sensitivity(curve, mode="home")
+    found = hcp.verdict(curve, fitted, pair, mode="home", comparison=modes)
+    home = (curve[curve["mode"] == "home"] if "mode" in curve.columns
+            else curve)
     level_cols = [c for c in ranking.columns
                   if c not in ("strategy", "label")]
 
@@ -6859,8 +7614,10 @@ def section_human_capital(ctx: Any) -> List[Flowable]:
           "All-international over 50/50 (%)", "Best strategy"]]
         + [[f"{float(r['correlation']):.1f}", f"{float(r['gap_pct']):.2f}",
             _pretty_strategy(str(r["winner"]))]
-           for _, r in curve.iterrows()],
-        f"γ = {gamma:g}, {n_paths:,} lifetimes per level."))
+           for _, r in home.iterrows()],
+        f"γ = {gamma:g}, {n_paths:,} lifetimes per level. Correlated with the "
+        f"home market; the foreign correlation is whatever the two markets’ "
+        f"own co-movement implies."))
     out.append(ctx.p(
         (f"<b>The ranking depends on the assumption.</b> The best strategy "
          f"changes across the swept correlations, which means the headline "
@@ -6890,13 +7647,68 @@ def section_human_capital(ctx: Any) -> List[Flowable]:
              "a career correlated with the market is a riskier career; what "
              "matters here is whether the gaps between them move."))
 
+    out.append(ctx.h2("#human_capital.2 A claim on which market?"))
+    out.append(ctx.p(
+        "The sweep above answers a narrower question than it appears to. It "
+        "correlates the pay cheque with the <i>home</i> market and leaves the "
+        "foreign correlation to fall wherever the two markets’ own "
+        "co-movement puts it. But the argument for tilting away from home "
+        "rests on the difference between the two correlations, not on the "
+        "level of either. A worker whose income is a claim on world equity "
+        "rather than on their own market has no home market to tilt away "
+        "from, and whatever the correlation was buying should largely "
+        "cancel. That is the objection, and it is answerable."))
+    out.append(ctx.p(
+        "Three readings are run over the same grid. <b>Home only</b> is the "
+        "sweep above. <b>Strict</b> pins the foreign correlation to zero, "
+        "which — because the markets move together — requires loading "
+        "negatively on the foreign market, and is therefore the most "
+        "favourable version of the argument the data allow. <b>Diagonal</b> "
+        "correlates the pay cheque equally with both markets, which is the "
+        "objection stated as a specification. All three preserve unit "
+        "variance, so they differ in what the career’s risk is a claim on "
+        "and not in how much of it there is."))
+    out.extend(ctx.table(
+        [["Reading", "Lead at ρ = 0 (%)", "Lead at the top of the grid (%)",
+          "Change (points)", "Share of the home-only effect"]]
+        + [[str(r["label"]), f"{float(r['gap_low_pct']):.2f}",
+            f"{float(r['gap_high_pct']):.2f}",
+            f"{float(r['change_pp']):+.2f}",
+            f"{float(r['share_of_home_effect']):.2f}×"
+            if "share_of_home_effect" in modes.columns else "—"]
+           for _, r in modes.iterrows()],
+        "The same correlation grid under three assumptions about the foreign "
+        "market.",
+        note="All three start at the same place, because at ρ = 0 they are "
+             "the same specification."))
+    out.append(ctx.p(
+        (f"<b>The objection is substantially right, and the direction "
+         f"survives it.</b> Correlating the pay cheque with both markets "
+         f"equally keeps only "
+         f"{found.get('diagonal_share_of_home', float('nan')):.2f} of the "
+         f"widening that correlating with the home market alone produced — "
+         f"{found.get('change_diagonal_pp', float('nan')):+.2f} points "
+         f"against {found['change_pp']:+.2f}. Most of what this section "
+         f"measures is a statement about home bias specifically, not about "
+         f"human capital being risky. What does not change is the sign or "
+         f"the ranking: under every reading the lead still widens, and "
+         f"{'the winner still never changes' if not found.get('winner_changes_in_any_mode') else 'the winner changes in at least one'}."
+         if found.get("diagonal_mostly_cancels") else
+         f"<b>The objection does not bite.</b> Correlating the pay cheque "
+         f"with both markets equally still moves the lead "
+         f"{found.get('change_diagonal_pp', float('nan')):+.2f} points "
+         f"against {found['change_pp']:+.2f} for the home market alone, so "
+         f"the effect is not an artefact of which market the correlation was "
+         f"attached to.")))
+
     out.extend(ctx.figure(
         "fig48_human_capital",
         "Left: the lead of all-international over the 50/50 split as human "
-        "capital becomes a claim on the home market. Right: every strategy’s "
-        "certainty equivalent over the same range."))
+        "capital becomes a claim on equity, under each of the three readings "
+        "of which market it is a claim on. Right: every strategy’s certainty "
+        "equivalent over the same range, correlated with the home market."))
 
-    out.append(ctx.h2("#human_capital.2 What this changes"))
+    out.append(ctx.h2("#human_capital.3 What this changes"))
     out.extend(ctx.bullets([
         "The independence assumption used everywhere else in this paper is "
         "conservative: relaxing it makes the case for the home market worse, "
@@ -6960,6 +7772,19 @@ def section_mortality(ctx: Any) -> List[Flowable]:
         "strategy. Approximate for the horizon-based spending rules of "
         "section #spending, which amortise over a planning horizon and would "
         "themselves change if they knew the mortality table."))
+    out.append(ctx.p(
+        "<b>That design decides how much this section can find, and the "
+        "reader should discount it accordingly.</b> Re-weighting a policy "
+        "that does not itself respond to longevity is close to guaranteed to "
+        "return a small number: the investor is not allowed to buy an "
+        "annuity, to spend faster because the table says they are unlikely to "
+        "reach ninety, or to hold back because it says they might. What is "
+        "being tested here is therefore whether the <i>allocation ranking</i> "
+        "is robust to the horizon assumption — a narrow question, and one "
+        "worth answering, because the ranking is what the paper claims. It is "
+        "not a finding that longevity risk is unimportant. The value of "
+        "longevity risk lives almost entirely in the response to it, and this "
+        "model makes no response."))
 
     out.append(ctx.h2("#mortality.1 The sweep"))
     out.extend(ctx.table(
@@ -7051,9 +7876,11 @@ def story(ctx: Any) -> List[Flowable]:
     parts += section_fees(ctx)
     parts += section_human_capital(ctx)
     parts += section_mortality(ctx)
+    parts += section_pension(ctx)
     parts += section_glide(ctx)
     parts += section_allocation(ctx)
     parts += section_leverage(ctx)
+    parts += section_turnover(ctx)
     parts += section_out_of_sample(ctx)
     parts += section_housing(ctx)
     parts += section_mortgage(ctx)

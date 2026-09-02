@@ -49,6 +49,7 @@ from typing import Any, Dict, List, Mapping, Tuple
 
 import numpy as np
 import pandas as pd
+from scipy import stats
 
 from . import bootstrap as bs
 from . import data_loader as dl
@@ -321,20 +322,46 @@ def cluster_bootstrap(detail: pd.DataFrame, n_boot: int = 2000,
               for iso in isos}
     rng = np.random.default_rng(seed)
     draws = np.empty(n_boot, dtype=float)
+    equal_draws = np.empty(n_boot, dtype=float)
     for b in range(n_boot):
         picked = rng.choice(len(isos), size=len(isos), replace=True)
-        pooled = np.concatenate([groups[isos[i]] for i in picked])
-        draws[b] = float(pooled.mean())
+        chosen = [groups[isos[i]] for i in picked]
+        draws[b] = float(np.concatenate(chosen).mean())
+        # The same resample, read the other way: each drawn country gets one
+        # vote regardless of how many cohorts it contributed.
+        equal_draws[b] = float(np.mean([c.mean() for c in chosen]))
     lo, hi = (float(v) for v in np.percentile(draws, [2.5, 97.5]))
+    eq_lo, eq_hi = (float(v) for v in np.percentile(equal_draws, [2.5, 97.5]))
     point = float(detail[column].mean())
+    per_country = np.array([groups[iso].mean() for iso in isos])
+    equal_point = float(per_country.mean())
+    # A percentile interval on this few clusters is known to under-cover, so
+    # the Student-t interval on the between-country spread is reported beside
+    # it. Where the two disagree the wider one is the one to believe.
+    n = len(isos)
+    t_crit = float(stats.t.ppf(0.975, n - 1)) if n > 1 else float("nan")
+    t_se = float(per_country.std(ddof=1) / np.sqrt(n)) if n > 1 else float("nan")
     return {
         "mean_gap_pct": point,
         "ci_low": lo,
         "ci_high": hi,
         "se": float(draws.std(ddof=1)),
         "excludes_zero": bool(lo > 0.0 or hi < 0.0),
+        # Each market one vote. The pooled mean above is implicitly weighted
+        # by how much unbroken history a country happens to have, which gives
+        # the five markets with a full run sixteen times the weight of Germany.
+        "equal_weighted_gap_pct": equal_point,
+        "equal_ci_low": eq_lo,
+        "equal_ci_high": eq_hi,
+        "equal_excludes_zero": bool(eq_lo > 0.0 or eq_hi < 0.0),
+        "weighting_shift_pp": equal_point - point,
+        # And the parametric cross-check on the same clusters.
+        "t_ci_low": equal_point - t_crit * t_se,
+        "t_ci_high": equal_point + t_crit * t_se,
+        "t_excludes_zero": bool(equal_point - t_crit * t_se > 0.0
+                                or equal_point + t_crit * t_se < 0.0),
         "n_boot": int(n_boot),
-        "n_clusters": len(isos),
+        "n_clusters": n,
     }
 
 

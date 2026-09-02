@@ -7706,3 +7706,398 @@ paths, γ = {gamma:g}. Tables in
 `{cfg['run']['table_dir']}/mortality_*.csv`.
 """
     return _write(path, [intro, body])
+
+
+def write_doc_25(
+    path: str | Path,
+    cfg: Mapping[str, Any],
+    frames: Mapping[str, pd.DataFrame],
+    figures: Sequence[str],
+    notes: Mapping[str, Any],
+) -> Path:
+    """What a means-tested pension does to a result solved under an American one."""
+    gaps = frames["gaps"]
+    entitlement = frames.get("entitlement", pd.DataFrame())
+    replacement = frames.get("replacement", pd.DataFrame())
+    gamma = float(notes["gamma"])
+    found = notes["verdict"]
+    params = notes["parameters"]
+
+    gap_tbl = md_table(_compact(
+        gaps, ["label", "best_lift_pct", "mean_lift_pct", "p5_lift_pct",
+               "gap_pct", "winner"],
+        {"label": "Pension system",
+         "best_lift_pct": "CEC vs US (%)",
+         "mean_lift_pct": "Mean vs US (%)",
+         "p5_lift_pct": "5th pctile vs US (%)",
+         "gap_pct": "All-intl over 50/50 (%)", "winner": "Best"}),
+        floatfmt="{:.2f}")
+
+    ent_tbl = ""
+    if len(entitlement):
+        # The profile is only informative for a system whose taper actually
+        # bites. The zero-taper control pays everybody the full rate by
+        # construction, and printing that as if it described the means test
+        # would contradict the replacement table three rows below.
+        available = list(dict.fromkeys(entitlement["system"]))
+        key = next((k for k in ("australia_as_legislated",
+                                "australia_non_homeowner",
+                                "age_pension_matched") if k in available),
+                   available[0])
+        block = entitlement[entitlement["system"] == key]
+        every_fifth = block[block["age"] % 5 == 0]
+        ent_label = next((str(r["label"]) for _, r in gaps.iterrows()
+                          if str(r["system"]) == key), key)
+        ent_tbl = md_table(_compact(
+            every_fifth, ["age", "share_full_rate", "share_part_rate",
+                          "share_no_pension", "mean_pension_x_earnings"],
+            {"age": "Age", "share_full_rate": "Full rate",
+             "share_part_rate": "Part rate", "share_no_pension": "None",
+             "mean_pension_x_earnings": "Mean pension (x avg earnings)"}),
+            floatfmt="{:.3f}")
+
+    rep_tbl = ""
+    if len(replacement):
+        rep_tbl = md_table(_compact(
+            replacement, ["label", "mean_pension",
+                          "pension_share_of_consumption"],
+            {"label": "System", "mean_pension": "Mean pension",
+             "pension_share_of_consumption": "Share of retirement "
+                                             "consumption"}),
+            floatfmt="{:.3f}")
+
+    if found["mean_and_cec_disagree"]:
+        headline = (
+            f"**The Australian system raises the average and lowers the "
+            f"certainty equivalent.** As legislated it delivers "
+            f"{found['australia_mean_lift_pct']:+.1f}% mean retirement "
+            f"consumption against the American baseline and "
+            f"{found['australia_lift_pct']:+.1f}% certainty-equivalent "
+            f"consumption, because the fifth percentile falls "
+            f"{found['australia_p5_lift_pct']:+.1f}%. Compulsory saving buys "
+            f"a bigger portfolio; the means test removes the floor that "
+            f"portfolio would have sat on. Crossing the two features "
+            f"separates them: the contribution rate alone is worth "
+            f"{found['extra_saving_lift_pct']:+.1f}%, and the assets test is "
+            f"what takes it back.")
+    elif found["australia_delivers_more"]:
+        headline = (
+            f"**The Australian system delivers more retirement consumption**, "
+            f"{found['australia_lift_pct']:+.1f}% on the certainty equivalent "
+            f"and {found['australia_mean_lift_pct']:+.1f}% on the mean. The "
+            f"compulsory contribution outweighs what the means test claws "
+            f"back.")
+    else:
+        headline = (
+            f"**The Australian system delivers less**, "
+            f"{found['australia_lift_pct']:+.1f}% on the certainty equivalent "
+            f"and {found['australia_mean_lift_pct']:+.1f}% on the mean. The "
+            f"Superannuation Guarantee does not buy back what the loss of an "
+            f"unconditional pension costs.")
+    if found["winner_ever_changes"]:
+        headline += (
+            f"\n\n**The ranking is not the same under every regime.** The "
+            f"best strategy varies across the sweep "
+            f"({', '.join(found['winners_seen'])}), which means applying one "
+            f"country's schedule to sixteen was not an innocent "
+            f"simplification. Which regime a reader sits in depends on "
+            f"whether their balance clears the assets-test cut-out.")
+
+    ent_tbl_label = locals().get("ent_label", "")
+    figure_list = "\n".join(f"* `{f}`" for f in figures)
+    intro = _header(
+        "25 - A Pension System That Is Not the American One",
+        "Sixteen countries, one country's social security. Australia is the "
+        "natural test because it is built on the opposite principle.")
+
+    body = f"""
+## 1. The assumption being relaxed
+
+Every result in this paper puts the same public pension behind all sixteen
+countries: the US primary-insurance-amount formula, progressive in career
+earnings, paid in full regardless of what else the retiree owns. It is the
+schedule of exactly one country in the panel, and the panel's whole point is
+that countries differ.
+
+It is also the *shape* most flattering to the argument. An earnings-related
+pension is a bond-like endowment: it arrives whatever the portfolio does, so
+it crowds fixed income out of the financial portfolio and pushes the optimal
+equity share up. A pension withdrawn as private wealth rises would run the
+logic backwards.
+
+Australia is the developed world's counter-example on both counts. The Age
+Pension is flat rather than earnings-related, and it is **means-tested**:
+assessable assets above a free area reduce it on a taper steep enough to work
+as a wealth tax, until it cuts out entirely. Retirement saving is separately
+compulsory through the Superannuation Guarantee, 12% of ordinary time
+earnings since 1 July 2025.
+
+## 2. Calibration
+
+Rates are held as multiples of economy-wide average earnings so the schedule
+travels across the panel's currencies. Against Australian Average Weekly
+Ordinary Time Earnings for full-time adults of $2,051.10 a week (ABS,
+November 2025; $106,657 a year):
+
+| Quantity | Statutory | In average earnings |
+| --- | --- | --- |
+| Maximum single rate | $1,200.90/fortnight | {params['pension_full_rate']:.3f} |
+| Assets-test free area | $321,500 | {params['pension_free_area']:.3f} |
+| Taper | $3/fortnight per $1,000 | {params['pension_taper']:.3f} a year |
+| Cut-out | $722,000 | {params['pension_free_area'] + params['pension_full_rate'] / params['pension_taper']:.3f} |
+
+Single homeowner, March 2026 indexation, assets-test thresholds from July
+2026.
+
+**The means test is applied year by year, not once.** An earnings-related
+benefit can be settled at retirement from career average earnings. A means
+test cannot: it is assessed on assets as they stand, so it is recomputed at
+every retirement year as the portfolio draws down. That is the mechanism
+worth watching, and it is why the entitlement profile below moves with age.
+
+**The guarantee is a second contribution stream, not a larger first one.**
+The worker still saves the paper's own
+{float(cfg['lifecycle']['savings_rate']):.0%} out of take-home pay; the
+employer pays 12% of ordinary time earnings on top, 15% is taken as
+contributions tax, and the remaining 10.2% is invested in the same strategy
+and assessed by the same means test. Total contributions are 20.2% of income
+against the American saver's 10%. Both pots hold the same strategy and face
+no differential tax on earnings here, so they are financially one pot and are
+simulated as one.
+
+Working-life consumption is unchanged by the guarantee, because its statutory
+incidence is on the employer. If the true incidence is on workers through
+lower wages -- which is what most of the empirical literature finds -- an
+Australian is paying for it in forgone pay and the comparison is generous to
+them by that amount. It does not touch the certainty equivalents, because the
+utility window here is retirement only; it does mean this compares *systems
+as legislated* rather than two workers with the same lifetime resources,
+which is why the matched-contribution rows are there.
+
+**Why the sweep crosses two features.** Australia differs from America in the
+pension's shape *and* in the contribution rate, and they push in opposite
+directions: the taper compresses outcomes and can reorder them, while a
+higher contribution rate raises everything and pushes retirees past the
+cut-out where the taper stops biting. A single Australia-versus-America row
+would confound the two.
+
+## 3. What changes
+
+{gap_tbl}
+
+{headline}
+
+## 4. Is the taper doing any work?
+
+A means test that never binds is a flat pension in disguise; one that always
+binds to zero is no pension at all. Neither would tell a reader anything, so
+the entitlement profile is the first thing to check.
+
+Under *{ent_tbl_label}*:
+
+{ent_tbl}
+
+{rep_tbl}
+
+## 5. What this changes
+
+* The headline gap spans {found['min_gap_pct']:.2f}% to
+  {found['max_gap_pct']:.2f}% across the {found['systems']} regimes, against
+  {found['baseline_gap_pct']:.2f}% under the American schedule the rest of
+  the paper uses.
+* Certainty-equivalent retirement consumption moves
+  {found['australia_lift_pct']:+.1f}% under the system as legislated, which
+  is further than any parameter swept anywhere else in this project moves it.
+* The extra contribution on its own is worth
+  {found['extra_saving_lift_pct']:+.1f}%; the means test at the baseline
+  contribution rate is worth {found['means_test_lift_pct']:+.1f}%.
+* {"The ranking is identical under every regime." if found['ranking_identical_everywhere'] else f"The full ranking is not identical everywhere: {found['n_rankings']} distinct orderings appear across the {found['systems']} regimes."}
+* {"The lead stays positive under every regime tested." if found['gap_positive_everywhere'] else "The lead does not survive every regime, and the limitations section should say which."}
+* **What is not modelled**: the income test (deeming), which for a retiree
+  whose assets are mostly superannuation is not the binding one but is an
+  assumption rather than a theorem; the family home's exemption from the
+  assets test, which is the largest single feature of the real system and is
+  absent because housing is absent from the baseline model; and
+  superannuation's tax treatment, in a paper that models no taxes anywhere.
+  The sweep brackets the last of these by carrying both the statutory 12% and
+  the 10.2% that survives the contributions tax.
+
+## 6. Figures
+
+{figure_list}
+
+## 7. Reproduction
+
+```bash
+python main.py --steps 25
+```
+
+Runtime {float(notes['elapsed_seconds']):.0f}s at {int(notes['n_paths']):,}
+paths, γ = {gamma:g}. Tables in
+`{cfg['run']['table_dir']}/pension_*.csv`.
+"""
+    return _write(path, [intro, body])
+
+
+def write_doc_26(
+    path: str | Path,
+    cfg: Mapping[str, Any],
+    frames: Mapping[str, pd.DataFrame],
+    figures: Sequence[str],
+    notes: Mapping[str, Any],
+) -> Path:
+    """What the solved schedule costs to trade, and whether it can afford it."""
+    measured = frames["measured"]
+    curve = frames["curve"]
+    gamma = float(notes["gamma"])
+    found = notes["verdict"]
+    cross = notes["cross"]
+
+    turn_tbl = md_table(_compact(
+        measured, ["label", "turnover_total", "turnover_drift_only",
+                   "turnover_schedule_only", "excess_over_drift",
+                   "lifetime_turnover"],
+        {"label": "Strategy", "turnover_total": "Traded a year",
+         "turnover_drift_only": "Drift alone",
+         "turnover_schedule_only": "Schedule alone",
+         "excess_over_drift": "Excess over drift",
+         "lifetime_turnover": "Over a lifetime"}), floatfmt="{:.4f}")
+
+    cost_tbl = md_table(_compact(
+        curve, ["basis_points", "gap_pct", "winner"],
+        {"basis_points": "One-way cost (bp)",
+         "gap_pct": "Solved over best fixed (%)", "winner": "Best"}),
+        floatfmt="{:.2f}")
+
+    be = found["break_even_bp"]
+    if found["survives_whole_grid"]:
+        headline = (
+            f"**The solved schedule pays for its own trading.** Its lead over "
+            f"the best fixed portfolio starts at "
+            f"{found['baseline_gap_pct']:.2f}% and is still "
+            f"{found['gap_at_highest_pct']:.2f}% at "
+            f"{found['highest_cost_bp']:.0f} basis points a trade -- a cost no "
+            f"index investor pays and several times what a retail platform "
+            f"charges. The optimisation sections were not spending money they "
+            f"did not have.")
+    elif be > 10.0:
+        headline = (
+            f"**The solved schedule survives realistic trading costs but not "
+            f"unlimited ones.** Its lead of {found['baseline_gap_pct']:.2f}% "
+            f"reaches zero at {be:.1f} basis points one-way. That is well "
+            f"above an index fund's spread and comfortably above a large "
+            f"platform's brokerage, so the result stands; it is not so far "
+            f"above that a hand-traded portfolio of small parcels could "
+            f"ignore it.")
+    else:
+        headline = (
+            f"**Trading costs eat the solved schedule's edge.** Its lead of "
+            f"{found['baseline_gap_pct']:.2f}% is gone by {be:.1f} basis "
+            f"points one-way, which is inside what a real investor pays. The "
+            f"advantage measured in the optimisation sections is therefore "
+            f"partly an artefact of a frictionless rebalance, and should be "
+            f"read as an upper bound.")
+
+    if cross.get("measured"):
+        cross_note = (
+            f"The solved schedule turns over "
+            f"{cross['solved_turnover'] * 100:.2f}% of the portfolio a year. "
+            + ("The benchmark it is measured against is a single-asset "
+               "portfolio, which never drifts away from itself and so never "
+               "rebalances at all: it trades nothing, ever."
+               if cross.get("fixed_trades_nothing") else
+               f"The fixed comparison turns over "
+               f"{cross['fixed_turnover'] * 100:.2f}% -- "
+               f"{cross['ratio']:.2f} times less, or "
+               f"{cross['extra_turnover'] * 100:+.2f} points of extra trading "
+               f"a year."))
+        if cross.get("solved_is_self_rebalancing"):
+            cross_note += (
+                " It trades *less* than a portfolio pinned to last year's "
+                "weights would have, which is the self-rebalancing effect: "
+                "the schedule's move runs with the drift rather than against "
+                "it, and a naive turnover count would have missed it.")
+    else:
+        cross_note = ("The solved schedule was not available in this run, so "
+                      "the comparison falls back to the fixed strategies.")
+
+    figure_list = "\n".join(f"* `{f}`" for f in figures)
+    intro = _header(
+        "26 - What the Schedule Costs to Trade",
+        "The optimiser chose a different portfolio every year and was never "
+        "charged for the trade.")
+
+    body = f"""
+## 1. The objection
+
+Section 12 of this project prices the expense ratio and finds the fee
+differential that would undo the headline. It says nothing about the other
+cost of running a portfolio, which is trading it, and the omission lands
+hardest on the part of the paper most exposed to it. A fixed 50/50 portfolio
+trades because its assets drifted apart. A schedule solved age by age over
+the whole weight simplex trades for that reason *and* because it decided to
+hold something different this year -- and the optimiser that chose the
+difference paid nothing for it.
+
+## 2. Measuring the trade
+
+Turnover is reported one-way: half the sum of absolute weight changes, so
+selling one asset to buy another counts once. It is split three ways.
+
+* **Total** -- the trade actually required each year, on simulated paths.
+* **Drift** -- what a portfolio holding last year's weights would have had to
+  trade anyway. This is the floor no schedule can get under.
+* **Schedule** -- the deterministic move the target makes between two ages:
+  what following the plan would cost in a world where nothing ever drifted.
+
+{turn_tbl}
+
+{cross_note}
+
+The three columns do not add up, and the reason is worth stating. A schedule
+that cuts equity in a year equity outperformed is trading *with* the drift
+rather than against it, so its total can sit below its drift counterfactual.
+A glide path is partly self-rebalancing, which is a point in its favour that
+a naive turnover count would miss.
+
+## 3. Charging for it
+
+The cost is proportional to the value turned over and is taken at the
+rebalance, before that year's return compounds on what is left. Every
+strategy pays it on the same paths, so the question is never whether costs
+hurt -- they hurt everyone -- but which portfolio they hurt more.
+
+{cost_tbl}
+
+{headline}
+
+## 4. What this changes
+
+* Break-even one-way trading cost: **{"never reached on this grid" if found['survives_whole_grid'] else f"{be:.1f} basis points"}**.
+* Busiest strategy: {found['busiest_strategy']} at
+  {found['busiest_turnover'] * 100:.2f}% a year. Quietest:
+  {found['quietest_strategy']} at {found['quietest_turnover'] * 100:.2f}%.
+* {"The best strategy is the same at every cost tested." if not found['winner_ever_changes'] else f"The best strategy changes across the cost grid: {', '.join(found['winners_seen'])}."}
+* **What is not modelled**: costs are proportional and symmetric, with no
+  bid-ask asymmetry, no market impact and no minimum ticket. Contributions
+  during accumulation are invested pro-rata rather than steered toward the
+  underweight asset, which overstates turnover for a real saver making
+  regular contributions -- so the break-even here is, if anything, reached
+  too easily. Tax on realised gains is a cost of trading in a taxable
+  account and is absent, along with every other tax in this paper.
+
+## 5. Figures
+
+{figure_list}
+
+## 6. Reproduction
+
+```bash
+python main.py --steps 26
+```
+
+Runtime {float(notes['elapsed_seconds']):.0f}s at {int(notes['n_paths']):,}
+paths, γ = {gamma:g}. Tables in
+`{cfg['run']['table_dir']}/turnover_*.csv`.
+"""
+    return _write(path, [intro, body])

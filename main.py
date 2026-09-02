@@ -38,6 +38,7 @@ from src import mortality as mrt
 from src import mortgage as mgg
 from src import observed as obs
 from src import oos
+from src import pension as pn
 from src import panel_robustness as pr
 from src import plots
 from src import provenance as pvn
@@ -48,6 +49,7 @@ from src import sleeve as slv
 from src import saving as sav
 from src import sensitivity as sn
 from src import spending as spg
+from src import turnover as tn
 from src import utility as ut
 
 LOGGER = logging.getLogger("main")
@@ -154,6 +156,11 @@ def _apply_quick(cfg: Dict[str, Any]) -> Dict[str, Any]:
     if "human_capital" in cfg:
         cfg["human_capital"]["n_paths"] = 3000
         cfg["human_capital"]["correlation_grid"] = [0.0, 0.3, 0.6]
+    if "pension" in cfg:
+        cfg["pension"]["n_paths"] = 2000
+    if "turnover" in cfg:
+        cfg["turnover"]["n_paths"] = 2000
+        cfg["turnover"]["cost_grid"] = [0.0, 0.0025, 0.0100]
     if "mortality" in cfg:
         cfg["mortality"]["n_paths"] = 4000
     LOGGER.warning("quick mode: n_paths reduced to %s",
@@ -517,6 +524,11 @@ def _run_variant(cfg: Dict[str, Any], panel: dl.Panel,
             "median_bequest": float(np.median(outcome.bequest)),
             "p5_retirement_consumption": float(np.percentile(
                 outcome.consumption[:, spec.retirement_slice].mean(axis=1), 5)),
+            # The mean matters wherever a change moves the level and the tail
+            # in opposite directions, which a certainty equivalent alone would
+            # report as a single number and hide.
+            "mean_retirement_consumption": float(
+                outcome.consumption[:, spec.retirement_slice].mean()),
         })
     return pd.DataFrame.from_records(rows)
 
@@ -2708,25 +2720,32 @@ def step23_human_capital(cfg: Dict[str, Any],
     gamma = float(cfg["utility"]["baseline_risk_aversion"])
     n_paths = int(hc_cfg.get("n_paths", cfg["bootstrap"]["n_paths"]))
     grid = [float(v) for v in hc_cfg.get("correlation_grid", hc.DEFAULT_GRID)]
+    modes = [str(m) for m in hc_cfg.get("modes", hc.MODES)]
     pair = (str(hc_cfg["challenger"]), str(hc_cfg["incumbent"]))
 
     # The headline summariser, with the spec swapped: the only thing that
     # differs between these rows is the correlation.
-    def summarise(tweaked: lc.LifecycleSpec, rho: float) -> pd.DataFrame:
+    def summarise(tweaked: lc.LifecycleSpec, rho: float,
+                  mode: str = "home") -> pd.DataFrame:
         return _run_variant(cfg, panel, tweaked, strategies, n_paths)
 
-    frame = hc.sweep(summarise, spec, grid)
+    frame = hc.sweep_modes(summarise, spec, grid, modes)
     curve = hc.gap_curve(frame, pair)
-    ranking = hc.ranking(frame)
-    fitted = hc.sensitivity(curve)
-    findings = hc.verdict(curve, fitted, pair)
-    LOGGER.info("human-capital verdict: lead moves %.2f pp over the grid, "
-                "winner changes=%s", findings["change_pp"],
+    comparison = hc.mode_comparison(curve, pair)
+    ranking = hc.ranking(frame, mode="home")
+    fitted = hc.sensitivity(curve, mode="home")
+    findings = hc.verdict(curve, fitted, pair, mode="home",
+                          comparison=comparison)
+    LOGGER.info("human-capital verdict: lead moves %.2f pp with the home "
+                "market, %.2f pp with both; winner changes=%s",
+                findings["change_pp"],
+                findings.get("change_diagonal_pp", float("nan")),
                 findings["winner_ever_changes"])
 
     tables = cfg["run"]["table_dir"]
     _save_table(frame, tables, "human_capital_sweep")
     _save_table(curve, tables, "human_capital_gap")
+    _save_table(comparison, tables, "human_capital_modes")
     _save_table(ranking, tables, "human_capital_ranking")
 
     figures = [str(plots.plot_human_capital(curve, ranking,
@@ -2735,10 +2754,11 @@ def step23_human_capital(cfg: Dict[str, Any],
     elapsed = time.perf_counter() - started
     rp.write_doc_23(
         Path("docs") / "23_human_capital.md", cfg,
-        {"sweep": frame, "curve": curve, "ranking": ranking},
+        {"sweep": frame, "curve": curve, "ranking": ranking,
+         "modes": comparison},
         figures,
         {"elapsed_seconds": elapsed, "gamma": gamma, "n_paths": n_paths,
-         "grid": grid, "fitted": fitted, "verdict": findings})
+         "grid": grid, "modes": modes, "fitted": fitted, "verdict": findings})
     LOGGER.info("docs/23 written (%.0fs)", elapsed)
     state["human_capital_curve"] = curve
     return state
@@ -2809,6 +2829,177 @@ def step24_mortality(cfg: Dict[str, Any],
     return state
 
 
+# ---------------------------------------------------------------------------
+# Step 25
+# ---------------------------------------------------------------------------
+def step25_pension(cfg: Dict[str, Any],
+                   state: Dict[str, Any]) -> Dict[str, Any]:
+    """Swap the US pension for Australia's means-tested one; write docs/25."""
+    pen_cfg = cfg.get("pension", {})
+    if not pen_cfg.get("enabled", False):
+        LOGGER.info("pension-system study disabled; skipping step 25")
+        return state
+    LOGGER.info("=== STEP 25: a pension system that is not the American one ===")
+    started = time.perf_counter()
+
+    panel = state.get("panel") or dl.build_panel(cfg)
+    spec = state.get("spec") or lc.spec_from_config(cfg)
+    strategies = state.get("strategies") or lc.build_strategies(cfg, spec)
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    n_paths = int(pen_cfg.get("n_paths", cfg["bootstrap"]["n_paths"]))
+    pair = (str(pen_cfg["challenger"]), str(pen_cfg["incumbent"]))
+    systems = pn.default_systems(
+        spec.savings_rate, pn.from_config(cfg),
+        float(pen_cfg.get("sg_rate", pn.SG_RATE)),
+        float(pen_cfg.get("sg_contributions_tax", pn.SG_CONTRIBUTIONS_TAX)))
+
+    frames: List[pd.DataFrame] = []
+    entitlements: List[pd.DataFrame] = []
+    shares: List[Dict[str, Any]] = []
+    for key, tweaked in pn.specs(spec, systems).items():
+        label = next(x.label for x in systems if x.key == key)
+        LOGGER.info("pension system: %s", label)
+        block = _run_variant(cfg, panel, tweaked, strategies, n_paths)
+        block.insert(0, "system", key)
+        block.insert(1, "system_label", label)
+        frames.append(block)
+        # The entitlement profile only means anything under a means test, and
+        # it is what says whether the taper is doing any work on this saver.
+        if tweaked.social_security_formula == "means_tested":
+            sampler = bs.from_config(panel, cfg)
+            probe = lc.run_chunked(
+                sampler, {pair[1]: strategies[pair[1]]}, tweaked,
+                min(n_paths, int(cfg["bootstrap"]["chunk_size"])),
+                int(cfg["bootstrap"]["chunk_size"]),
+                income_seed=int(cfg["run"]["seed"]))
+            outcome = probe[pair[1]]
+            ent = pn.entitlement(outcome, tweaked)
+            ent.insert(0, "system", key)
+            entitlements.append(ent)
+            shares.append({"system": key, "label": label,
+                           **pn.replacement(outcome, tweaked)})
+    frame = pd.concat(frames, ignore_index=True)
+    entitled = (pd.concat(entitlements, ignore_index=True) if entitlements
+                else pd.DataFrame())
+    replacement = pd.DataFrame.from_records(shares)
+    gaps = pn.gap_table(frame, pair)
+    findings = pn.verdict(gaps)
+    LOGGER.info("pension verdict: gap %.2f%% -> [%.2f, %.2f]%%, ranking "
+                "identical=%s", findings["baseline_gap_pct"],
+                findings["min_gap_pct"], findings["max_gap_pct"],
+                findings["ranking_identical_everywhere"])
+
+    tables = cfg["run"]["table_dir"]
+    _save_table(frame, tables, "pension_sweep")
+    _save_table(gaps, tables, "pension_gap")
+    if len(entitled):
+        _save_table(entitled, tables, "pension_entitlement")
+    if len(replacement):
+        _save_table(replacement, tables, "pension_replacement")
+
+    figures = [str(plots.plot_pension(gaps, entitled, replacement,
+                                      cfg["run"]["figure_dir"]))]
+
+    elapsed = time.perf_counter() - started
+    rp.write_doc_25(
+        Path("docs") / "25_pension_system.md", cfg,
+        {"sweep": frame, "gaps": gaps, "entitlement": entitled,
+         "replacement": replacement},
+        figures,
+        {"elapsed_seconds": elapsed, "gamma": gamma, "n_paths": n_paths,
+         "systems": [dataclasses.asdict(x) for x in systems],
+         "parameters": pn.from_config(cfg), "verdict": findings})
+    LOGGER.info("docs/25 written (%.0fs)", elapsed)
+    state["pension_gaps"] = gaps
+    return state
+
+
+# ---------------------------------------------------------------------------
+# Step 26
+# ---------------------------------------------------------------------------
+def step26_turnover(cfg: Dict[str, Any],
+                    state: Dict[str, Any]) -> Dict[str, Any]:
+    """Charge the solved schedule for the trades it makes; write docs/26."""
+    tn_cfg = cfg.get("turnover", {})
+    if not tn_cfg.get("enabled", False):
+        LOGGER.info("turnover study disabled; skipping step 26")
+        return state
+    LOGGER.info("=== STEP 26: what the schedule costs to trade ===")
+    started = time.perf_counter()
+
+    panel = state.get("panel") or dl.build_panel(cfg)
+    spec = state.get("spec") or lc.spec_from_config(cfg)
+    strategies = dict(state.get("strategies") or lc.build_strategies(cfg, spec))
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    n_paths = int(tn_cfg.get("n_paths", cfg["bootstrap"]["n_paths"]))
+    costs = [float(v) for v in tn_cfg.get("cost_grid", tn.DEFAULT_COSTS)]
+    challenger = str(tn_cfg.get("challenger", "solved_simplex"))
+    incumbent = str(tn_cfg.get("incumbent", "balanced_all_equity"))
+
+    # The point of the exercise is the *solved* schedule, so it has to be in
+    # the comparison as a strategy rather than as a table of weights.
+    solved = state.get("allocation_solved") or {}
+    if gamma in solved:
+        strategies[challenger] = lc.Strategy(
+            key=challenger, label="Solved simplex (docs/12)",
+            weights=np.asarray(solved[gamma], dtype=float))
+    else:
+        LOGGER.warning("no solved schedule for gamma=%.1f; turnover study "
+                       "runs on the fixed strategies only", gamma)
+        challenger = str(tn_cfg.get("fallback_challenger",
+                                    "target_date_fund"))
+
+    sampler = bs.from_config(panel, cfg)
+    probe = next(iter(sampler.chunks(
+        min(n_paths, int(cfg["bootstrap"]["chunk_size"])),
+        int(cfg["bootstrap"]["chunk_size"]))))
+    measured = tn.measure(probe, strategies, spec)
+    LOGGER.info("turnover: busiest %s at %.2f%% a year, quietest %s at %.2f%%",
+                measured["strategy"].iloc[0],
+                measured["turnover_total"].iloc[0] * 100.0,
+                measured["strategy"].iloc[-1],
+                measured["turnover_total"].iloc[-1] * 100.0)
+
+    def summarise(tweaked: lc.LifecycleSpec, cost: float) -> pd.DataFrame:
+        return _run_variant(cfg, panel, tweaked, strategies, n_paths)
+
+    frame = tn.sweep(summarise, spec, costs)
+    # "The best fixed portfolio" has to be settled before costs enter, or the
+    # incumbent slides to meet the challenger and the break-even is vacuous.
+    picked = tn.best_fixed(frame, challenger)
+    if picked and picked != incumbent:
+        LOGGER.info("turnover: best fixed portfolio at zero cost is %s, not "
+                    "the configured %s; comparing against it", picked,
+                    incumbent)
+        incumbent = picked
+    curve = tn.gap_curve(frame, challenger, incumbent)
+    cross = tn.cost_of_the_schedule(measured, challenger, incumbent)
+    findings = tn.verdict(curve, measured, cross, challenger, incumbent)
+    LOGGER.info("turnover verdict: lead %.2f%% at zero cost, break-even "
+                "%.1f bp", findings["baseline_gap_pct"],
+                findings["break_even_bp"])
+
+    tables = cfg["run"]["table_dir"]
+    _save_table(measured, tables, "turnover_measured")
+    _save_table(frame, tables, "turnover_sweep")
+    _save_table(curve, tables, "turnover_gap")
+
+    figures = [str(plots.plot_turnover(measured, curve, strategies, spec,
+                                       cfg["run"]["figure_dir"]))]
+
+    elapsed = time.perf_counter() - started
+    rp.write_doc_26(
+        Path("docs") / "26_turnover.md", cfg,
+        {"measured": measured, "sweep": frame, "curve": curve},
+        figures,
+        {"elapsed_seconds": elapsed, "gamma": gamma, "n_paths": n_paths,
+         "costs": costs, "challenger": challenger, "incumbent": incumbent,
+         "cross": cross, "verdict": findings})
+    LOGGER.info("docs/26 written (%.0fs)", elapsed)
+    state["turnover_curve"] = curve
+    return state
+
+
 STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
          4: step4_report, 5: step5_sensitivity, 6: step6_spending,
          7: step7_glide_path, 8: step8_hedging, 9: step9_retirement_timing,
@@ -2819,11 +3010,12 @@ STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
          18: step18_sleeve, 19: step19_panel,
          20: step20_fees, 21: step21_cohorts,
          22: step22_out_of_sample, 23: step23_human_capital,
-         24: step24_mortality}
+         24: step24_mortality, 25: step25_pension,
+         26: step26_turnover}
 
 
 def run(config_path: str = "config.yaml",
-        steps: Sequence[int] = tuple(range(1, 25)),
+        steps: Sequence[int] = tuple(range(1, 27)),
         quick: bool = False) -> Dict[str, Any]:
     """Execute the pipeline and return the accumulated state."""
     cfg = dl.load_config(config_path)
@@ -2853,8 +3045,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--steps", nargs="+", type=int,
-                        default=list(range(1, 25)),
-                        choices=list(range(1, 25)))
+                        default=list(range(1, 27)),
+                        choices=list(range(1, 27)))
     parser.add_argument("--quick", action="store_true",
                         help="small N for smoke tests")
     parser.add_argument("--verbose", action="store_true")

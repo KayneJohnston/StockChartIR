@@ -47,16 +47,34 @@ sixteen countries however long the computer runs, and a reader should carry
 that interval to every other number in this repository. See
 [`docs/19_panel_robustness.md`](docs/19_panel_robustness.md).
 
+**And what is it conditional on?** One assumption more than any parameter we
+sweep. Every table above pays the same public pension in all sixteen
+countries -- the US primary-insurance-amount schedule, worth about 44% of
+average earnings, paid for life regardless of what the retiree owns. That is
+a risk-free real annuity, and a large part of what looks like portfolio
+performance is standing on it. Swap it for Australia's means-tested Age
+Pension plus its compulsory 12% Superannuation Guarantee and the ordering
+above reverses: the de-risking glide path wins, because inside the
+assets-test taper a dollar of extra wealth costs more pension a year than any
+asset in this panel reliably earns. It is the only place in the project where
+the headline ranking fails, and it fails on a change to the pension rather
+than to the returns. See
+[`docs/25_pension_system.md`](docs/25_pension_system.md).
+
 See [`docs/04_replicated_results_and_tables.md`](docs/04_replicated_results_and_tables.md)
 for the full analysis and the caveats.
 
 ## The working paper
 
 A full academic writeup of the whole project — abstract, data, methodology,
-the baseline replication, all eight extensions, discussion, limitations and
-four appendices, with all 33 figures and 43 tables — is at
-[`paper/lifecycle_asset_allocation.pdf`](paper/lifecycle_asset_allocation.pdf)
-(57 pages).
+the baseline replication, every extension, discussion, limitations and four
+appendices — is at
+[`paper/lifecycle_asset_allocation.pdf`](paper/lifecycle_asset_allocation.pdf).
+
+Every number in it is read from the pipeline's own CSV output at build time,
+so a rerun that changed a result changes the paper rather than silently
+contradicting it. The counts of sections, figures and extensions are derived
+the same way, which is why none of them are quoted here.
 
 ```bash
 python paper/build_paper.py
@@ -103,8 +121,10 @@ is the read-through; the table below is the build.
 | [`docs/22_out_of_sample.md`](docs/22_out_of_sample.md) | Solving each schedule on one half of the record and scoring it on the other, to separate the transferable part of an in-sample gain from the fitted part |
 | [`docs/23_human_capital.md`](docs/23_human_capital.md) | Correlating labour income with the home market -- the textbook reason to hold less of it, and the assumption every other result quietly makes |
 | [`docs/24_mortality.md`](docs/24_mortality.md) | Replacing the certain ninety-third birthday with a Gompertz lifespan, by re-weighting the utility aggregation rather than re-simulating |
+| [`docs/25_pension_system.md`](docs/25_pension_system.md) | Swapping the US social-security schedule the whole panel silently assumes for Australia's means-tested Age Pension and Superannuation Guarantee -- with a control that separates the means test from the smaller cheque |
+| [`docs/26_turnover.md`](docs/26_turnover.md) | What the solved schedules cost to trade: turnover split into the drift no portfolio can avoid and the move the schedule chose, then priced |
 
-All twenty-four are **generated** by `main.py` from live pipeline objects --
+All twenty-six are **generated** by `main.py` from live pipeline objects --
 edit `src/report.py`, not the Markdown.
 
 ## How much of this data is real
@@ -639,13 +659,19 @@ python main.py --steps 17           # the mortgage on the housing sleeve
 python main.py --steps 18           # five international-sleeve weighting schemes
 python main.py --steps 19           # delete-one-country and sub-period robustness
 python main.py --steps 20           # fees, and the differential that would undo it
+python main.py --steps 21           # the realised cohorts, with no bootstrap
+python main.py --steps 22           # solved schedules on data they did not see
+python main.py --steps 23           # labour income correlated with the market
+python main.py --steps 24           # death at a random age
+python main.py --steps 25           # the Australian Age Pension instead of the US one
+python main.py --steps 12 26        # what the solved schedule costs to trade
 python main.py --config other.yaml  # a different parameterisation
 ```
 
 ## Layout
 
 ```
-├── docs/                 # generated analysis documents (17 files)
+├── docs/                 # generated analysis documents (26 files)
 ├── data/
 │   ├── raw/              # primary source files, unmodified
 │   ├── processed/        # standardised real return panels (.csv and .npz)

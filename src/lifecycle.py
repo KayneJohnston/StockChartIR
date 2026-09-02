@@ -59,6 +59,34 @@ class LifecycleSpec:
     # loading, raising it re-labels which part of income risk is systematic
     # without changing how much income risk there is.
     income_return_correlation: float = 0.0
+    # Correlation between the same permanent innovation and the *international*
+    # return.  ``None`` -- the default -- means "unspecified": the innovation is
+    # rotated toward the domestic market alone, and whatever correlation with
+    # the foreign market follows from the two markets' own correlation is left
+    # to fall out.  That is what every result in `docs/23` reports.  Setting a
+    # number instead pins *both* correlations at once, which is the harder
+    # question: if a pay cheque is a claim on world equity rather than on the
+    # home market specifically, the reason to tilt away from home weakens.  The
+    # two-regressor rotation that does it is in :func:`simulate_income`.
+    income_intl_correlation: float | None = None
+    # Proportional one-way cost of trading, charged on the value turned over at
+    # each annual rebalance.  Zero -- the default -- leaves every other result
+    # in the project bit-identical.  It is the price of the schedule, and the
+    # schedules solved in `docs/12` never paid it while they were being solved.
+    trading_cost: float = 0.0
+    # A compulsory employer contribution to a separate retirement fund, on
+    # top of whatever the worker saves themselves.  This is Australia's
+    # Superannuation Guarantee: 12% of ordinary time earnings since 1 July
+    # 2025, taxed at 15% on the way in, and invested in the member's chosen
+    # strategy.  Zero -- the default -- leaves every other result untouched.
+    #
+    # It is *additional* to `savings_rate` rather than a substitute for it,
+    # and it does not reduce take-home pay: the statutory incidence is on the
+    # employer.  Working-life consumption is therefore unchanged by it, which
+    # matters less than it sounds here because the utility window is
+    # retirement only -- but it is an assumption, and `docs/25` says so.
+    super_guarantee_rate: float = 0.0
+    super_contributions_tax: float = 0.15
     # Floor on labour income, as a multiple of economy-wide average earnings,
     # standing in for unemployment insurance and in-work benefits.  Default 0
     # (no floor), which leaves every existing result unchanged.
@@ -85,6 +113,16 @@ class LifecycleSpec:
     pia_rate2: float = 0.32
     pia_rate3: float = 0.15
 
+    # "means_tested" reproduces the Australian Age Pension: a flat maximum
+    # rate, withdrawn against *assessable assets* rather than against career
+    # earnings, and therefore recomputed every retirement year as the portfolio
+    # draws down.  The three parameters below are the rate and the free area as
+    # multiples of economy-wide average earnings, and the annual pension lost
+    # per unit of assets above the free area.  See `docs/25`.
+    pension_full_rate: float = 0.293
+    pension_free_area: float = 3.01
+    pension_taper: float = 0.078
+
     retirement_rule: str = "fixed_real_rule"
     rule_rate: float = 0.04
     allow_ruin: bool = True
@@ -96,11 +134,51 @@ class LifecycleSpec:
             raise ValueError("savings_rate must lie in [0, 1)")
         if self.retirement_rule not in ("fixed_real_rule", "fixed_percentage"):
             raise ValueError(f"unknown retirement_rule {self.retirement_rule!r}")
-        if self.social_security_formula not in ("progressive", "flat"):
+        if self.social_security_formula not in ("progressive", "flat",
+                                                "means_tested"):
             raise ValueError(
                 f"unknown social_security_formula {self.social_security_formula!r}")
         if not -1.0 <= self.income_return_correlation <= 1.0:
             raise ValueError("income_return_correlation must lie in [-1, 1]")
+        if self.income_intl_correlation is not None and not (
+                -1.0 <= self.income_intl_correlation <= 1.0):
+            raise ValueError("income_intl_correlation must lie in [-1, 1]")
+        if self.trading_cost < 0.0:
+            raise ValueError("trading_cost must be non-negative")
+        if not 0.0 <= self.super_guarantee_rate < 1.0:
+            raise ValueError("super_guarantee_rate must lie in [0, 1)")
+        if not 0.0 <= self.super_contributions_tax < 1.0:
+            raise ValueError("super_contributions_tax must lie in [0, 1)")
+        if self.pension_taper < 0.0 or self.pension_free_area < 0.0:
+            raise ValueError("pension taper and free area must be non-negative")
+
+    @property
+    def super_net_rate(self) -> float:
+        """The share of income that actually reaches the super fund.
+
+        Twelve per cent of ordinary time earnings, less the fifteen per cent
+        tax on concessional contributions, leaves 10.2% -- which happens to
+        sit almost exactly on this paper's own 10% savings rate, a coincidence
+        worth noticing and not worth leaning on.
+        """
+        return self.super_guarantee_rate * (1.0 - self.super_contributions_tax)
+
+    @property
+    def total_contribution_rate(self) -> float:
+        """Everything going into the portfolio each working year."""
+        return self.savings_rate + self.super_net_rate
+
+    @property
+    def super_share_of_contributions(self) -> float:
+        """How much of the pot the compulsory fund supplies, exactly.
+
+        Both streams are the same fraction of the same income in the same
+        years and earn the same returns, so their ratio is constant through
+        the accumulation phase and this is the share at every age -- no
+        separate balance needs tracking to report it.
+        """
+        total = self.total_contribution_rate
+        return self.super_net_rate / total if total > 0.0 else 0.0
 
     @property
     def horizon(self) -> int:
@@ -137,6 +215,14 @@ class LifecycleSpec:
             return np.zeros_like(career_average)
         if self.social_security_formula == "flat":
             return self.replacement_rate * career_average
+        if self.social_security_formula == "means_tested":
+            # A flat pension does not depend on career earnings at all, so the
+            # career-average signature has nothing to say about it.  What comes
+            # back here is the *maximum* rate, which is what a retiree with no
+            # assessable assets receives; :func:`simulate` overrides it year by
+            # year with :meth:`means_tested_benefit` once assets are known.
+            return np.full_like(career_average, self.pension_full_rate
+                                * float(self.deterministic_income().mean()))
         economy_average = float(self.deterministic_income().mean())
         bend1 = self.pia_bend1 * economy_average
         bend2 = self.pia_bend2 * economy_average
@@ -146,6 +232,32 @@ class LifecycleSpec:
         return (self.pia_rate1 * tranche1
                 + self.pia_rate2 * tranche2
                 + self.pia_rate3 * tranche3)
+
+    def means_tested_benefit(self, assets: np.ndarray) -> np.ndarray:
+        """The Australian Age Pension: a flat rate, tapered against assets.
+
+        The maximum rate is paid while assessable assets sit below the free
+        area, then withdrawn at :attr:`pension_taper` per unit of assets above
+        it, reaching zero at the cut-off.  Both thresholds and the rate are
+        held as multiples of economy-wide average earnings so that the schedule
+        travels between the panel's currencies unchanged.
+
+        The economics that matters here is the taper.  Every extra dollar a
+        retiree holds inside the tapered band costs them
+        :attr:`pension_taper` of pension a year, which is an implicit wealth
+        tax at a rate no financial asset in this paper earns reliably -- and it
+        runs the other way too, so a portfolio that falls is met by a pension
+        that rises.  A means test is therefore a floor and a ceiling at once,
+        which is why it has to be applied to assets *as they are*, year by
+        year, rather than once at retirement.
+        """
+        if not self.social_security_enabled:
+            return np.zeros_like(np.asarray(assets, dtype=float))
+        economy_average = float(self.deterministic_income().mean())
+        full = self.pension_full_rate * economy_average
+        excess = np.maximum(np.asarray(assets, dtype=float)
+                            - self.pension_free_area * economy_average, 0.0)
+        return np.clip(full - self.pension_taper * excess, 0.0, full)
 
     def deterministic_income(self) -> np.ndarray:
         """Hump-shaped real labour-income profile over the working years."""
@@ -221,15 +333,25 @@ def spec_from_config(cfg: Mapping[str, Any]) -> LifecycleSpec:
         income_shocks_enabled=bool(income["shocks_enabled"]),
         income_return_correlation=float(
             income.get("return_correlation", 0.0)),
+        income_intl_correlation=(
+            None if income.get("intl_correlation") is None
+            else float(income["intl_correlation"])),
+        trading_cost=float(life.get("trading_cost", 0.0)),
         working_income_floor=float(income.get("working_income_floor", 0.0)),
         social_security_enabled=bool(ss["enabled"]),
         replacement_rate=float(ss["replacement_rate"]),
+        super_guarantee_rate=float(life.get("super_guarantee_rate", 0.0)),
+        super_contributions_tax=float(
+            life.get("super_contributions_tax", 0.15)),
         social_security_formula=str(ss.get("formula", "progressive")),
         pia_bend1=float(ss.get("pia_bend1", 0.21)),
         pia_bend2=float(ss.get("pia_bend2", 1.28)),
         pia_rate1=float(ss.get("pia_rate1", 0.90)),
         pia_rate2=float(ss.get("pia_rate2", 0.32)),
         pia_rate3=float(ss.get("pia_rate3", 0.15)),
+        pension_full_rate=float(ss.get("pension_full_rate", 0.293)),
+        pension_free_area=float(ss.get("pension_free_area", 3.01)),
+        pension_taper=float(ss.get("pension_taper", 0.078)),
         retirement_rule=str(ret["rule"]),
         rule_rate=float(ret["rule_rate"]),
         allow_ruin=bool(ret["allow_ruin"]),
@@ -266,10 +388,51 @@ def _standardise(matrix: np.ndarray) -> np.ndarray:
     return (values - float(values.mean())) / sd
 
 
+def _rotation(market: np.ndarray, foreign: np.ndarray,
+              rho_dom: float, rho_intl: float
+              ) -> Tuple[float, float, float]:
+    """Loadings that hit two target correlations at once, at unit variance.
+
+    We want an innovation ``z = a*d + b*f + s*e`` whose correlation with the
+    domestic series ``d`` is ``rho_dom`` and with the foreign series ``f`` is
+    ``rho_intl``, holding ``var(z) = 1`` so that the sweep changes *which*
+    risks a career carries and not *how much*.  With ``c = corr(d, f)`` the
+    first two conditions are a 2x2 system,
+
+    ``a + b*c = rho_dom`` and ``a*c + b = rho_intl``,
+
+    whose solution is ``a = (rho_dom - c*rho_intl)/(1 - c^2)`` and
+    ``b = (rho_intl - c*rho_dom)/(1 - c^2)``.  The variance explained by the
+    two markets then collapses to ``a*rho_dom + b*rho_intl``, and the residual
+    weight is the square root of what is left.
+
+    Note what this does *not* reduce to.  Passing ``rho_intl = 0`` here is a
+    stronger statement than leaving it unspecified: it demands a pay cheque
+    uncorrelated with the foreign market, which -- because the two markets move
+    together -- requires loading *negatively* on the foreign one.  Leaving it
+    unspecified instead takes the one-regressor rotation and accepts the
+    induced foreign correlation of ``c * rho_dom``.  The two readings bracket
+    the honest answer, which is why `docs/23` reports both.
+    """
+    c = float(np.corrcoef(market.ravel(), foreign.ravel())[0, 1])
+    if not np.isfinite(c) or abs(c) >= 1.0:
+        raise ValueError("the two markets are collinear; no rotation exists")
+    a = (rho_dom - c * rho_intl) / (1.0 - c ** 2)
+    b = (rho_intl - c * rho_dom) / (1.0 - c ** 2)
+    explained = a * rho_dom + b * rho_intl
+    if explained > 1.0 + 1e-12:
+        raise ValueError(
+            f"correlations ({rho_dom:.3f}, {rho_intl:.3f}) are infeasible "
+            f"against markets correlated {c:.3f}: they would need "
+            f"{explained:.3f} of the innovation's variance")
+    return a, b, float(np.sqrt(max(1.0 - explained, 0.0)))
+
+
 def simulate_income(spec: LifecycleSpec, n_paths: int,
                     rng: np.random.Generator | None = None,
                     shocks: Tuple[np.ndarray, np.ndarray] | None = None,
                     dom_eq: np.ndarray | None = None,
+                    intl_eq: np.ndarray | None = None,
                     ) -> np.ndarray:
     """Real labour income over the working years, shape ``(n_paths, n_working)``.
 
@@ -310,7 +473,8 @@ def simulate_income(spec: LifecycleSpec, n_paths: int,
                 f"pre-drawn shocks are too small: need ({n_paths}, {n_work}), "
                 f"got {z_perm.shape}")
     rho = float(spec.income_return_correlation)
-    if rho:
+    rho_i = spec.income_intl_correlation
+    if rho or rho_i is not None:
         if dom_eq is None:
             raise ValueError(
                 "income_return_correlation is set but no domestic equity "
@@ -319,7 +483,20 @@ def simulate_income(spec: LifecycleSpec, n_paths: int,
         if market.shape != (n_paths, n_work):
             raise ValueError(
                 f"dom_eq must cover ({n_paths}, {n_work}), got {market.shape}")
-        z_perm = rho * market + np.sqrt(1.0 - rho ** 2) * z_perm
+        if rho_i is None:
+            z_perm = rho * market + np.sqrt(1.0 - rho ** 2) * z_perm
+        else:
+            if intl_eq is None:
+                raise ValueError(
+                    "income_intl_correlation is set but no international "
+                    "equity returns were supplied")
+            foreign = _standardise(np.asarray(intl_eq)[:n_paths, :n_work])
+            if foreign.shape != (n_paths, n_work):
+                raise ValueError(
+                    f"intl_eq must cover ({n_paths}, {n_work}), "
+                    f"got {foreign.shape}")
+            a, b, resid = _rotation(market, foreign, rho, float(rho_i))
+            z_perm = a * market + b * foreign + resid * z_perm
     perm = -0.5 * spec.permanent_shock_sd ** 2 + spec.permanent_shock_sd * z_perm
     tran = -0.5 * spec.transitory_shock_sd ** 2 + spec.transitory_shock_sd * z_tran
     permanent = np.exp(np.cumsum(perm, axis=1))
@@ -376,6 +553,55 @@ def portfolio_returns(paths: BootstrapPaths, strategy: Strategy) -> np.ndarray:
     return np.einsum("nha,ha->nh", stack, strategy.weights)
 
 
+def portfolio_turnover(paths: BootstrapPaths, strategy: Strategy) -> np.ndarray:
+    """One-way turnover at each annual rebalance, shape ``(n_paths, horizon)``.
+
+    Two things make a portfolio trade, and only one of them is a choice.  A
+    constant-weight portfolio must still trade every year, because the assets
+    inside it did not return the same thing and the weights have drifted; that
+    is *drift* turnover, and every strategy in this paper pays it.  A schedule
+    that deliberately moves its target -- a glide path, or the age-by-asset
+    surface solved in `docs/12` -- pays that and then pays again for the move
+    it chose.  The difference between the two is the cost the optimiser never
+    saw, which is the whole point of measuring this.
+
+    Turnover is reported one-way (half the sum of absolute weight changes, so a
+    full switch from one asset to another counts once) and is charged at the
+    *start* of each year against the weights the previous year drifted to.  The
+    first year is free: the opening contribution buys the target outright.
+    Contributions in later years are assumed to be invested pro-rata rather
+    than steered toward the underweight asset, which overstates turnover during
+    accumulation -- a conservative choice, and one that goes away in retirement
+    where the flows run the other way.
+    """
+    horizon = strategy.weights.shape[0]
+    weights = strategy.weights
+    stack = np.stack([paths.series(a)[:, :horizon] for a in ASSETS], axis=-1)
+    out = np.zeros((paths.n_paths, horizon))
+    for h in range(1, horizon):
+        grown = weights[h - 1] * (1.0 + stack[:, h - 1, :])
+        total = grown.sum(axis=1, keepdims=True)
+        drifted = np.divide(grown, total, out=np.zeros_like(grown),
+                            where=total != 0.0)
+        out[:, h] = 0.5 * np.abs(weights[h] - drifted).sum(axis=1)
+    return out
+
+
+def net_portfolio_returns(paths: BootstrapPaths, strategy: Strategy,
+                          cost: float) -> Tuple[np.ndarray, np.ndarray]:
+    """Portfolio returns after trading costs, and the turnover that caused them.
+
+    The cost is charged on the value traded at the start of the year, before
+    that year's return compounds on what is left: ``(1 - k*T) * (1 + r) - 1``.
+    At ``cost = 0`` this is :func:`portfolio_returns` exactly.
+    """
+    gross = portfolio_returns(paths, strategy)
+    if not cost:
+        return gross, np.zeros_like(gross)
+    turnover = portfolio_turnover(paths, strategy)
+    return (1.0 - cost * turnover) * (1.0 + gross) - 1.0, turnover
+
+
 def simulate(
     paths: BootstrapPaths,
     strategy: Strategy,
@@ -398,21 +624,34 @@ def simulate(
     if income.shape != (n_paths, spec.n_working):
         raise ValueError("income must be (n_paths, n_working)")
 
-    rp = portfolio_returns(paths, strategy)
+    rp, _turnover = net_portfolio_returns(paths, strategy, spec.trading_cost)
     wealth = np.zeros((n_paths, horizon + 1))
     consumption = np.zeros((n_paths, horizon))
 
     # --- accumulation -----------------------------------------------------
+    # Two contribution streams, not one. The voluntary share comes out of
+    # take-home pay and so reduces consumption; the compulsory employer
+    # contribution does not, which is why a Superannuation Guarantee is a
+    # transfer into the portfolio rather than a reallocation within it.
+    employer_rate = spec.super_net_rate
     for h in range(spec.n_working):
-        contribution = spec.savings_rate * income[:, h]
-        consumption[:, h] = income[:, h] - contribution
-        wealth[:, h + 1] = (wealth[:, h] + contribution) * (1.0 + rp[:, h])
+        voluntary = spec.savings_rate * income[:, h]
+        employer = employer_rate * income[:, h]
+        consumption[:, h] = income[:, h] - voluntary
+        wealth[:, h + 1] = ((wealth[:, h] + voluntary + employer)
+                            * (1.0 + rp[:, h]))
 
     wealth_at_retirement = wealth[:, spec.n_working].copy()
 
     # --- social security --------------------------------------------------
     career_average = income.mean(axis=1)
     benefit = spec.social_security_benefit(career_average)
+    # A means test is assessed on assets as they stand, so it cannot be settled
+    # once at retirement the way an earnings-related benefit can.  Under it the
+    # benefit becomes a path through the decumulation loop, and the per-path
+    # figure reported afterwards is its average over the retirement years.
+    means_tested = spec.social_security_formula == "means_tested"
+    benefit_paid = np.zeros((n_paths, spec.n_retired)) if means_tested else None
 
     # --- decumulation -----------------------------------------------------
     rule = spending or sp.from_spec(spec.retirement_rule, spec.rule_rate)
@@ -443,6 +682,9 @@ def simulate(
         )
         desired = np.maximum(rule.desired(state), 0.0)
         withdrawal = np.minimum(desired, np.maximum(available, 0.0))
+        if means_tested:
+            benefit = spec.means_tested_benefit(available)
+            benefit_paid[:, h - spec.n_working] = benefit
         consumption[:, h] = benefit + withdrawal
         wealth[:, h + 1] = np.maximum(available - withdrawal, 0.0) * (1.0 + rp[:, h])
 
@@ -470,7 +712,8 @@ def simulate(
         bequest=wealth[:, horizon].copy(),
         ruin=ruined,
         ruin_age=ruin_age,
-        social_security=benefit,
+        social_security=(benefit_paid.mean(axis=1) if means_tested
+                         else benefit),
         career_average_income=income.mean(axis=1),
     )
 
@@ -510,7 +753,7 @@ def run_chunked(
     for chunk in sampler.chunks(n_paths, chunk_size):
         rng = np.random.default_rng(next(income_children))
         income = simulate_income(spec, chunk.n_paths, rng,
-                                 dom_eq=chunk.dom_eq)
+                                 dom_eq=chunk.dom_eq, intl_eq=chunk.intl_eq)
         outcomes = simulate_all(chunk, strategies, spec, income)
         for key, outcome in outcomes.items():
             results[key] = outcome if key not in results \

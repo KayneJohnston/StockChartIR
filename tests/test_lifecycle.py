@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import numpy as np
 import pytest
 
@@ -43,7 +45,7 @@ class TestLifecycleSpec:
         with pytest.raises(ValueError, match="retirement_rule"):
             lc.LifecycleSpec(retirement_rule="spend_it_all")
         with pytest.raises(ValueError, match="social_security_formula"):
-            lc.LifecycleSpec(social_security_formula="means_tested")
+            lc.LifecycleSpec(social_security_formula="whatever_they_promise")
 
     def test_income_profile_is_hump_shaped(self) -> None:
         profile = lc.LifecycleSpec().deterministic_income()
@@ -269,3 +271,131 @@ class TestDriver:
         table = lc.glide_path_table(strategies, spec)
         assert list(table.index) == list(spec.ages)
         assert set(table.columns) == set(strategies)
+
+
+class TestMeansTestedSimulation:
+    """The Age Pension has to be assessed year by year, not once at retirement."""
+
+    def test_benefit_rises_as_the_portfolio_falls(self) -> None:
+        """The mechanism the whole section turns on.
+
+        An earnings-related benefit is a constant through retirement. A
+        means-tested one is a function of assets, so as the portfolio draws
+        down the pension has to come back. A model that settled it once at
+        retirement would miss exactly this.
+        """
+        spec = lc.LifecycleSpec(social_security_formula="means_tested")
+        ea = float(spec.deterministic_income().mean())
+        falling = np.array([[10.0 * ea, 5.0 * ea, 2.0 * ea]])
+        paid = spec.means_tested_benefit(falling)
+        assert paid[0, 0] < paid[0, 1] < paid[0, 2]
+        assert paid[0, 2] == pytest.approx(spec.pension_full_rate * ea)
+
+
+class TestUntouchedDefaults:
+    """Every new dial must be off by default.
+
+    Three were added at once -- a foreign income correlation, a trading cost
+    and a means-tested pension. Each is a change to the simulator's arithmetic,
+    and each has to be inert unless it is asked for, or the results elsewhere
+    in the project silently move.
+    """
+
+    def test_new_fields_default_to_no_op(self) -> None:
+        spec = lc.LifecycleSpec()
+        assert spec.income_intl_correlation is None
+        assert spec.trading_cost == 0.0
+        assert spec.social_security_formula == "progressive"
+
+    def test_income_is_unchanged_when_no_correlation_is_asked_for(self) -> None:
+        spec = lc.LifecycleSpec()
+        rng = np.random.default_rng(3)
+        shocks = lc.draw_income_shocks(50, spec.n_working,
+                                       np.random.default_rng(4))
+        market = rng.standard_normal((50, spec.n_working))
+        with_market = lc.simulate_income(spec, 50, shocks=shocks,
+                                         dom_eq=market, intl_eq=market)
+        without = lc.simulate_income(spec, 50, shocks=shocks)
+        assert np.array_equal(with_market, without)
+
+    def test_intl_correlation_requires_the_foreign_series(self) -> None:
+        spec = lc.LifecycleSpec(income_return_correlation=0.3,
+                                income_intl_correlation=0.3)
+        shocks = lc.draw_income_shocks(20, spec.n_working,
+                                       np.random.default_rng(5))
+        market = np.random.default_rng(6).standard_normal((20, spec.n_working))
+        with pytest.raises(ValueError, match="international"):
+            lc.simulate_income(spec, 20, shocks=shocks, dom_eq=market)
+
+    def test_out_of_range_correlations_are_rejected(self) -> None:
+        with pytest.raises(ValueError, match="income_intl_correlation"):
+            lc.LifecycleSpec(income_intl_correlation=1.5)
+
+
+class TestSuperannuationGuarantee:
+    """A compulsory employer contribution alongside voluntary saving."""
+
+    def test_off_by_default(self) -> None:
+        spec = lc.LifecycleSpec()
+        assert spec.super_guarantee_rate == 0.0
+        assert spec.super_net_rate == 0.0
+        assert spec.total_contribution_rate == spec.savings_rate
+
+    def test_contributions_tax_is_taken_on_the_way_in(self) -> None:
+        spec = lc.LifecycleSpec(savings_rate=0.10, super_guarantee_rate=0.12,
+                                super_contributions_tax=0.15)
+        assert spec.super_net_rate == pytest.approx(0.102)
+        assert spec.total_contribution_rate == pytest.approx(0.202)
+        assert spec.super_share_of_contributions == pytest.approx(0.102 / 0.202)
+
+    def test_it_adds_to_voluntary_saving_rather_than_replacing_it(self) -> None:
+        """The distinction the whole comparison turns on.
+
+        An employer contribution is additional. Modelling it as a bigger
+        savings rate would leave the Australian saver contributing 12% where
+        they actually contribute 22.2% gross.
+        """
+        spec = lc.LifecycleSpec(savings_rate=0.10, super_guarantee_rate=0.12)
+        assert spec.total_contribution_rate > spec.savings_rate
+        assert spec.total_contribution_rate > spec.super_guarantee_rate
+
+    def test_it_does_not_reduce_working_life_consumption(self) -> None:
+        """Statutory incidence is on the employer, so take-home pay is
+        unchanged and only the portfolio grows."""
+        from tests.test_turnover import _Paths, _flat_paths  # type: ignore
+
+        base = lc.LifecycleSpec()
+        withsg = dataclasses.replace(base, super_guarantee_rate=0.12)
+        paths = _flat_paths(base.horizon, dom_eq=0.05, intl_eq=0.05,
+                            bond=0.02, bill=0.01)
+        strat = lc.Strategy(key="s", label="s", weights=np.tile(
+            [0.5, 0.5, 0.0, 0.0], (base.horizon, 1)))
+        income = lc.simulate_income(base, paths.n_paths,
+                                    np.random.default_rng(1))
+        a = lc.simulate(paths, strat, base, income)
+        b = lc.simulate(paths, strat, withsg, income)
+        work = slice(0, base.n_working)
+        assert np.allclose(a.consumption[:, work], b.consumption[:, work])
+        assert (b.wealth_at_retirement > a.wealth_at_retirement).all()
+
+    def test_zero_guarantee_is_the_original_simulation(self) -> None:
+        from tests.test_turnover import _flat_paths  # type: ignore
+
+        spec = lc.LifecycleSpec()
+        paths = _flat_paths(spec.horizon, dom_eq=0.06, bond=0.02)
+        strat = lc.Strategy(key="s", label="s", weights=np.tile(
+            [1.0, 0.0, 0.0, 0.0], (spec.horizon, 1)))
+        income = lc.simulate_income(spec, paths.n_paths,
+                                    np.random.default_rng(2))
+        a = lc.simulate(paths, strat, spec, income)
+        b = lc.simulate(paths, strat,
+                        dataclasses.replace(spec, super_guarantee_rate=0.0),
+                        income)
+        assert np.array_equal(a.wealth, b.wealth)
+        assert np.array_equal(a.consumption, b.consumption)
+
+    def test_out_of_range_rates_are_rejected(self) -> None:
+        with pytest.raises(ValueError, match="super_guarantee_rate"):
+            lc.LifecycleSpec(super_guarantee_rate=1.2)
+        with pytest.raises(ValueError, match="super_contributions_tax"):
+            lc.LifecycleSpec(super_contributions_tax=1.0)

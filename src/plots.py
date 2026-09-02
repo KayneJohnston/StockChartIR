@@ -169,6 +169,24 @@ SERIES_LABEL: Dict[str, str] = {
 #: The tightest form of a series name, for a heatmap axis with five categories
 #: and a third of a panel to put them in. The line breaks are chosen here
 #: rather than left to ``textwrap``, which would split "International" itself.
+#: Short forms for the three readings of a correlated pay cheque. The full
+#: names are sentences and belong in the prose, not on a legend.
+#: Short forms for the pension regimes, for a category axis.
+PENSION_TICK: Dict[str, str] = {
+    "us_social_security": "US, 10%\nsaving",
+    "us_matched_saving": "US, 20.2%\nsaving",
+    "age_pension_untested": "AP rate,\nno means test",
+    "age_pension_matched": "Age Pension,\n10% saving",
+    "australia_as_legislated": "Australia as\nlegislated",
+    "australia_non_homeowner": "Australia,\nnon-homeowner",
+}
+
+MODE_TICK: Dict[str, str] = {
+    "home": "home market only",
+    "strict": "home only, foreign pinned to 0",
+    "diagonal": "both markets equally",
+}
+
 SERIES_ABBR: Dict[str, str] = {
     "dom_eq": "Dom.\nequity", "intl_eq": "Intl.\nequity",
     "bond": "Dom.\nbonds", "bill": "Bills", "inflation": "Inflation",
@@ -2884,22 +2902,36 @@ def plot_human_capital(curve: pd.DataFrame, ranking: pd.DataFrame,
         fig, axes = _grid(2, 3.0)
 
         ax = axes[0]
-        x = curve["correlation"].to_numpy(dtype=float)
-        y = curve["gap_pct"].to_numpy(dtype=float)
-        ax.plot(x, y, marker=_marker(0), color=_colour(0), linewidth=1.8)
+        modes = (list(dict.fromkeys(curve["mode"])) if "mode" in curve.columns
+                 else [None])
+        home = curve if modes == [None] else curve[curve["mode"] == modes[0]]
+        for i, mode in enumerate(modes):
+            block = (curve if mode is None
+                     else curve[curve["mode"] == mode]).sort_values(
+                         "correlation")
+            ax.plot(block["correlation"].to_numpy(dtype=float),
+                    block["gap_pct"].to_numpy(dtype=float),
+                    marker=_marker(i), color=_colour(i), linewidth=1.7,
+                    markersize=3.5,
+                    label=MODE_TICK.get(str(mode), str(mode)))
         ax.axhline(0.0, color="black", linewidth=1.2)
-        ax.fill_between(x, 0.0, y, color=_colour(0), alpha=0.10)
+        y = home.sort_values("correlation")["gap_pct"].to_numpy(dtype=float)
         base = float(y[0]) if y.size else float("nan")
         ax.axhline(base, color="0.5", linewidth=1.0, linestyle=":")
-        ax.annotate("independent human capital", xy=(x[0], base),
+        ax.annotate("independent human capital",
+                    xy=(float(home["correlation"].min()), base),
                     xytext=(4, 6), textcoords="offset points", fontsize=6,
                     color="0.35")
-        ax.set_xlabel("Correlation of the pay cheque with the home market")
+        ax.set_xlabel("Correlation of the pay cheque with equity")
         ax.set_ylabel("All-international over 50/50 (%)")
         widens = bool(y.size and y[-1] > y[0])
         _title(ax, "Correlated human capital argues against the home market"
                if widens else
                "Correlated human capital argues for the home market")
+        if len(modes) > 1:
+            ax.legend(fontsize=5.5, loc="best", labelspacing=0.3,
+                      handlelength=1.6, frameon=True, framealpha=0.92,
+                      edgecolor="none")
 
         ax = axes[1]
         levels = [c for c in ranking.columns if isinstance(c, float)]
@@ -2917,6 +2949,148 @@ def plot_human_capital(curve: pd.DataFrame, ranking: pd.DataFrame,
         ax.legend(fontsize=5.5, ncol=2, loc="lower left", labelspacing=0.3,
                   handlelength=1.4, columnspacing=1.0, frameon=True,
                   framealpha=0.92, edgecolor="none")
+
+        fig.tight_layout()
+    return _save(fig, directory, name)
+
+
+def plot_pension(gaps: pd.DataFrame, entitlement: pd.DataFrame,
+                 replacement: pd.DataFrame, directory: str | Path,
+                 name: str = "fig50_pension") -> Path:
+    """A means-tested pension and a compulsory contribution, against the US."""
+    with plt.rc_context(STYLE):
+        fig, axes = _grid(4, 3.0)
+        order = gaps.reset_index(drop=True)
+        ticks = [PENSION_TICK.get(str(k), str(k)) for k in order["system"]]
+
+        def _bar(ax: Any, values: np.ndarray, highlight: str) -> None:
+            colours = [_colour(2) if k == highlight
+                       else _colour(0) if k == "us_social_security"
+                       else _colour(1) for k in order["system"]]
+            ax.bar(range(len(order)), values, color=colours, width=0.66)
+            ax.axhline(0.0, color="black", linewidth=1.0)
+            ax.set_xticks(np.arange(len(order)))
+            _strategy_ticks(ax, ticks, fontsize=5.5)
+
+        # -- 1. how much retirement consumption each system delivers -------
+        ax = axes[0]
+        lift = (order["best_lift_pct"].to_numpy(dtype=float)
+                if "best_lift_pct" in order.columns
+                else np.zeros(len(order)))
+        _bar(ax, lift, "australia_as_legislated")
+        ax.set_ylabel("Certainty equivalent vs the\nUS baseline (%)")
+        _title(ax, "The Australian system delivers more"
+               if float(lift[-1]) > 0 else "The Australian system delivers less")
+
+        # -- 2. and what it does to the choice between portfolios ----------
+        ax = axes[1]
+        y = order["gap_pct"].to_numpy(dtype=float)
+        _bar(ax, y, "australia_as_legislated")
+        if "us_social_security" in set(order["system"]):
+            ax.axhline(float(order.loc[order["system"] == "us_social_security",
+                                       "gap_pct"].iloc[0]),
+                       color="0.5", linewidth=1.0, linestyle=":")
+        ax.set_ylabel("All-international over 50/50 (%)")
+        _title(ax, "but compresses the choice between portfolios"
+               if abs(float(y[-1])) < abs(float(y[0]))
+               else "and widens the choice between portfolios")
+
+        # -- 3. who is actually on the taper -------------------------------
+        ax = axes[2]
+        if len(entitlement):
+            key = ("australia_as_legislated"
+                   if "australia_as_legislated" in set(entitlement["system"])
+                   else str(entitlement["system"].iloc[0]))
+            block = entitlement[entitlement["system"] == key].sort_values("age")
+            ages = block["age"].to_numpy(dtype=float)
+            bands = [("share_no_pension", "no pension", 2),
+                     ("share_part_rate", "part rate", 1),
+                     ("share_full_rate", "full rate", 0)]
+            ax.stackplot(ages, *[block[c].to_numpy(dtype=float) * 100
+                                 for c, _, _ in bands],
+                         colors=[_colour(i) for _, _, i in bands],
+                         labels=[lab for _, lab, _ in bands], alpha=0.85)
+            ax.set_xlim(float(ages.min()), float(ages.max()))
+            ax.set_ylim(0, 100)
+            ax.legend(fontsize=5.5, loc="center left", labelspacing=0.3,
+                      handlelength=1.2, frameon=True, framealpha=0.92,
+                      edgecolor="none")
+        ax.set_xlabel("Age")
+        ax.set_ylabel("Share of retirees (%)")
+        _title(ax, "The taper switches on as the portfolio runs down")
+
+        # -- 4. how much of retirement the state pays for ------------------
+        ax = axes[3]
+        if len(replacement):
+            share = replacement["pension_share_of_consumption"].to_numpy(
+                dtype=float) * 100.0
+            ax.bar(range(len(replacement)), share, color=_colour(3), width=0.6)
+            ax.set_xticks(np.arange(len(replacement)))
+            _strategy_ticks(ax, [PENSION_TICK.get(str(k), str(k))
+                                 for k in replacement["system"]], fontsize=5.5)
+        ax.set_ylabel("Public pension as a share of\nretirement consumption (%)")
+        _title(ax, "What the state is paying for")
+
+        fig.tight_layout()
+    return _save(fig, directory, name)
+
+
+def plot_turnover(measured: pd.DataFrame, curve: pd.DataFrame,
+                  strategies: Mapping[str, Any], spec: Any,
+                  directory: str | Path,
+                  name: str = "fig51_turnover") -> Path:
+    """What the schedules trade, and what trading costs them."""
+    with plt.rc_context(STYLE):
+        fig, axes = _grid(3, 3.0)
+
+        # -- 1. turnover by strategy, against the drift floor --------------
+        ax = axes[0]
+        order = measured.reset_index(drop=True)
+        idx = np.arange(len(order))
+        ax.bar(idx - 0.19, order["turnover_total"].to_numpy(dtype=float) * 100,
+               width=0.38, color=_colour(0), label="actually traded")
+        ax.bar(idx + 0.19,
+               order["turnover_drift_only"].to_numpy(dtype=float) * 100,
+               width=0.38, color=_colour(1), label="drift alone")
+        ax.set_xticks(idx)
+        _strategy_ticks(ax, [_abbr(v) for v in order["label"]])
+        ax.set_ylabel("One-way turnover a year (%)")
+        _title(ax, "Most trading is drift, not a change of plan")
+        ax.legend(fontsize=5.5, loc="upper right", labelspacing=0.3,
+                  handlelength=1.2, frameon=True, framealpha=0.92,
+                  edgecolor="none")
+
+        # -- 2. where in a life the trading happens ------------------------
+        ax = axes[1]
+        from src import turnover as _tn
+        for i, (key, strat) in enumerate(strategies.items()):
+            own = _tn.schedule_turnover(strat.weights) * 100.0
+            if own.max() <= 1e-9:
+                continue
+            ax.plot(spec.ages, own, color=_colour(i), linewidth=1.5,
+                    label=_abbr(strat.label))
+        ax.axvline(spec.age_retire, color="0.5", linewidth=1.0, linestyle=":")
+        ax.set_xlabel("Age")
+        ax.set_ylabel("Turnover the schedule demands (%)")
+        _title(ax, "The schedule's own trading, with returns switched off")
+        if ax.get_legend_handles_labels()[0]:
+            ax.legend(fontsize=5.5, loc="upper left", labelspacing=0.3,
+                      handlelength=1.4, frameon=True, framealpha=0.92,
+                      edgecolor="none")
+
+        # -- 3. the lead against the cost of trading -----------------------
+        ax = axes[2]
+        x = curve["basis_points"].to_numpy(dtype=float)
+        y = curve["gap_pct"].to_numpy(dtype=float)
+        ax.plot(x, y, marker=_marker(0), color=_colour(0), linewidth=1.8)
+        ax.axhline(0.0, color="black", linewidth=1.2)
+        ax.fill_between(x, 0.0, y, where=y > 0, color=_colour(0), alpha=0.10)
+        ax.fill_between(x, 0.0, y, where=y <= 0, color=_colour(2), alpha=0.10)
+        ax.set_xlabel("One-way trading cost (basis points)")
+        ax.set_ylabel("Solved schedule over the best\nfixed portfolio (%)")
+        survives = bool(y.size and y[-1] > 0)
+        _title(ax, "The solved schedule pays for its own trading"
+               if survives else "Trading costs eat the solved schedule's edge")
 
         fig.tight_layout()
     return _save(fig, directory, name)

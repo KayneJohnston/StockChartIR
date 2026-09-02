@@ -196,3 +196,92 @@ class TestExtensionGroups:
         for key in ("cohorts", "out_of_sample", "human_capital", "mortality"):
             assert key in content.SECTION_ORDER
             assert hasattr(content, f"section_{key}")
+
+
+class TestNewSectionsAreWiredIn:
+    """The two sections added to answer reviewer objections."""
+
+    def test_both_appear_in_the_reading_order(self) -> None:
+        assert "pension" in content.SECTION_ORDER
+        assert "turnover" in content.SECTION_ORDER
+
+    def test_pension_sits_with_the_robustness_studies(self) -> None:
+        """It relaxes a modelling assumption, so it belongs before the
+        portfolio movement rather than among the searches."""
+        order = list(content.SECTION_ORDER)
+        assert order.index("mortality") < order.index("pension")
+        assert order.index("pension") < order.index("glide")
+
+    def test_turnover_sits_with_the_other_audit(self) -> None:
+        """Costs and unseen data are the same question asked twice."""
+        order = list(content.SECTION_ORDER)
+        assert order.index("leverage") < order.index("turnover")
+        assert order.index("turnover") < order.index("out_of_sample")
+
+    def test_the_groups_still_partition_the_extensions(self) -> None:
+        covered = [k for _, members in content.EXTENSION_GROUPS
+                   for k in members]
+        assert sorted(covered) == sorted(content.EXTENSION_SECTIONS)
+        assert len(covered) == len(set(covered))
+
+    def test_the_counts_the_abstract_quotes_are_derived(self) -> None:
+        for name, members in content.EXTENSION_GROUPS:
+            assert content.group_count_word(name) == \
+                content.NUMBER_WORDS[len(members)]
+        assert content.extension_count_word() == \
+            content.NUMBER_WORDS[len(content.EXTENSION_SECTIONS)]
+
+
+class TestLimitationsIsNotStale:
+    """A Limitations section that contradicts the paper is worse than none.
+
+    Three bullets survived past the sections that answered them, which is the
+    single most damaging thing a careful reader can find. These pin the
+    wording so it cannot drift back.
+    """
+
+    @staticmethod
+    def _source() -> str:
+        import inspect
+        return inspect.getsource(content.section_limitations)
+
+    def test_does_not_claim_the_paper_omits_fees(self) -> None:
+        assert "<b>No fees.</b>" not in self._source()
+
+    def test_does_not_claim_mortality_is_deterministic(self) -> None:
+        assert "<b>Deterministic mortality.</b>" not in self._source()
+
+    def test_does_not_call_housing_the_single_largest_omission(self) -> None:
+        assert "single largest omission" not in self._source()
+
+    def test_names_the_sections_that_answer_each_omission(self) -> None:
+        source = self._source()
+        for key in ("#fees", "#mortality", "#housing", "#pension",
+                    "#cohorts", "#out_of_sample", "#turnover"):
+            assert key in source, f"limitations never mentions {key}"
+
+
+class TestPensionSectionIsDerived:
+    """No number in the pension section may be typed rather than computed.
+
+    The section quotes two replacement rates against each other, and the
+    comparison only means anything if both come out of the specs the sweep
+    actually ran. An earlier draft hardcoded one of them.
+    """
+
+    @staticmethod
+    def _source() -> str:
+        import inspect
+        return inspect.getsource(content.section_pension)
+
+    def test_no_hardcoded_replacement_rate(self) -> None:
+        source = self._source()
+        for literal in ("0.442", "44.2%", "0.293", "29.3%"):
+            assert literal not in source, \
+                f"{literal!r} is typed into the pension section"
+
+    def test_the_us_rate_is_evaluated_from_the_spec(self) -> None:
+        assert "social_security_benefit" in self._source()
+
+    def test_the_australian_rate_comes_from_the_config(self) -> None:
+        assert "pension_full_rate" in self._source()
