@@ -2954,6 +2954,104 @@ def plot_human_capital(curve: pd.DataFrame, ranking: pd.DataFrame,
     return _save(fig, directory, name)
 
 
+def plot_inflation_state(grid: pd.DataFrame, ordering: pd.DataFrame,
+                         advantage: pd.DataFrame, eq_optima: pd.DataFrame,
+                         dom_optima: pd.DataFrame, sweep: pd.DataFrame,
+                         eq_param: Mapping[str, float],
+                         dom_param: Mapping[str, float], column: str,
+                         directory: str | Path,
+                         name: str = "fig52_inflation_state") -> Path:
+    """What recent inflation predicts, and what it does to the portfolio."""
+    with plt.rc_context(STYLE):
+        fig, axes = _grid(4, 3.0)
+
+        # -- 1. the damage by asset and horizon ----------------------------
+        ax = axes[0]
+        assets = [a for a in ("bond", "bill", "dom_eq", "intl_eq")
+                  if a in set(grid["asset"])]
+        for i, asset in enumerate(assets):
+            block = grid[(grid["asset"] == asset)].groupby(
+                "horizon_years")["gap"].mean().sort_index()
+            ax.plot(block.index.to_numpy(dtype=float),
+                    block.to_numpy(dtype=float) * 100.0,
+                    marker=_marker(i), color=_colour(i), linewidth=1.6,
+                    markersize=3.5, label=_abbr(asset).replace("\n", " "))
+        ax.axhline(0.0, color="black", linewidth=1.0)
+        ax.set_xscale("log")
+        ax.set_xlabel("Years ahead")
+        ax.set_ylabel("High minus low inflation third\n(annualised real, pp)")
+        _title(ax, "Inflation is a short-horizon risk to nominal assets")
+        ax.legend(fontsize=5.5, loc="lower right", labelspacing=0.3,
+                  handlelength=1.4, frameon=True, framealpha=0.92,
+                  edgecolor="none")
+
+        # -- 2. the ordering at the headline horizon -----------------------
+        ax = axes[1]
+        if len(ordering):
+            y = ordering["gap"].to_numpy(dtype=float) * 100.0
+            colours = [_colour(2) if v < 0 else _colour(0) for v in y]
+            ax.barh(range(len(ordering)), y, color=colours, height=0.6)
+            ax.set_yticks(np.arange(len(ordering)))
+            ax.set_yticklabels([_abbr(a) for a in ordering["asset"]],
+                               fontsize=6.5)
+            ax.axvline(0.0, color="black", linewidth=1.0)
+        ax.set_xlabel("High minus low inflation third (pp a year)")
+        _title(ax, "What a high-inflation start costs, by asset")
+
+        # -- 3. the certainty-equivalent surface, bucket by bucket ---------
+        ax = axes[2]
+        buckets = list(dict.fromkeys(sweep["bucket"])) if len(sweep) else []
+        for i, bucket in enumerate(buckets):
+            block = sweep[(sweep["bucket"] == bucket)
+                          & (sweep["strategy"].isin(eq_param))].copy()
+            if not len(block):
+                continue
+            block["share"] = [eq_param[k] for k in block["strategy"]]
+            block = block.sort_values("share")
+            ax.plot(block["share"].to_numpy(dtype=float) * 100.0,
+                    block[column].to_numpy(dtype=float), marker=_marker(i),
+                    color=_colour(i), linewidth=1.5, markersize=3.0,
+                    label=_wrap(str(bucket), 16))
+        if len(eq_optima):
+            ax.scatter(eq_optima["optimal_equity_share"].to_numpy(dtype=float)
+                       * 100.0,
+                       eq_optima["cec_at_optimum"].to_numpy(dtype=float),
+                       s=42, facecolors="none", edgecolors="black",
+                       linewidths=1.1, zorder=5)
+        ax.set_xlabel("Equity share of the portfolio (%)")
+        ax.set_ylabel("Certainty equivalent consumption")
+        _title(ax, "How much equity each regime wants")
+        ax.legend(fontsize=5.5, loc="lower right", labelspacing=0.3,
+                  handlelength=1.4, frameon=True, framealpha=0.92,
+                  edgecolor="none")
+
+        # -- 4. the home/abroad axis, and the headline lead ----------------
+        ax = axes[3]
+        for i, bucket in enumerate(buckets):
+            block = sweep[(sweep["bucket"] == bucket)
+                          & (sweep["strategy"].isin(dom_param))].copy()
+            if not len(block):
+                continue
+            block["share"] = [dom_param[k] for k in block["strategy"]]
+            block = block.sort_values("share")
+            ax.plot(block["share"].to_numpy(dtype=float) * 100.0,
+                    block[column].to_numpy(dtype=float), marker=_marker(i),
+                    color=_colour(i), linewidth=1.5, markersize=3.0,
+                    label=_wrap(str(bucket), 16))
+        if len(dom_optima):
+            ax.scatter(dom_optima["optimal_domestic_share"].to_numpy(dtype=float)
+                       * 100.0,
+                       dom_optima["cec_at_optimum"].to_numpy(dtype=float),
+                       s=42, facecolors="none", edgecolors="black",
+                       linewidths=1.1, zorder=5)
+        ax.set_xlabel("Domestic share of the equity sleeve (%)")
+        ax.set_ylabel("Certainty equivalent consumption")
+        _title(ax, "And how much of it at home")
+
+        fig.tight_layout()
+    return _save(fig, directory, name)
+
+
 def plot_pension(gaps: pd.DataFrame, entitlement: pd.DataFrame,
                  replacement: pd.DataFrame, directory: str | Path,
                  name: str = "fig50_pension") -> Path:

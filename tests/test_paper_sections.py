@@ -285,3 +285,34 @@ class TestPensionSectionIsDerived:
 
     def test_the_australian_rate_comes_from_the_config(self) -> None:
         assert "pension_full_rate" in self._source()
+
+
+class TestInflationSectionIsWiredIn:
+    """The companion to the valuation study, and placed as one."""
+
+    def test_appears_in_the_reading_order(self) -> None:
+        assert "inflation" in content.SECTION_ORDER
+
+    def test_sits_beside_the_study_it_mirrors(self) -> None:
+        """Both condition a lifetime on a state variable observable at its
+        start, so they belong next to each other rather than pages apart."""
+        order = list(content.SECTION_ORDER)
+        assert order.index("inflation") == order.index("valuation") + 1
+
+    def test_is_counted_among_the_robustness_studies(self) -> None:
+        groups = dict(content.EXTENSION_GROUPS)
+        assert "inflation" in groups["robustness"]
+
+    def test_the_groups_still_partition_the_extensions(self) -> None:
+        covered = [k for _, members in content.EXTENSION_GROUPS
+                   for k in members]
+        assert sorted(covered) == sorted(content.EXTENSION_SECTIONS)
+        assert len(covered) == len(set(covered))
+
+    def test_no_hardcoded_correlation_or_gap(self) -> None:
+        """Every number in the section comes from the pipeline's own tables."""
+        import inspect
+        source = inspect.getsource(content.section_inflation)
+        for literal in ("0.58", "-5.19", "-2.32", "+3.54", "10%", "100%"):
+            assert f'"{literal}"' not in source, \
+                f"{literal!r} is typed into the inflation section"

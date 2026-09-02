@@ -8101,3 +8101,267 @@ paths, γ = {gamma:g}. Tables in
 `{cfg['run']['table_dir']}/turnover_*.csv`.
 """
     return _write(path, [intro, body])
+
+
+def write_doc_27(
+    path: str | Path,
+    cfg: Mapping[str, Any],
+    frames: Mapping[str, pd.DataFrame],
+    figures: Sequence[str],
+    notes: Mapping[str, Any],
+) -> Path:
+    """What recent inflation predicts, and what it does to the portfolio."""
+    ordering = frames["ordering"]
+    windows = frames["windows"]
+    advantage = frames["advantage"]
+    eq_optima = frames["optimal_equity"]
+    dom_optima = frames["optimal_domestic"]
+    predictive = frames["predictive"]
+    gamma = float(notes["gamma"])
+    window = int(notes["window"])
+    horizon = int(notes["horizon"])
+    found = notes["verdict"]
+    persist = notes["persistence"]
+    position = notes["position"]
+    eq_shift = notes["equity_shift"]
+    dom_shift = notes["domestic_shift"]
+    source_notes = notes["source_notes"]
+    meta = notes["bucket_meta"]
+    leak = notes["leak"]
+
+    order_tbl = md_table(_compact(
+        ordering, ["asset", "correlation", "forward_low_inflation",
+                   "forward_high_inflation", "gap"],
+        {"asset": "Asset", "correlation": "Rank correlation",
+         "forward_low_inflation": "After low inflation",
+         "forward_high_inflation": "After high inflation",
+         "gap": "Difference"}), floatfmt="{:.4f}")
+
+    win_tbl = md_table(_compact(
+        windows, ["window_years", "observations", "correlation", "pearson",
+                  "gap"],
+        {"window_years": "Lookback (years)", "observations": "Observations",
+         "correlation": "Rank correlation", "pearson": "Pearson",
+         "gap": "High minus low third"}), floatfmt="{:.4f}")
+
+    persist_tbl = md_table(_compact(
+        predictive[(predictive["asset"] == "inflation")
+                   & (predictive["window_years"] == window)],
+        ["horizon_years", "correlation", "forward_low_inflation",
+         "forward_high_inflation"],
+        {"horizon_years": "Years ahead", "correlation": "Rank correlation",
+         "forward_low_inflation": "After low inflation",
+         "forward_high_inflation": "After high inflation"}),
+        floatfmt="{:.4f}")
+
+    adv_tbl = md_table(_compact(
+        advantage, ["bucket", "n_paths", "advantage_pct", "challenger_ruin",
+                    "incumbent_ruin"],
+        {"bucket": "Starting inflation", "n_paths": "Lifetimes",
+         "advantage_pct": "All-equity over target-date (%)",
+         "challenger_ruin": "P(ruin), all-equity",
+         "incumbent_ruin": "P(ruin), target-date"}), floatfmt="{:.3f}")
+
+    eq_tbl = md_table(_compact(
+        eq_optima, ["bucket", "optimal_equity_share", "cec_at_optimum",
+                    "range_pct", "margin_over_runner_up_pct"],
+        {"bucket": "Starting inflation",
+         "optimal_equity_share": "Optimal equity share",
+         "cec_at_optimum": "CEC there", "range_pct": "Best over worst (%)",
+         "margin_over_runner_up_pct": "Margin over runner-up (%)"}),
+        floatfmt="{:.3f}")
+
+    dom_tbl = md_table(_compact(
+        dom_optima, ["bucket", "optimal_domestic_share", "cec_at_optimum",
+                     "range_pct", "margin_over_runner_up_pct"],
+        {"bucket": "Starting inflation",
+         "optimal_domestic_share": "Optimal domestic share of equity",
+         "cec_at_optimum": "CEC there", "range_pct": "Best over worst (%)",
+         "margin_over_runner_up_pct": "Margin over runner-up (%)"}),
+        floatfmt="{:.3f}")
+
+    if found["nominal_legs_hurt_more"]:
+        mechanism = (
+            f"**Inflation hurts the nominal legs and mostly spares equity.** "
+            f"Over the {horizon}-year horizon, a lifetime beginning in the "
+            f"high-inflation third earned {found['nominal_gap_pp']:+.2f} "
+            f"points a year less on bonds and bills than one beginning in the "
+            f"low third, against {found['equity_gap_pp']:+.2f} points on "
+            f"equity. The worst-affected asset is `{found['worst_asset']}`, "
+            f"the least affected `{found['best_asset']}`. That is the "
+            f"ordering the mechanism predicts: a fixed number of currency "
+            f"units is worth less when the currency is losing value, and a "
+            f"claim on repricing cash flows is not.")
+    else:
+        mechanism = (
+            f"**Inflation does not hurt the nominal legs more than equity.** "
+            f"Bonds and bills give up {found['nominal_gap_pp']:+.2f} points a "
+            f"year after a high-inflation start against "
+            f"{found['equity_gap_pp']:+.2f} for equity, which runs against "
+            f"the mechanism this section was built on and needs explaining "
+            f"rather than reporting.")
+
+    if eq_shift.get("moves") and eq_shift.get("identified"):
+        equity_line = (
+            f"**The optimal equity share moves from "
+            f"{eq_shift['optimal_equity_share_low']:.0%} after calm years to "
+            f"{eq_shift['optimal_equity_share_high']:.0%} after inflationary "
+            f"ones**, a shift of {eq_shift['shift'] * 100:+.0f} points.")
+    elif eq_shift.get("moves"):
+        equity_line = (
+            f"The optimal equity share reads "
+            f"{eq_shift['optimal_equity_share_low']:.0%} after calm years and "
+            f"{eq_shift['optimal_equity_share_high']:.0%} after inflationary "
+            f"ones, but the surface is too flat to call that a shift: the "
+            f"winner beats the runner-up by "
+            f"{eq_shift['smallest_margin_pct']:.3f}% in the tightest bucket.")
+    else:
+        equity_line = (
+            f"**The optimal equity share is the same in every inflation "
+            f"regime** — {eq_shift.get('optimal_equity_share_low', float('nan')):.0%}. "
+            f"Conditioning on inflation changes what an investor should "
+            f"expect, not what they should hold.")
+
+    if dom_shift.get("moves") and dom_shift.get("identified"):
+        domestic_line = (
+            f"**The optimal domestic share of equity moves from "
+            f"{dom_shift['optimal_domestic_share_low']:.0%} to "
+            f"{dom_shift['optimal_domestic_share_high']:.0%}**, "
+            f"{dom_shift['shift'] * 100:+.0f} points.")
+    elif dom_shift.get("moves"):
+        domestic_line = (
+            f"The optimal domestic share reads "
+            f"{dom_shift['optimal_domestic_share_low']:.0%} against "
+            f"{dom_shift['optimal_domestic_share_high']:.0%}, inside the "
+            f"grid's ability to resolve it.")
+    else:
+        domestic_line = (
+            f"**The optimal domestic share of equity does not move** — "
+            f"{dom_shift.get('optimal_domestic_share_low', float('nan')):.0%} "
+            f"in every regime.")
+
+    figure_list = "\n".join(f"* `{f}`" for f in figures)
+    intro = _header(
+        "27 - Recent Inflation as a State Variable",
+        "The companion to docs/15. What the price level has just done, and "
+        "what it says about what to hold.")
+
+    body = f"""
+## 1. The observable
+
+Inflation in year `t` is unknown until year `t` is over, so the quantity an
+investor observes on the first day of it is the annualised rate over the `k`
+years already finished:
+
+    pi(t, k) = (prod over j = 1..k of (1 + infl(t-j)))^(1/k) - 1
+
+built from rows `t-k` through `t-1` and nothing later. The headline uses
+`k = {window}`. The property is checked structurally rather than assumed:
+corrupting one year's inflation must leave every earlier row untouched, which
+a correlation test could never establish because a leak and an honest signal
+look identical in a correlation.
+
+Compounding rather than averaging matters at the rates in this panel. A
+country that ran 100% one year and 0% the next did not experience "50% a
+year"; it experienced 41.4%.
+
+**Every correlation below is a rank correlation.** The panel contains real
+hyperinflations -- Germany 1923 at 1.06e9, Japan 1945 at 976%, Italy 1944 at
+344%. Those are observations, not errors, and deleting them would remove
+exactly the episodes an inflation study exists to look at. But a Pearson
+correlation on a series containing a billion-per-cent observation describes
+that observation and nothing else: it reports -0.0004 for the persistence of
+inflation, a series whose rank correlation with its own recent past is
+{persist.get('short_correlation', float('nan')):.2f}. Pearson is carried in
+its own column as a diagnostic rather than suppressed.
+
+## 2. Does it predict anything?
+
+The mechanism first, because without it nothing else has a reason to work.
+
+{persist_tbl}
+
+{"Trailing inflation predicts future inflation strongly at short horizons and the link decays with distance, which is what a persistent-but-mean-reverting series looks like." if persist.get("persistent") else "Trailing inflation does not predict future inflation in this panel, which removes the mechanism the rest of this section depends on."}
+
+Then the returns, at the {horizon}-year horizon:
+
+{order_tbl}
+
+{mechanism}
+
+### Which lookback window
+
+{win_tbl}
+
+The headline uses {window} years. It is named in the config rather than
+chosen by search: with three candidates and one panel, picking the
+best-performing window and then reporting its performance would be a
+selection effect wearing a result.
+
+## 3. Conditioning a lifetime
+
+Lifetimes are bucketed into terciles of the trailing rate they began at, using
+boundaries computed from country-years strictly *before* each lifetime
+started. The rate itself is look-ahead-free, but a pooled tercile boundary
+would not be -- a lifetime beginning in 1910 would be called high-inflation
+against a threshold that already knew about the 1970s.
+
+{meta['classified']:,} lifetimes ({meta['classified_pct']:.1f}%) have enough
+prior history to be classified. Pooled boundaries would have reclassified
+{leak['reassigned']:,} of {leak['compared']:,} ({leak['agreement_pct']:.1f}%
+agreement), which is the size of the look-ahead the expanding boundaries
+remove.
+
+**Is it the country or the era?** Bucketing the same lifetimes by the
+leave-one-out average of every *other* market's inflation agrees with the
+domestic labelling on {source_notes['agreement_pct']:.1f}% of them, at a rank
+correlation of {source_notes['correlation']:.3f}. {"The two are close enough that this section is largely about inflationary periods rather than about one country's own price level." if source_notes['agreement_pct'] > 70 else "The two disagree often enough that a market's own inflation carries something the era does not."}
+
+{adv_tbl}
+
+## 4. The optimal portfolio
+
+Two grids, scored on the same lifetimes and the same buckets: how much equity,
+and how much of that equity at home.
+
+{eq_tbl}
+
+{equity_line}
+
+{dom_tbl}
+
+{domestic_line}
+
+## 5. What this changes
+
+* Trailing inflation is a **short-horizon** risk. At {horizon} year(s) the
+  nominal legs give up {found['nominal_gap_pp']:+.2f} points a year after a
+  high-inflation start; by thirty years the effect has decayed and in places
+  reversed. A sixty-eight-year lifetime spans both, which is why the
+  bucket-level certainty equivalents move far less than the one-year table
+  suggests they might.
+* {"The headline ranking survives in every inflation bucket." if found.get("ranking_survives") else "The headline ranking does not survive every inflation bucket, and the limitations section should say which."}
+* Where the panel ends: {position['iso']} in {position['year']} had trailing
+  {window}-year inflation of {position['trailing_inflation']:.2%}, the
+  {position['percentile']:.0f}th percentile of the panel's own distribution
+  (median {position['panel_median']:.2%}).
+* **What is not modelled**: inflation-linked bonds, which are the instrument
+  this section's mechanism most obviously calls for and which barely existed
+  over most of the panel; and any policy response to inflation, since the
+  spending rules here are nominal-blind by construction.
+
+## 6. Figures
+
+{figure_list}
+
+## 7. Reproduction
+
+```bash
+python main.py --steps 27
+```
+
+Runtime {float(notes['elapsed_seconds']):.0f}s at {int(notes['n_paths']):,}
+paths, γ = {gamma:g}. Tables in
+`{cfg['run']['table_dir']}/inflation_*.csv`.
+"""
+    return _write(path, [intro, body])

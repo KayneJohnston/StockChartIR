@@ -626,6 +626,40 @@ valuation:
   reference_country: USA
 
 
+# ---------------------------------------------------------------------
+# Step 27 - recent inflation as a state variable
+# ---------------------------------------------------------------------
+# The companion to step 15. Where that conditions a lifetime on how expensive
+# the market was when it opened, this conditions it on what the price level
+# has just done -- a quantity every investor observes, and one that bears
+# directly on the assets whose returns are fixed in nominal terms.
+inflation_state:
+  enabled: true
+  # Lookback windows in years. One is what a newspaper reports; three and five
+  # are what a central bank would call the recent trend.
+  windows: [1, 3, 5]
+  # The window the bucketing uses. Named rather than searched: picking the
+  # best-performing of three and then reporting its performance would be a
+  # selection effect wearing a result. `inflation_windows.csv` says what the
+  # other two would have given.
+  headline_window: 3
+  quantile_edges: [0.0, 0.3333333333333333, 0.6666666666666666, 1.0]
+  bucket_labels: ["Low inflation", "Moderate", "High inflation"]
+  # Horizons over which forward real returns are regressed on the trailing
+  # rate. One year is the shock; thirty is most of a retirement.
+  horizons: [1, 5, 10, 30]
+  # The horizon the asset-ordering table and the verdict read from.
+  headline_horizon: 1
+  reference_country: USA
+  # Grids for the two optimal-portfolio questions: how much equity, and how
+  # much of that equity at home.
+  equity_grid: [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+  domestic_grid: [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+  # Composition held fixed inside each sleeve while the equity share moves,
+  # matching the target-date fund's own splits.
+  equity_domestic_share: 0.5
+  fixed_income_bond_share: 0.7
+
 # ---------------------------------------------------------------------------
 # Step 16 -- housing as a fifth asset
 # ---------------------------------------------------------------------------

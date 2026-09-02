@@ -123,8 +123,9 @@ is the read-through; the table below is the build.
 | [`docs/24_mortality.md`](docs/24_mortality.md) | Replacing the certain ninety-third birthday with a Gompertz lifespan, by re-weighting the utility aggregation rather than re-simulating |
 | [`docs/25_pension_system.md`](docs/25_pension_system.md) | Swapping the US social-security schedule the whole panel silently assumes for Australia's means-tested Age Pension and Superannuation Guarantee -- with a control that separates the means test from the smaller cheque |
 | [`docs/26_turnover.md`](docs/26_turnover.md) | What the solved schedules cost to trade: turnover split into the drift no portfolio can avoid and the move the schedule chose, then priced |
+| [`docs/27_inflation_state.md`](docs/27_inflation_state.md) | Recent inflation as a state variable: what one, three and five years of it predict about forward real returns by asset class, and whether it moves the optimal portfolio |
 
-All twenty-six are **generated** by `main.py` from live pipeline objects --
+All twenty-seven are **generated** by `main.py` from live pipeline objects --
 edit `src/report.py`, not the Markdown.
 
 ## How much of this data is real
@@ -665,13 +666,14 @@ python main.py --steps 23           # labour income correlated with the market
 python main.py --steps 24           # death at a random age
 python main.py --steps 25           # the Australian Age Pension instead of the US one
 python main.py --steps 12 26        # what the solved schedule costs to trade
+python main.py --steps 27           # recent inflation as a state variable
 python main.py --config other.yaml  # a different parameterisation
 ```
 
 ## Layout
 
 ```
-├── docs/                 # generated analysis documents (26 files)
+├── docs/                 # generated analysis documents (27 files)
 ├── data/
 │   ├── raw/              # primary source files, unmodified
 │   ├── processed/        # standardised real return panels (.csv and .npz)

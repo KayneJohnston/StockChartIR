@@ -187,6 +187,30 @@ def front_matter(ctx: Any) -> List[Flowable]:
     oos_runs = int(oos_found["runs"])
     oos_forward = float(oos_found["forward_gain_pct"])
     oos_backward = float(oos_found["backward_gain_pct"])
+    from src import inflation as _ifl
+    inf_pred = f.table("inflation_predictive")
+    inf_window = int(f.cfg["inflation_state"].get("headline_window", 3))
+    inf_horizon = int(f.cfg["inflation_state"].get("headline_horizon", 1))
+    inf_labels = list(f.cfg["inflation_state"].get("bucket_labels",
+                                                   _ifl.BUCKET_LABELS))
+    inf_adv = f.table("inflation_advantage")
+    inf_eq = _ifl.optimum_shift(f.table("inflation_optimal_equity"),
+                                "equity_share", inf_labels)
+    inf_dom = _ifl.optimum_shift(f.table("inflation_optimal_domestic"),
+                                 "domestic_share", inf_labels)
+    inf_found = _ifl.verdict(inf_adv, inf_pred, inf_window, inf_horizon,
+                             inf_eq, inf_dom,
+                             _ifl.persistence(inf_pred, inf_window))
+    inf_nominal = float(inf_found["nominal_gap_pp"])
+    inf_equity = float(inf_found["equity_gap_pp"])
+    inf_holds = bool(inf_found.get("ranking_survives", False))
+    inf_moves = bool(inf_eq.get("moves") or inf_dom.get("moves"))
+    inf_long = sorted(int(h) for h in inf_pred["horizon_years"].unique())[-1]
+    _inf_bond_long = inf_pred[(inf_pred["asset"] == "bond")
+                              & (inf_pred["window_years"] == inf_window)
+                              & (inf_pred["horizon_years"] == inf_long)]
+    inf_bond_long = (float(_inf_bond_long["gap"].iloc[0]) * 100.0
+                     if len(_inf_bond_long) else float("nan"))
     from src import pension as _pns
     from src import turnover as _tno
     pen_gaps = f.table("pension_gap")
@@ -296,7 +320,22 @@ def front_matter(ctx: Any) -> List[Flowable]:
         f"{fee_be_bp:.0f} basis points to cancel the lead — beyond any "
         f"index-fund pair. Currency hedging the international leg loses "
         f"certainty-equivalent consumption at every ratio tested, even when "
-        f"the hedge is free. Correlating labour income with the home market — "
+        f"the hedge is free. Conditioning on what inflation has just done — a "
+        f"state variable an investor observes more reliably than a dividend "
+        f"yield, and one bearing directly on the legs whose payments are "
+        f"fixed in nominal terms — finds the mechanism exactly where theory "
+        f"puts it and then finds it does not survive a lifetime: a "
+        f"high-inflation start costs the bond and bill legs "
+        f"{inf_nominal:+.2f} points a year over the following "
+        + ("year" if inf_horizon == 1 else f"{inf_horizon} years")
+        + f", against {inf_equity:+.2f} for equity, but by "
+        f"{inf_long} years the bond effect has reversed to "
+        f"{inf_bond_long:+.2f} points, "
+        + ("and neither the headline ranking nor the optimal equity and "
+           "home-bias shares move across the inflation terciles"
+           if inf_holds and not inf_moves else
+           "and the terciles do move the answer")
+        + f". Correlating labour income with the home market — "
         f"the textbook reason to hold less of it, and assumed away everywhere "
         f"else — moves the lead {hc_change:+.2f} points across a correlation "
         f"range running past anything a labour economist would defend, "
@@ -499,6 +538,7 @@ SECTION_ORDER: Tuple[str, ...] = (
     "sleeve",
     "hedging",
     "valuation",
+    "inflation",
     "fees",
     "human_capital",
     "mortality",
@@ -548,7 +588,8 @@ EXTENSION_SECTIONS: Tuple[str, ...] = SECTION_ORDER[
 #: abstract announcing "four" and then describing five.
 EXTENSION_GROUPS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("robustness", ("cohorts", "panel", "sleeve", "hedging", "valuation",
-                    "fees", "human_capital", "mortality", "pension")),
+                    "inflation", "fees", "human_capital", "mortality",
+                    "pension")),
     ("portfolio", ("glide", "allocation", "leverage", "turnover",
                    "out_of_sample")),
     ("menu", ("housing", "mortgage")),
@@ -3127,6 +3168,332 @@ def _leverage_schedule_summary(schedule: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # Fees
 # ---------------------------------------------------------------------------
+def section_inflation(ctx: Any) -> List[Flowable]:
+    f = ctx.f
+    ordering = f.table("inflation_asset_ordering")
+    windows = f.table("inflation_windows")
+    advantage = f.table("inflation_advantage")
+    predictive = f.table("inflation_predictive")
+    eq_optima = f.table("inflation_optimal_equity")
+    dom_optima = f.table("inflation_optimal_domestic")
+
+    from src import inflation as ifl
+    cfg = f.cfg
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    icfg = cfg["inflation_state"]
+    window = int(icfg.get("headline_window", 3))
+    horizon = int(icfg.get("headline_horizon", 1))
+    labels = list(icfg.get("bucket_labels", ifl.BUCKET_LABELS))
+    persist = ifl.persistence(predictive, window)
+    eq_shift = ifl.optimum_shift(eq_optima, "equity_share", labels)
+    dom_shift = ifl.optimum_shift(dom_optima, "domestic_share", labels)
+    found = ifl.verdict(advantage, predictive, window, horizon, eq_shift,
+                        dom_shift, persist)
+    horizons = sorted(int(h) for h in predictive["horizon_years"].unique())
+    longest = horizons[-1] if horizons else horizon
+
+    def _span(h: int) -> str:
+        """`the following year`, or `the following N years`, for prose."""
+        return ("the following year" if int(h) == 1
+                else f"the following {int(h)} years")
+
+    def _gap(asset: str, h: int) -> float:
+        block = predictive[(predictive["asset"] == asset)
+                           & (predictive["window_years"] == window)
+                           & (predictive["horizon_years"] == int(h))]
+        return float(block["gap"].iloc[0]) * 100.0 if len(block) else float("nan")
+
+    out: List[Flowable] = [
+        ctx.h1("#inflation. What Inflation Has Just Done")]
+    out.append(ctx.p(
+        "Section #valuation conditions a lifetime on how expensive the market "
+        "was when it opened. This section conditions it on something an "
+        "investor knows better than the dividend yield and reads about every "
+        "month: what the price level has just done."))
+    out.append(ctx.p(
+        "The two questions are not the same, and the second has a sharper "
+        "mechanism behind it. A dividend yield is a claim about expected "
+        "returns that has to be argued for. Trailing inflation is a fact "
+        "about the price level, and every return in this paper is already "
+        "deflated by it — so the channel is direct. A nominal bond promises a "
+        "fixed number of currency units; if inflation is high and persistent "
+        "that promise is worth less in real terms, and the asset whose real "
+        "return inflation eats is the one this paper’s rivals hold most of. "
+        "Equity is a claim on cash flows that reprice, which is a partial "
+        "hedge over a long horizon and a famously poor one over a short."))
+    out.append(ctx.p(
+        "That gives this section something Section #valuation lacked: a "
+        "reason to expect the <i>allocation</i> to move rather than only the "
+        "level. A valuation is a statement about every asset at once. "
+        "Inflation is not — it falls hardest on the legs whose payments are "
+        "fixed in the currency that is losing value, and it is a domestic "
+        "phenomenon, which gives the foreign leg a claim to be a hedge "
+        "against it. Whether either effect is large enough to move an "
+        "optimum is the question."))
+
+    out.append(ctx.h2("#inflation.1 The observable, and the constraint"))
+    out.append(ctx.p(
+        f"Inflation in year <i>t</i> is unknown until year <i>t</i> is over, "
+        f"so the quantity an investor observes on its first day is the "
+        f"annualised rate over the <i>k</i> years already finished — built "
+        f"from rows <i>t−k</i> through <i>t−1</i> and nothing later. The "
+        f"headline uses <i>k</i> = {window}. The property is checked "
+        f"structurally rather than assumed: corrupting one year’s inflation "
+        f"must leave every earlier row untouched. A correlation test could "
+        f"not establish it, because a leak and an honest signal look "
+        f"identical in a correlation."))
+    out.append(ctx.note(
+        f"Every correlation in this section is a <b>rank</b> correlation, and "
+        f"that is not a stylistic preference. The panel contains real "
+        f"hyperinflations — Germany 1923 at 1.06 × 10⁹, Japan 1945 at 976%, "
+        f"Italy 1944 at 344%. They are observations, not errors, and deleting "
+        f"them would remove exactly the episodes an inflation study exists to "
+        f"look at. But a Pearson correlation on a series containing a "
+        f"billion-per-cent observation describes that observation and nothing "
+        f"else: it reports −0.0004 for the persistence of inflation, a series "
+        f"whose rank correlation with its own recent past is "
+        f"{persist.get('short_correlation', float('nan')):.2f}. The Pearson "
+        f"figure is carried in its own column rather than suppressed."))
+
+    out.append(ctx.h2("#inflation.2 Does it predict anything?"))
+    out.append(ctx.p(
+        "The mechanism first, because without it nothing downstream has a "
+        "reason to work. Trailing inflation can only predict returns if it "
+        "predicts inflation."))
+    persist_rows = predictive[(predictive["asset"] == "inflation")
+                              & (predictive["window_years"] == window)]
+    out.extend(ctx.table(
+        [["Years ahead", "Rank correlation", "After low inflation",
+          "After high inflation"]]
+        + [[f"{int(r['horizon_years'])}", f"{float(r['correlation']):.3f}",
+            f"{float(r['forward_low_inflation']):.2%}",
+            f"{float(r['forward_high_inflation']):.2%}"]
+           for _, r in persist_rows.sort_values("horizon_years").iterrows()],
+        f"Trailing {window}-year inflation against the inflation that "
+        f"followed it."))
+    out.append(ctx.p(
+        (f"<b>Inflation is persistent, and the persistence decays.</b> The "
+         f"rank correlation with next year is "
+         f"{persist['short_correlation']:.2f} and with the "
+         f"{persist['long_horizon']}-year average "
+         f"{persist['long_correlation']:.2f}. That shape — strong at short "
+         f"range, weak at long — is what sets the boundary on everything "
+         f"below, and it is the reason a sixty-eight-year lifetime turns out "
+         f"to be a poor place to look for an inflation effect."
+         if persist.get("persistent") else
+         "<b>Trailing inflation does not predict future inflation in this "
+         "panel</b>, which removes the mechanism the rest of this section "
+         "depends on and makes any predictive power below a coincidence "
+         "needing an explanation.")))
+
+    out.extend(ctx.table(
+        [["Asset", "Rank correlation", "After low inflation",
+          "After high inflation", "Difference"]]
+        + [[_abbrev_asset(str(r["asset"])), f"{float(r['correlation']):.3f}",
+            f"{float(r['forward_low_inflation']):.2%}",
+            f"{float(r['forward_high_inflation']):.2%}",
+            f"{float(r['gap']) * 100:+.2f} pp"]
+           for _, r in ordering.iterrows()],
+        f"Annualised real returns over the {horizon} year(s) after a "
+        f"lifetime’s start, by the trailing {window}-year inflation it began "
+        f"at.",
+        note="Sorted worst-affected first. A negative difference means the "
+             "high-inflation third was followed by poorer real returns."))
+    out.append(ctx.p(
+        (f"<b>Inflation hurts the nominal legs and largely spares equity.</b> "
+         f"Over {_span(horizon)} the bond and bill legs give up "
+         f"{found['nominal_gap_pp']:+.2f} points a year after a "
+         f"high-inflation start, against {found['equity_gap_pp']:+.2f} points "
+         f"for equity. That is the ordering the mechanism predicts: a fixed "
+         f"number of currency units is worth less when the currency is losing "
+         f"value, and a claim on repricing cash flows is not."
+         if found["nominal_legs_hurt_more"] else
+         f"<b>Inflation does not fall hardest on the nominal legs.</b> Bonds "
+         f"and bills give up {found['nominal_gap_pp']:+.2f} points a year "
+         f"after a high-inflation start against "
+         f"{found['equity_gap_pp']:+.2f} for equity, which runs against the "
+         f"mechanism this section was built on.")))
+    out.append(ctx.p(
+        f"<b>But the effect is a short-horizon one, and it does not survive a "
+        f"lifetime.</b> The same comparison run over "
+        f"{longest} years gives {_gap('bond', longest):+.2f} points on bonds "
+        f"and {_gap('dom_eq', longest):+.2f} on domestic equity — the damage "
+        f"has decayed and in places reversed, because a long window beginning "
+        f"in a high-inflation year captures the disinflation that followed "
+        f"it. Inflation is a risk to the portfolio a retiree is holding now, "
+        f"not to the one a twenty-five-year-old is starting. Everything in "
+        f"the rest of this section should be read against that."))
+
+    out.append(ctx.h2("#inflation.3 Which lookback window"))
+    out.extend(ctx.table(
+        [["Lookback (years)", "Observations", "Rank correlation", "Pearson",
+          "High minus low third"]]
+        + [[f"{int(r['window_years'])}", f"{int(r['observations']):,}",
+            f"{float(r['correlation']):.3f}", f"{float(r['pearson']):.4f}",
+            f"{float(r['gap']) * 100:+.2f} pp"]
+           for _, r in windows.iterrows()],
+        "One, three and five years of trailing inflation, against the same "
+        "forward domestic equity returns.",
+        note="The Pearson column is the hyperinflation problem made visible: "
+             "it is near zero at every window on a relationship the rank "
+             "statistic finds without difficulty."))
+    out.append(ctx.p(
+        f"The headline uses {window} years, named in the configuration rather "
+        f"than chosen by search. With three candidates and one panel, picking "
+        f"the best-performing window and then reporting its performance would "
+        f"be a selection effect wearing a result; the table above is here so "
+        f"a reader can see what the other two would have given."))
+
+    out.append(ctx.h2("#inflation.4 Conditioning a lifetime"))
+    out.append(ctx.p(
+        "Lifetimes are bucketed into terciles of the trailing rate they began "
+        "at, against boundaries computed from country-years strictly before "
+        "each lifetime started — the same discipline as Section #valuation, "
+        "and for the same reason. The rate itself is look-ahead-free, but a "
+        "pooled tercile boundary would not be: a lifetime beginning in 1910 "
+        "would be called high-inflation against a threshold that already knew "
+        "about the 1970s."))
+    out.extend(ctx.table(
+        [["Starting inflation", "Lifetimes",
+          "All-equity over target-date (%)", "P(ruin), all-equity",
+          "P(ruin), target-date"]]
+        + [[str(r["bucket"]), f"{int(r['n_paths']):,}",
+            f"{float(r['advantage_pct']):+.2f}",
+            f"{float(r['challenger_ruin']):.1%}",
+            f"{float(r['incumbent_ruin']):.1%}"]
+           for _, r in advantage.iterrows()],
+        f"The headline comparison inside each inflation tercile, γ = {gamma:g}."))
+    out.append(ctx.p(
+        (f"<b>The ranking survives every inflation regime.</b> The lead runs "
+         f"from {found['lead_low_pct']:.2f}% after calm years to "
+         f"{found['lead_high_pct']:.2f}% after inflationary ones, a spread of "
+         f"{found['lead_spread_pp']:.2f} points, and never changes sign. "
+         f"Starting inflation moves what an investor should expect; it does "
+         f"not move which of these two they should hold."
+         if found.get("ranking_survives") else
+         f"<b>The ranking does not survive every inflation regime.</b> The "
+         f"lead runs from {found['lead_low_pct']:.2f}% to "
+         f"{found['lead_high_pct']:.2f}% and changes sign, which means the "
+         f"headline carries a dependence on the inflation a lifetime began "
+         f"at.")))
+
+    out.append(ctx.h2("#inflation.5 The optimal portfolio"))
+    out.append(ctx.p(
+        "Comparing two fixed portfolios answers a narrower question than the "
+        "section set out to ask. Two grids are therefore scored on the same "
+        "lifetimes and the same buckets — how much equity to hold, and how "
+        "much of that equity to hold at home — and the certainty-equivalent "
+        "maximum is read off within each regime. The composition inside each "
+        "sleeve is held fixed while the parameter moves, so the argmax means "
+        "what it appears to mean."))
+    out.extend(ctx.table(
+        [["Starting inflation", "Optimal equity share", "CEC there",
+          "Best over worst (%)", "Margin over runner-up (%)"]]
+        + [[str(r["bucket"]), f"{float(r['optimal_equity_share']):.0%}",
+            f"{float(r['cec_at_optimum']):.4f}",
+            f"{float(r['range_pct']):+.1f}",
+            f"{float(r['margin_over_runner_up_pct']):.3f}"]
+           for _, r in eq_optima.iterrows()],
+        "The equity share that maximises certainty-equivalent consumption in "
+        "each inflation regime.",
+        note="The margin column is the honesty check: a winner that beats the "
+             "runner-up by a rounding error has not identified an optimum, "
+             "and a shift between buckets is only a finding if the grid can "
+             "resolve it."))
+    out.extend(ctx.table(
+        [["Starting inflation", "Optimal domestic share of equity",
+          "CEC there", "Best over worst (%)", "Margin over runner-up (%)"]]
+        + [[str(r["bucket"]), f"{float(r['optimal_domestic_share']):.0%}",
+            f"{float(r['cec_at_optimum']):.4f}",
+            f"{float(r['range_pct']):+.1f}",
+            f"{float(r['margin_over_runner_up_pct']):.3f}"]
+           for _, r in dom_optima.iterrows()],
+        "And how much of that equity belongs at home."))
+    if bool(eq_optima["at_grid_edge"].all()) if len(eq_optima) else False:
+        out.append(ctx.note(
+            f"The equity optimum sits on the boundary of its grid in every "
+            f"regime — the search wanted "
+            f"{float(eq_optima['optimal_equity_share'].max()):.0%} equity and "
+            f"was not allowed more. That is a limit of the grid rather than "
+            f"an interior solution, and it is consistent with Section "
+            f"#leverage, which finds borrowing to buy more equity worth "
+            f"{f.leverage['value_at_zero_spread']:+.2f}% when credit is free. "
+            f"What matters here is that the boundary is the same boundary in "
+            f"all three regimes: inflation does not move it."))
+    out.append(ctx.p(
+        (f"<b>Neither optimum moves.</b> The equity share that maximises the "
+         f"certainty equivalent is "
+         f"{eq_shift.get('optimal_equity_share_low', float('nan')):.0%} in "
+         f"every regime, and the domestic share is "
+         f"{dom_shift.get('optimal_domestic_share_low', float('nan')):.0%} in "
+         f"every regime. Recent inflation changes what a lifetime is worth "
+         f"and does not change what it should hold — the same answer Section "
+         f"#valuation reached about starting valuation, arrived at through a "
+         f"variable with a much more direct mechanism."
+         if not eq_shift.get("moves") and not dom_shift.get("moves") else
+         f"The optimal equity share reads "
+         f"{eq_shift.get('optimal_equity_share_low', float('nan')):.0%} after "
+         f"calm years against "
+         f"{eq_shift.get('optimal_equity_share_high', float('nan')):.0%} "
+         f"after inflationary ones, and the domestic share "
+         f"{dom_shift.get('optimal_domestic_share_low', float('nan')):.0%} "
+         f"against "
+         f"{dom_shift.get('optimal_domestic_share_high', float('nan')):.0%}. "
+         + ("Both shifts clear the grid's resolution."
+            if eq_shift.get("identified") and dom_shift.get("identified")
+            else "At least one of those shifts is inside the grid's "
+                 "resolution and should not be read as a result: the "
+                 "certainty-equivalent surface is nearly flat near its "
+                 "maximum, which the margin columns above make visible."))))
+
+    out.extend(ctx.figure(
+        "fig52_inflation_state",
+        "Top left: how far a high-inflation start sets each asset back, by "
+        "horizon — the effect is large at one year and gone by thirty. Top "
+        "right: the same comparison at the headline horizon, by asset. Bottom "
+        "left: certainty-equivalent consumption against the equity share, one "
+        "curve per inflation regime, with the maximum circled. Bottom right: "
+        "the same against the domestic share of the equity sleeve."))
+
+    out.append(ctx.h2("#inflation.6 What this changes"))
+    out.extend(ctx.bullets([
+        (f"<b>Inflation is a short-horizon risk to nominal assets and a "
+         f"long-horizon non-event.</b> Over {_span(horizon)} it costs the "
+         f"bond leg {_gap('bond', horizon):+.2f} points a year; over "
+         f"{_span(longest)} it is worth {_gap('bond', longest):+.2f}. A "
+         f"lifecycle study is the wrong "
+         f"instrument for measuring it, and that is a finding about the "
+         f"instrument as much as about inflation."),
+        (f"The headline ranking is unaffected: the lead spans "
+         f"{found.get('lead_spread_pp', float('nan')):.2f} points across the "
+         f"terciles without changing sign."
+         if found.get("ranking_survives") else
+         "The headline ranking is affected, and the limitations section "
+         "should carry it."),
+        ("The optimal portfolio is unaffected on both axes tested. Where "
+         "Section #valuation could be accused of testing a weak signal, this "
+         "section tests a strong one with a direct mechanism and reaches the "
+         "same conclusion, which makes the pair of them better evidence than "
+         "either alone."
+         if not eq_shift.get("moves") and not dom_shift.get("moves") else
+         "The optimal portfolio does move, and the size of the move against "
+         "the grid's resolution is reported above rather than asserted."),
+        "<b>What is not modelled</b>: inflation-linked bonds, which are the "
+        "instrument this section's mechanism most obviously calls for and "
+        "which did not exist over most of the panel; and any policy response "
+        "to inflation, since the withdrawal rules here are nominal-blind by "
+        "construction. Both would raise the value of conditioning on "
+        "inflation rather than lower it, so the null above is a floor.",
+    ]))
+    return out
+
+
+def _abbrev_asset(key: str) -> str:
+    """A readable asset name for a table column."""
+    from src import plots
+    return plots.SERIES_ABBR.get(key, key).replace("\n", " ")
+
+
 def section_fees(ctx: Any) -> List[Flowable]:
     f = ctx.f
     common = f.table("fee_common_curve")
@@ -7873,6 +8240,7 @@ def story(ctx: Any) -> List[Flowable]:
     parts += section_sleeve(ctx)
     parts += section_hedging(ctx)
     parts += section_valuation(ctx)
+    parts += section_inflation(ctx)
     parts += section_fees(ctx)
     parts += section_human_capital(ctx)
     parts += section_mortality(ctx)

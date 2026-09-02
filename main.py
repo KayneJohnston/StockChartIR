@@ -31,6 +31,7 @@ from src import fees as fee
 from src import glidepath as gp
 from src import hedging as hg
 from src import housing as hsg
+from src import inflation as inf
 from src import leverage as lev
 from src import humancapital as hc
 from src import lifecycle as lc
@@ -161,6 +162,11 @@ def _apply_quick(cfg: Dict[str, Any]) -> Dict[str, Any]:
     if "turnover" in cfg:
         cfg["turnover"]["n_paths"] = 2000
         cfg["turnover"]["cost_grid"] = [0.0, 0.0025, 0.0100]
+    if "inflation_state" in cfg:
+        cfg["inflation_state"]["equity_grid"] = [0.0, 0.5, 1.0]
+        cfg["inflation_state"]["domestic_grid"] = [0.0, 0.5, 1.0]
+        cfg["inflation_state"]["windows"] = [1, 3]
+        cfg["inflation_state"]["horizons"] = [1, 10]
     if "mortality" in cfg:
         cfg["mortality"]["n_paths"] = 4000
     LOGGER.warning("quick mode: n_paths reduced to %s",
@@ -3000,6 +3006,178 @@ def step26_turnover(cfg: Dict[str, Any],
     return state
 
 
+# ---------------------------------------------------------------------------
+# Step 27
+# ---------------------------------------------------------------------------
+def step27_inflation(cfg: Dict[str, Any],
+                     state: Dict[str, Any]) -> Dict[str, Any]:
+    """Condition the headline on what inflation has just done; write docs/27."""
+    inf_cfg = cfg.get("inflation_state", {})
+    if not inf_cfg.get("enabled", False):
+        LOGGER.info("inflation-state study disabled; skipping step 27")
+        return state
+    LOGGER.info("=== STEP 27: recent inflation as a state variable ===")
+    started = time.perf_counter()
+
+    panel = state.get("panel") or dl.build_panel(cfg)
+    spec = state.get("spec") or lc.spec_from_config(cfg)
+    sampler = state.get("sampler") or bs.from_config(panel, cfg)
+    n_paths = int(cfg["bootstrap"]["n_paths"])
+    chunk_size = int(cfg["bootstrap"]["chunk_size"])
+    window = int(inf_cfg.get("headline_window", 3))
+    horizon = int(inf_cfg.get("headline_horizon", 1))
+    windows = [int(w) for w in inf_cfg.get("windows", inf.DEFAULT_WINDOWS)]
+    horizons = [int(h) for h in inf_cfg.get("horizons", (1, 5, 10, 30))]
+    labels = list(inf_cfg.get("bucket_labels", inf.BUCKET_LABELS))
+    edges = [float(e) for e in inf_cfg.get("quantile_edges", vln.DEFAULT_EDGES)]
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    column = f"cec_crra_gamma{gamma:g}"
+
+    trailing = inf.trailing_inflation(panel.inflation, window)
+
+    # The property the whole step rests on, checked rather than claimed, at
+    # probe years spread across the panel so a leak confined to one era would
+    # still be caught.
+    probes = [int(i) for i in np.linspace(window + 1, panel.n_years - 2, 6)]
+    leak_free = all(inf.depends_only_on_past(panel.inflation, window, i)
+                    for i in probes)
+    if not leak_free:
+        raise RuntimeError(
+            "the trailing-inflation state reaches forward in time; "
+            "conditioning on it would build look-ahead into this step")
+    LOGGER.info("no-look-ahead check passed at %d probe years", len(probes))
+
+    grid = inf.predictive_grid(panel, windows, horizons=horizons)
+    ordering = inf.asset_ordering(grid, window, horizon)
+    choice = inf.window_choice(grid, "dom_eq", max(horizons))
+    persist = inf.persistence(grid, window)
+    LOGGER.info("inflation persistence: rank correlation %.3f at %dy, "
+                "%.3f at %dy", persist.get("short_correlation", float("nan")),
+                persist.get("short_horizon", 0),
+                persist.get("long_correlation", float("nan")),
+                persist.get("long_horizon", 0))
+
+    results = state.get("results")
+    if results is None:
+        state = step3_lifecycle(cfg, state)
+        results = state["results"]
+
+    world = inf.global_inflation(trailing)
+    starts: List[np.ndarray] = []
+    world_starts: List[np.ndarray] = []
+    start_years: List[np.ndarray] = []
+    for chunk in sampler.chunks(n_paths, chunk_size):
+        starts.append(inf.path_starting_inflation(chunk, trailing))
+        world_starts.append(inf.path_starting_inflation(chunk, world))
+        start_years.append(inf.path_start_cells(chunk)[0])
+    starting = np.concatenate(starts)
+    start_year = np.concatenate(start_years)
+
+    # Boundaries from history that had already happened, exactly as in step
+    # 15: the trailing rate is look-ahead-free but a pooled tercile boundary
+    # would not be, and the pooled labelling is kept only to price that.
+    hindsight_index, _ = inf.bucket_paths(starting, edges, labels)
+    cuts, _ = inf.expanding_cuts(
+        trailing, edges, int(inf_cfg.get("min_history", inf.MIN_HISTORY)))
+    index, meta = inf.expanding_bucket_paths(starting, start_year, cuts, labels)
+    leak = inf.bucket_agreement(hindsight_index, index)
+    LOGGER.info("implementable buckets: %s (%.1f%% classified); pooled "
+                "boundaries would have reclassified %d of %d",
+                dict(zip(labels, meta["counts"])), meta["classified_pct"],
+                leak["reassigned"], leak["compared"])
+    if meta["classified"] < 1000:
+        raise RuntimeError(
+            "fewer than 1,000 lifetimes have enough prior history to be "
+            "classified against boundaries their own investor could have "
+            "known; the conditioning below would be estimated on noise")
+
+    source, source_notes = inf.source_comparison(
+        trailing, starting, np.concatenate(world_starts), edges, labels)
+    LOGGER.info("source check: a market's own inflation and the rest of the "
+                "world's agree on %.1f%% of lifetimes (rank correlation %.3f)",
+                source_notes["agreement_pct"], source_notes["correlation"])
+
+    n_outcomes = int(next(iter(results.values())).ruin.shape[0])
+    if index.size != n_outcomes:
+        raise RuntimeError(
+            f"inflation buckets cover {index.size} paths but the lifecycle "
+            f"results hold {n_outcomes}; the two came from different samplers")
+
+    buckets = inf.by_bucket(results, index, labels, cfg, spec)
+    advantage = inf.advantage_by_bucket(
+        buckets, "balanced_all_equity", "target_date_fund", column)
+
+    # The optimal-portfolio question, asked twice: how much equity, and how
+    # much of it at home. Both grids are scored on the same paths and the same
+    # buckets as everything above.
+    eq_strats, eq_param = inf.equity_share_strategies(
+        spec, [float(x) for x in inf_cfg.get("equity_grid",
+                                             inf.DEFAULT_EQUITY_GRID)],
+        float(inf_cfg.get("equity_domestic_share", 0.5)),
+        float(inf_cfg.get("fixed_income_bond_share", 0.7)))
+    dom_strats, dom_param = inf.domestic_share_strategies(
+        spec, [float(x) for x in inf_cfg.get("domestic_grid",
+                                             inf.DEFAULT_DOMESTIC_GRID)])
+    swept = {**eq_strats, **dom_strats}
+    LOGGER.info("scoring %d swept portfolios for the per-bucket optimum",
+                len(swept))
+    sweep_results = lc.run_chunked(bs.from_config(panel, cfg), swept, spec,
+                                   n_paths, chunk_size,
+                                   income_seed=int(cfg["run"]["seed"]))
+    sweep_buckets = inf.by_bucket(sweep_results, index, labels, cfg, spec)
+    eq_optima = inf.optimum_by_bucket(sweep_buckets, eq_param, column,
+                                      "equity_share")
+    dom_optima = inf.optimum_by_bucket(sweep_buckets, dom_param, column,
+                                       "domestic_share")
+    eq_shift = inf.optimum_shift(eq_optima, "equity_share", labels)
+    dom_shift = inf.optimum_shift(dom_optima, "domestic_share", labels)
+    LOGGER.info("optimal equity share %.0f%% -> %.0f%% from calm to hot; "
+                "domestic share %.0f%% -> %.0f%%",
+                eq_shift.get("optimal_equity_share_low", float("nan")) * 100,
+                eq_shift.get("optimal_equity_share_high", float("nan")) * 100,
+                dom_shift.get("optimal_domestic_share_low", float("nan")) * 100,
+                dom_shift.get("optimal_domestic_share_high", float("nan")) * 100)
+
+    position = inf.current_position(
+        trailing, panel.years, panel.countries,
+        str(inf_cfg.get("reference_country", "USA")))
+    findings = inf.verdict(advantage, grid, window, horizon, eq_shift,
+                           dom_shift, persist)
+
+    tables = cfg["run"]["table_dir"]
+    for frame, name in ((grid, "inflation_predictive"),
+                        (ordering, "inflation_asset_ordering"),
+                        (choice, "inflation_windows"),
+                        (buckets, "inflation_buckets"),
+                        (advantage, "inflation_advantage"),
+                        (source, "inflation_source_check"),
+                        (sweep_buckets, "inflation_sweep"),
+                        (eq_optima, "inflation_optimal_equity"),
+                        (dom_optima, "inflation_optimal_domestic")):
+        _save_table(frame, tables, name)
+
+    figures = [str(plots.plot_inflation_state(
+        grid, ordering, advantage, eq_optima, dom_optima, sweep_buckets,
+        eq_param, dom_param, column, cfg["run"]["figure_dir"]))]
+
+    elapsed = time.perf_counter() - started
+    rp.write_doc_27(
+        Path("docs") / "27_inflation_state.md", cfg,
+        {"predictive": grid, "ordering": ordering, "windows": choice,
+         "buckets": buckets, "advantage": advantage, "source": source,
+         "optimal_equity": eq_optima, "optimal_domestic": dom_optima},
+        figures,
+        {"elapsed_seconds": elapsed, "gamma": gamma, "n_paths": n_paths,
+         "window": window, "horizon": horizon, "labels": labels,
+         "bucket_meta": meta, "leak": leak, "source_notes": source_notes,
+         "persistence": persist, "position": position,
+         "equity_shift": eq_shift, "domestic_shift": dom_shift,
+         "verdict": findings})
+    LOGGER.info("docs/27 written (%.0fs)", elapsed)
+    state["inflation_advantage"] = advantage
+    return state
+
+
 STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
          4: step4_report, 5: step5_sensitivity, 6: step6_spending,
          7: step7_glide_path, 8: step8_hedging, 9: step9_retirement_timing,
@@ -3011,11 +3189,11 @@ STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
          20: step20_fees, 21: step21_cohorts,
          22: step22_out_of_sample, 23: step23_human_capital,
          24: step24_mortality, 25: step25_pension,
-         26: step26_turnover}
+         26: step26_turnover, 27: step27_inflation}
 
 
 def run(config_path: str = "config.yaml",
-        steps: Sequence[int] = tuple(range(1, 27)),
+        steps: Sequence[int] = tuple(range(1, 28)),
         quick: bool = False) -> Dict[str, Any]:
     """Execute the pipeline and return the accumulated state."""
     cfg = dl.load_config(config_path)
@@ -3045,8 +3223,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--steps", nargs="+", type=int,
-                        default=list(range(1, 27)),
-                        choices=list(range(1, 27)))
+                        default=list(range(1, 28)),
+                        choices=list(range(1, 28)))
     parser.add_argument("--quick", action="store_true",
                         help="small N for smoke tests")
     parser.add_argument("--verbose", action="store_true")
