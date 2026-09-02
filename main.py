@@ -1724,7 +1724,8 @@ def step12_allocation(cfg: Dict[str, Any],
         {"schedules": schedules, "phases": phases,
          "convergence": convergence, "deviation": deviation,
          "comparison": comparison, "restarts": restarts},
-        figures, {"elapsed_seconds": elapsed, "n_paths": n_paths})
+        figures, {"elapsed_seconds": elapsed, "n_paths": n_paths,
+                  "n_countries": state["panel"].n_countries})
     LOGGER.info("docs/12 written (%.0fs)", elapsed)
     state.update({"allocation_schedules": schedules,
                   "allocation_solved": solved})

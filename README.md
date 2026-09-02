@@ -766,6 +766,13 @@ difference between two settings is the parameter's effect rather than Monte
 Carlo noise. Preference sweeps re-evaluate cached consumption paths instead of
 re-simulating, since γ, ψ and the bequest weight enter only the aggregator.
 
+**Every figure is drawn at the width it is printed at** — 6.4 inches, the
+paper's text column. A figure authored twice that wide arrives on the page
+shrunk by half and takes its 8 pt tick labels down to 4 pt with it, which is
+how the labels became unreadable in the first place. A row of three or four
+panels therefore wraps into a grid rather than running off the column, and
+`tests/test_plots.py` fails if any figure sets its own width.
+
 ---
 
 ### Repository note

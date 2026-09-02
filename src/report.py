@@ -11,7 +11,7 @@ from __future__ import annotations
 import datetime as _dt
 import textwrap
 from pathlib import Path
-from typing import Any, Dict, Iterable, Mapping, Sequence
+from typing import Any, Dict, Iterable, List, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -1251,9 +1251,8 @@ The ranking is stable across the `per_block` country draw and uniform country
 weighting.
 
 There is no panel variant to report here. Every country in the panel carries
-recorded equity, bond and bill returns, so there is no second panel to compare
-against and there
-is nothing to hold it against. `14_data_provenance.md` records what the removal
+recorded equity, bond and bill returns, so there is no second panel to hold it
+against. `14_data_provenance.md` records what dropping the simulated countries
 cost -- an international leg averaged over {runtime_notes.get('n_countries', 0) - 1}
 markets rather than 37 -- and what it bought.
 
@@ -4107,7 +4106,7 @@ At the baseline preference (γ = {gamma:g}) the solved portfolio averages
 
 The domestic/international split carries the same caveat as `docs/05` section
 3.1 and should not be read as advice. The international leg in this model is a
-{summary['n_countries'] - 1}-country leave-one-out average, better
+{int(notes.get('n_countries', 0)) - 1}-country leave-one-out average, better
 diversified than any tradeable
 international index and available to no individual investor without also
 holding their own market. The honest reading of a solved schedule that wants

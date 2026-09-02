@@ -823,8 +823,7 @@ def section_data(ctx: Any) -> List[Flowable]:
         "final, partial decade compares with the rest. The gaps are not "
         "random: they cluster around the "
         "two world wars and around the market closures that follow them, which "
-        "is precisely the period a survivorship-prone sample would drop.",
-        max_height=11.5 * cm))
+        "is precisely the period a survivorship-prone sample would drop."))
 
     out.append(ctx.h2("#data.2 The country set"))
     out.append(ctx.p(
@@ -1065,8 +1064,7 @@ def section_data(ctx: Any) -> List[Flowable]:
             "for that country's domestic equity. Right: the lag-one "
             "autocorrelation that does the work. De-smoothing closes part of "
             "the volatility gap and not all of it, which is why the holding "
-            "cost of Section #housing has to carry the rest of the argument.",
-            max_height=8.5 * cm))
+            "cost of Section #housing has to carry the rest of the argument."))
 
     wg = pr.get("wages", {})
     if wg.get("countries"):
@@ -1221,8 +1219,7 @@ def section_data(ctx: Any) -> List[Flowable]:
         "standard deviation. Right: the two standard deviations plotted "
         "against each other, with the 45-degree line. One country below the "
         "line would be unremarkable; every country below it is a property of "
-        "the file rather than of the markets.",
-        max_height=8.0 * cm))
+        "the file rather than of the markets."))
 
     out.extend(ctx.figure(
         "fig02_country_real_returns",
@@ -1230,8 +1227,7 @@ def section_data(ctx: Any) -> List[Flowable]:
         "left tails are the point of the panel: several countries record "
         "single-year real equity losses beyond −60%, and these are not "
         "outliers to be trimmed but the events a lifecycle investor is "
-        "exposed to.",
-        max_height=10.5 * cm))
+        "exposed to."))
     return out
 
 
@@ -1342,8 +1338,7 @@ def section_methods(ctx: Any) -> List[Flowable]:
         "Bootstrap diagnostics. Simulated marginal distributions against the "
         "panel they are drawn from, the preservation of the cross-asset "
         "correlation structure, and the within-path autocorrelation that "
-        "block sampling is designed to retain.",
-        max_height=10.0 * cm))
+        "block sampling is designed to retain."))
 
     out.append(ctx.h3("Block length and long-horizon dispersion"))
     out.append(ctx.p(
@@ -1386,8 +1381,7 @@ def section_methods(ctx: Any) -> List[Flowable]:
         "fig04_block_length_sensitivity",
         "Block-length sensitivity. Long-horizon dispersion is close to flat in "
         "the mean block length even as within-path persistence rises steadily, "
-        "which is the signature of mean reversion in the underlying series.",
-        max_height=8.0 * cm))
+        "which is the signature of mean reversion in the underlying series."))
 
     # -- 4.2 lifecycle ----------------------------------------------------
     out.append(ctx.h2("#methods.2 The lifecycle model"))
@@ -1470,8 +1464,7 @@ def section_methods(ctx: Any) -> List[Flowable]:
         "fig05_glide_paths",
         "The six benchmark allocation strategies as equity share by age. The "
         "target-date fund is the industry-standard declining glide path; the "
-        "comparison strategies are held at fixed weights.",
-        max_height=7.5 * cm))
+        "comparison strategies are held at fixed weights."))
 
     # -- 4.3 preferences --------------------------------------------------
     out.append(ctx.h2("#methods.3 Preferences and the certainty equivalent"))
@@ -1676,8 +1669,7 @@ def section_baseline(ctx: Any) -> List[Flowable]:
         "fig09_cec_by_risk_aversion",
         "Certainty-equivalent consumption by strategy and risk aversion. The "
         "ranking is stable in γ; the gap narrows as risk aversion rises but "
-        "does not close within the range tested.",
-        max_height=8.0 * cm))
+        "does not close within the range tested."))
 
     out.append(ctx.h2("#baseline.2 The mechanism is international, not equity"))
     out.append(ctx.p(
@@ -1720,14 +1712,12 @@ def section_baseline(ctx: Any) -> List[Flowable]:
         "Cumulative distribution of wealth at retirement. The all-equity "
         "distributions stochastically dominate the conservative ones over "
         "almost the entire range, including the left tail where the "
-        "conservative case is usually made.",
-        max_height=8.5 * cm))
+        "conservative case is usually made."))
     out.extend(ctx.figure(
         "fig07_retirement_consumption",
         "Distribution of average real retirement consumption by strategy. "
         "The vertical line marks the seventy-percent replacement target used "
-        "in the shortfall statistics.",
-        max_height=8.5 * cm))
+        "in the shortfall statistics."))
 
     out.append(ctx.h2("#baseline.3 Distributional dominance"))
     out.append(ctx.p(
@@ -1761,8 +1751,7 @@ def section_baseline(ctx: Any) -> List[Flowable]:
         "Shortfall probabilities against a fixed consumption target. Measuring "
         "each strategy against a common target rather than against its own "
         "median is essential: a strategy-specific target rewards strategies "
-        "with low medians.",
-        max_height=8.0 * cm))
+        "with low medians."))
 
     out.append(ctx.h2("#baseline.4 Sustainable withdrawal rates"))
     out.append(ctx.p(
@@ -1802,8 +1791,7 @@ def section_baseline(ctx: Any) -> List[Flowable]:
         "fig11_ruin_probability",
         "Probability of portfolio exhaustion as a function of the initial "
         "withdrawal rate. The horizontal line is the five-percent tolerance "
-        "used to define the sustainable rate.",
-        max_height=8.0 * cm))
+        "used to define the sustainable rate."))
 
     out.append(ctx.h2("#baseline.5 How the countries are drawn"))
     out.append(ctx.p(
@@ -1836,8 +1824,7 @@ def section_baseline(ctx: Any) -> List[Flowable]:
         "Wealth trajectories by percentile for the all-equity portfolio and "
         "the target-date fund. The fan makes visible what the scalar "
         "comparison cannot: the conservative path is not narrower at the "
-        "bottom, it is lower throughout.",
-        max_height=8.5 * cm))
+        "bottom, it is lower throughout."))
     return out
 
 
@@ -1917,8 +1904,7 @@ def section_sensitivity(ctx: Any) -> List[Flowable]:
         "fig16_tornado",
         "Tornado plot of the all-equity advantage. The bar spans the minimum "
         "and maximum advantage observed across the settings in that dimension; "
-        "no bar crosses zero.",
-        max_height=9.0 * cm))
+        "no bar crosses zero."))
     out.append(ctx.p(
         f"Risk aversion is the widest dimension, as it should be: the "
         f"advantage over a 60/40 portfolio ranges from "
@@ -1936,8 +1922,7 @@ def section_sensitivity(ctx: Any) -> List[Flowable]:
         "fig13_risk_aversion_sweep",
         "Certainty equivalent by strategy across risk aversion. The "
         "conservative strategies converge toward the equity portfolios as γ "
-        "rises but do not overtake them within the tested range.",
-        max_height=8.0 * cm))
+        "rises but do not overtake them within the tested range."))
 
     out.append(ctx.h2("#sensitivity.2 Allocation sweeps and the corner solution"))
     out.append(ctx.p(
@@ -1987,8 +1972,7 @@ def section_sensitivity(ctx: Any) -> List[Flowable]:
         "Certainty equivalent across the equity share and the domestic share. "
         "The equity dimension is monotone to the corner; the domestic "
         "dimension has an interior optimum well below the 50% headline "
-        "weight.",
-        max_height=8.0 * cm))
+        "weight."))
 
     out.append(ctx.h2("#sensitivity.3 Separating risk aversion from intertemporal substitution"))
     out.append(ctx.p(
@@ -2018,15 +2002,13 @@ def section_sensitivity(ctx: Any) -> List[Flowable]:
         "fig15_planning_sweeps",
         "Planning-parameter sweeps: retirement age, longevity, savings rate "
         "and social-security design. Ranking is preserved throughout; the "
-        "magnitude of the advantage is not.",
-        max_height=9.5 * cm))
+        "magnitude of the advantage is not."))
     out.extend(ctx.figure(
         "fig14_withdrawal_sensitivity",
         "The advantage as a function of the withdrawal rate. Higher "
         "withdrawal rates widen the gap, because a portfolio being drawn down "
         "faster is more exposed to the left tail the conservative strategies "
-        "fail to protect against.",
-        max_height=8.0 * cm))
+        "fail to protect against."))
     return out
 
 
@@ -2113,13 +2095,11 @@ def section_spending(ctx: Any) -> List[Flowable]:
         "fig17_spending_rate_curves",
         "Certainty equivalent as a function of the withdrawal rate for each "
         "spending family. Each family is compared at the peak of its own "
-        "curve rather than at a common rate.",
-        max_height=8.5 * cm))
+        "curve rather than at a common rate."))
     out.extend(ctx.figure(
         "fig18_spending_paths",
         "Realised spending paths under each rule for a common set of market "
-        "histories. The adaptive rules trade a smooth path for a solvent one.",
-        max_height=8.5 * cm))
+        "histories. The adaptive rules trade a smooth path for a solvent one."))
 
     out.append(ctx.h2("#spending.1 The bequest pivot"))
     out.append(ctx.p(
@@ -2136,8 +2116,7 @@ def section_spending(ctx: Any) -> List[Flowable]:
         "fig19_spending_bequest_pivot",
         "Certainty equivalent by spending rule across the bequest weight. The "
         "lines cross: a rule that is optimal for an investor with no bequest "
-        "motive is not optimal for one who has a strong one.",
-        max_height=8.0 * cm))
+        "motive is not optimal for one who has a strong one."))
     out.append(ctx.p(
         f"Across the {int(pivot['bequest_weight'].nunique())} bequest weights "
         f"tested the identity of the best rule changes, which means the "
@@ -2205,8 +2184,7 @@ def section_glide(ctx: Any) -> List[Flowable]:
         "fig20_optimal_glide_path",
         "The solved equity share by age, from three restarts, against the "
         "target-date fund's prescribed glide. The solution is flat at or near "
-        "the corner; it is not a glide path.",
-        max_height=8.5 * cm))
+        "the corner; it is not a glide path."))
 
     out.append(ctx.h2("#glide.1 How much of the solved structure is real?"))
     out.append(ctx.p(
@@ -2228,8 +2206,7 @@ def section_glide(ctx: Any) -> List[Flowable]:
         "fig21_glide_comparison",
         "Certainty equivalent of the solved schedules against the benchmarks, "
         "at each risk aversion. The solved advantage over a fixed all-equity "
-        "portfolio is small; the advantage over the glide path is not.",
-        max_height=8.0 * cm))
+        "portfolio is small; the advantage over the glide path is not."))
 
     out.append(ctx.h2("#glide.2 Anchoring the glide to the retirement date"))
     out.append(ctx.p(
@@ -2250,8 +2227,7 @@ def section_glide(ctx: Any) -> List[Flowable]:
         "fig22_retirement_anchor",
         "The cost of anchoring the glide path at retirement. Forcing a "
         "conservative allocation at the retirement date is expensive, and the "
-        "cost rises steeply as the anchor becomes more conservative.",
-        max_height=8.0 * cm))
+        "cost rises steeply as the anchor becomes more conservative."))
     out.append(ctx.p(
         "The conclusion of this section is stronger than the one the "
         "benchmark comparison supports. It is not merely that the target-date "
@@ -2400,8 +2376,7 @@ def section_allocation(ctx: Any) -> List[Flowable]:
         "age of it is worth. The stacked areas are portfolio weights; the "
         "right-hand panel resets each age to the schedule's own average and "
         "measures the certainty-equivalent cost in basis points, on a log "
-        "scale with one basis point marked.",
-        max_height=8.5 * cm))
+        "scale with one basis point marked."))
 
     out.append(ctx.h2("#allocation.3 Against the benchmarks"))
     out.extend(ctx.table(
@@ -2439,8 +2414,7 @@ def section_allocation(ctx: Any) -> List[Flowable]:
         "Left: the solved schedule against the benchmarks at each risk "
         "aversion. Right: the average solved weights by lifecycle phase, "
         "showing how little of the portfolio the fixed-income sleeve ever "
-        "carries.",
-        max_height=8.0 * cm))
+        "carries."))
 
     retire_age = int(f.cfg["lifecycle"]["age_retire"])
     dev = dev.copy()
@@ -2679,8 +2653,7 @@ def section_leverage(ctx: Any) -> List[Flowable]:
         "fig36_leverage_surface",
         "Left: the value of leverage across the ratio, one line per borrowing "
         "spread. Right: the optimal ratio as the price of credit rises, "
-        "annotated with what it is worth.",
-        max_height=8.0 * cm))
+        "annotated with what it is worth."))
 
     out.append(ctx.h2("#leverage.3 What leverage does to the shape of the outcome"))
     out.append(ctx.p(
@@ -2824,8 +2797,7 @@ def section_leverage(ctx: Any) -> List[Flowable]:
             "fig37_leverage_detail",
             "Left: what leverage does to each percentile of retirement "
             "consumption. Right: the leverage ratio solved for every age, at "
-            "three prices of credit.",
-            max_height=8.0 * cm))
+            "three prices of credit."))
 
         try:
             two_level = f.table("leverage_two_level")
@@ -3079,8 +3051,7 @@ def section_fees(ctx: Any) -> List[Flowable]:
         "fig45_fees",
         "Left: a fee charged on every asset alike, the control. Right: a fee "
         "on the international sleeve alone, with the break-even and the "
-        "expense ratios a real investor has faced marked on it.",
-        max_height=8.0 * cm))
+        "expense ratios a real investor has faced marked on it."))
 
     out.append(ctx.h2("#fees.3 What this changes"))
     out.extend(ctx.bullets([
@@ -3190,14 +3161,14 @@ def section_hedging(ctx: Any) -> List[Flowable]:
 
     out.extend(ctx.figure(
         "fig23_currency_hedging",
-        "Left: the certainty-equivalent cost of hedging by ratio, at five "
+        "Top left: the certainty-equivalent cost of hedging by ratio, at five "
         "annual hedging costs; every line is below zero, so hedging loses even "
-        "when free. Centre: where the loss lands — fifth-percentile retirement "
-        "consumption falls monotonically in the hedge ratio, and the certainty "
-        "equivalent weighs that tail heavily. Right: why — hedging lowers the "
+        "when free. Top right: where the loss lands — fifth-percentile "
+        "retirement consumption falls monotonically in the hedge ratio, and "
+        "the certainty equivalent weighs that tail heavily. Bottom: why — "
+        "hedging lowers the "
         "standalone volatility of the foreign sleeve up to a half hedge, but "
-        "raises its correlation with the home market over the same range.",
-        max_height=8.5 * cm))
+        "raises its correlation with the home market over the same range."))
     return out
 
 
@@ -3346,8 +3317,7 @@ def section_retirement(ctx: Any) -> List[Flowable]:
         "fig24_retirement_timing",
         "Endogenous retirement timing. The distribution of retirement ages "
         "under a wealth trigger, the value of conditioning against a matched "
-        "fixed date, and the retirement-date lottery.",
-        max_height=9.0 * cm))
+        "fixed date, and the retirement-date lottery."))
     return out
 
 
@@ -3493,8 +3463,7 @@ def section_saving(ctx: Any) -> List[Flowable]:
         "fig25_savings_rate",
         "The solved savings profile by risk aversion, the unidentified "
         "constant-rate frontier, and the value of conditioning on wealth "
-        "against conditioning on returns.",
-        max_height=8.5 * cm))
+        "against conditioning on returns."))
 
     out.append(ctx.h2("#saving.4 Do the savings and retirement gains add?"))
     out.append(ctx.p(
@@ -3702,8 +3671,7 @@ def section_accumulation(ctx: Any) -> List[Flowable]:
         "Left: the value of conditioning against the contribution move it "
         "implies, which puts three differently-scaled coefficients on one "
         "axis. Right: the policy each form implies at its own optimum, over "
-        "the range of funded ratios paths actually visit.",
-        max_height=8.5 * cm))
+        "the range of funded ratios paths actually visit."))
 
     # -- 12.2 asymmetry ---------------------------------------------------
     out.append(ctx.h2("#accumulation.2 Catching up and easing off are separate policies"))
@@ -3758,8 +3726,7 @@ def section_accumulation(ctx: Any) -> List[Flowable]:
         "fig27_savings_asymmetry",
         "Left: the value of conditioning over the two coefficients "
         "separately, with the best pair starred. Right: each half of the rule "
-        "switched on alone against both together.",
-        max_height=8.5 * cm))
+        "switched on alone against both together."))
 
     # -- 12.3 implementable version ---------------------------------------
     out.append(ctx.h2("#accumulation.3 The version a person could actually follow"))
@@ -3860,8 +3827,7 @@ def section_accumulation(ctx: Any) -> List[Flowable]:
         "fig32_savings_target_choice",
         "Left: the value of conditioning as each target is scaled up and "
         "down. Right: what each target actually asks the investor to hold at "
-        "each age.",
-        max_height=8.0 * cm))
+        "each age."))
 
     # -- 12.5 horse race --------------------------------------------------
     out.append(ctx.h2("#accumulation.5 Which signal, out of everything available?"))
@@ -3924,10 +3890,9 @@ def section_accumulation(ctx: Any) -> List[Flowable]:
         f"before the money is spent."))
     out.extend(ctx.figure(
         "fig28_savings_signal_race",
-        "Left: the best of each signal at its own optimal sensitivity. "
-        "Centre: how sharply the leaders peak. Right: the two leaders layered, "
-        "showing partial but incomplete overlap.",
-        max_height=8.0 * cm))
+        "Top left: the best of each signal at its own optimal sensitivity. "
+        "Top right: how sharply the leaders peak. Bottom: the two leaders "
+        "layered, showing partial but incomplete overlap."))
 
     # -- 12.6 feasibility --------------------------------------------------
     out.append(ctx.h2("#accumulation.6 How far does the contribution have to move?"))
@@ -3968,8 +3933,7 @@ def section_accumulation(ctx: Any) -> List[Flowable]:
         "fig29_savings_feasibility",
         "Left: the value of conditioning as a function of how far the "
         "contribution may move. Right: the distribution of prescribed savings "
-        "rates by age under the unconstrained rule.",
-        max_height=8.0 * cm))
+        "rates by age under the unconstrained rule."))
 
     # -- 12.7 where the value lands ---------------------------------------
     out.append(ctx.h2("#accumulation.7 Where the gain lands, and who wants it"))
@@ -4011,8 +3975,7 @@ def section_accumulation(ctx: Any) -> List[Flowable]:
         "fig30_savings_value_distribution",
         "Left: where in the distribution of retirement consumption the gain "
         "lands. Right: the value of conditioning by risk aversion, each at its "
-        "own coefficient.",
-        max_height=8.0 * cm))
+        "own coefficient."))
 
     # -- 12.8 timing ------------------------------------------------------
     out.append(ctx.h2("#accumulation.8 When in a career is the balance worth reading?"))
@@ -4057,8 +4020,7 @@ def section_accumulation(ctx: Any) -> List[Flowable]:
         "fig31_savings_when_it_matters",
         "Left: the value of conditioning when switched on only for the stated "
         "ages. Right: how far the rule moves the contribution at each age, "
-        "and in which direction.",
-        max_height=8.0 * cm))
+        "and in which direction."))
 
     # -- 12.9 interactions -------------------------------------------------
     out.append(ctx.h2("#accumulation.9 What the value depends on"))
@@ -4117,8 +4079,7 @@ def section_accumulation(ctx: Any) -> List[Flowable]:
         "The value of conditioning by portfolio and by labour-income "
         "volatility. The two point in opposite directions with respect to "
         "\"risk\", which is why the mechanism is about outcomes rather than "
-        "variance.",
-        max_height=8.0 * cm))
+        "variance."))
     return out
 
 
@@ -4385,20 +4346,21 @@ def section_valuation(ctx: Any) -> List[Flowable]:
 
     out.extend(ctx.figure(
         "fig40_starting_valuation",
-        "Left: annualised real equity returns following cheap and expensive "
-        "starting yields, by horizon, with the correlation printed above each "
-        "pair. Centre: the distribution of blended starting dividend yields "
-        "across the panel's country-years, with the most recent United States "
-        "observation marked so a reader can place themselves in it. Centre "
-        "right: the all-equity advantage over the glide path within each "
+        "Top left: annualised real equity returns following cheap and "
+        "expensive starting yields, by horizon, with the correlation printed "
+        "above each pair. Top right: the distribution of blended starting "
+        "dividend yields across the panel's country-years, with the most "
+        "recent United States observation marked so a reader can place "
+        "themselves in it. Bottom left: the all-equity advantage over the "
+        "glide path within each "
         "valuation bucket (bars, left axis) against the level of "
         "certainty-equivalent consumption it wins at (line, right axis) — the "
         "advantage is flat and the level is not, which is the section's whole "
-        "result. Far right: the tercile boundaries as an investor could have "
+        "result. Bottom right: the tercile boundaries as an investor could "
+        "have "
         "computed them at each date, drifting down across the century; a "
         "pooled split replaces both lines with a single pair of values and is "
-        "what the recursive construction exists to avoid.",
-        max_height=8.0 * cm))
+        "what the recursive construction exists to avoid."))
     return out
 
 
@@ -4675,12 +4637,11 @@ def section_housing(ctx: Any) -> List[Flowable]:
 
     out.extend(ctx.figure(
         "fig41_housing_cost_sweep",
-        "Far left: the volatility the appraisal smoothing hides, by country, "
-        "against the same country's equity. Centre left: the optimal "
-        "portfolio at each holding cost. Centre right: what adding housing is "
-        "worth, with and without the de-smoothing correction. Far right: "
-        "which sleeve housing displaces as its cost falls.",
-        max_height=8.0 * cm))
+        "Top left: the volatility the appraisal smoothing hides, by country, "
+        "against the same country's equity. Top right: the optimal portfolio "
+        "at each holding cost. Bottom left: what adding housing is worth, "
+        "with and without the de-smoothing correction. Bottom right: which "
+        "sleeve housing displaces as its cost falls."))
     return out
 
 
@@ -4966,15 +4927,15 @@ def section_mortgage(ctx: Any) -> List[Flowable]:
 
     out.extend(ctx.figure(
         "fig42_mortgage",
-        "Far left: the solved loan-to-value ratio by age, with the grey bars "
+        "Top left: the solved loan-to-value ratio by age, with the grey bars "
         "showing what each age's choice is actually worth — where they are "
-        "invisible the line above them carries no information. Centre left: "
+        "invisible the line above them carries no information. Top right: "
         "certainty-equivalent consumption against a ratio held for life. "
-        "Centre right: how the optimal ratio responds to the price of credit, "
-        "split by working life and retirement. Far right: what borrowing buys "
+        "Bottom left: how the optimal ratio responds to the price of credit, "
+        "split by working life and retirement. Bottom right: what borrowing "
+        "buys "
         "against an unlevered house, and how often the borrower's right to "
-        "walk away is what pays for it.",
-        max_height=8.0 * cm))
+        "walk away is what pays for it."))
     return out
 
 
@@ -5244,11 +5205,12 @@ def section_panel(ctx: Any) -> List[Flowable]:
 
     out.extend(ctx.figure(
         "fig44_panel_robustness",
-        "Left: what removing each country does to the headline lead, against "
-        "the band a re-seeded run produces on an unchanged panel. Centre: the "
-        "lead by how much history is available. Right: the jackknife interval "
-        "sixteen countries support.",
-        max_height=8.0 * cm))
+        "Top left: what removing each country does to the headline lead, "
+        "against the band a re-seeded run produces on an unchanged panel. Top "
+        "right: the lead by how much history is available. Bottom left: the "
+        "jackknife interval the delete-one runs support. Bottom right: why "
+        "the deletions land where they do — each country's effect on the lead "
+        "against its effect on the sleeve's own compound return."))
 
     out.append(ctx.h2("#panel.6 What this changes"))
     out.extend(ctx.bullets([
@@ -5483,11 +5445,10 @@ def section_sleeve(ctx: Any) -> List[Flowable]:
 
     out.extend(ctx.figure(
         "fig43_sleeve_weighting",
-        "Left: the effective number of markets in the sleeve under each "
-        "weighting. Centre: certainty-equivalent consumption for every "
-        "strategy under all of them. Right: whether all-international's "
-        "advantage over the 50/50 split tracks concentration or the tilt.",
-        max_height=8.0 * cm))
+        "Top left: the effective number of markets in the sleeve under each "
+        "weighting. Top right: certainty-equivalent consumption for every "
+        "strategy under all of them. Bottom: whether all-international's "
+        "advantage over the 50/50 split tracks concentration or the tilt."))
 
     out.append(ctx.h2("#sleeve.4 What this changes"))
     out.extend(ctx.bullets([

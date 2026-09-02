@@ -162,8 +162,12 @@ class Context:
         return Spacer(1, height)
 
     # -- floats -----------------------------------------------------------
-    def figure(self, name: str, caption: str, max_height: float = 9.6 * cm,
+    def figure(self, name: str, caption: str, max_height: float = 21.0 * cm,
                width_scale: float = 1.0) -> List[Flowable]:
+        # Figures are authored at the width of this text column (see
+        # ``PAGE_WIDTH_IN`` in ``src/plots.py``), so width binds and the
+        # image lands on the page at 1:1 with its labels the size they were
+        # drawn. ``max_height`` is only a guard against a runaway figure.
         self._figure_no += 1
         caption = self._r(caption)
         self.figure_index.append(f"Figure {self._figure_no}. {caption}")
