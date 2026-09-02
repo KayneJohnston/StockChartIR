@@ -1,0 +1,31 @@
+mortality,life_expectancy,strategy,label,cec,prob_ruin,rank
+fixed horizon,93.0,balanced_all_equity,50/50 Domestic/International Equity,1.0477715240966154,0.11714,2
+fixed horizon,93.0,domestic_equity,100% Domestic Equity,0.8817855922986605,0.2538,4
+fixed horizon,93.0,international_equity,100% International Equity,1.1084723595383563,0.0899,1
+fixed horizon,93.0,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.8706869896186361,0.24212,5
+fixed horizon,93.0,target_date_fund,Target-Date Fund (glide path),0.9425195381382906,0.2221,3
+fixed horizon,93.0,bills_only,100% Bills (cash),0.738999359783288,0.56357,6
+shorter lives (m=83),77.69408920448255,balanced_all_equity,50/50 Domestic/International Equity,1.0927527881092904,0.04038345764273889,2
+shorter lives (m=83),77.69408920448255,domestic_equity,100% Domestic Equity,0.9230840807776386,0.1102792391927047,4
+shorter lives (m=83),77.69408920448255,international_equity,100% International Equity,1.1544603856985325,0.030292379255163142,1
+shorter lives (m=83),77.69408920448255,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.9059897202706187,0.09719126104832325,5
+shorter lives (m=83),77.69408920448255,target_date_fund,Target-Date Fund (glide path),0.9890025614308189,0.07894744690949942,3
+shorter lives (m=83),77.69408920448255,bills_only,100% Bills (cash),0.7658925382640092,0.17845748542677217,6
+baseline (m=88),81.94701551731933,balanced_all_equity,50/50 Domestic/International Equity,1.0784650517860626,0.059147555647419525,2
+baseline (m=88),81.94701551731933,domestic_equity,100% Domestic Equity,0.9095258068999663,0.14773425011454203,4
+baseline (m=88),81.94701551731933,international_equity,100% International Equity,1.139889837600252,0.04468040933507152,1
+baseline (m=88),81.94701551731933,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.89452378639129,0.133654715166342,5
+baseline (m=88),81.94701551731933,target_date_fund,Target-Date Fund (glide path),0.9741312265003267,0.11370592961053003,3
+baseline (m=88),81.94701551731933,bills_only,100% Bills (cash),0.7574453119056244,0.2691288544851441,6
+longer lives (m=93),85.42484768548995,balanced_all_equity,50/50 Domestic/International Equity,1.067787424341579,0.07627302625784314,2
+longer lives (m=93),85.42484768548995,domestic_equity,100% Domestic Equity,0.8996872659235408,0.18015698580707362,4
+longer lives (m=93),85.42484768548995,international_equity,100% International Equity,1.128980880620696,0.05793876635388517,1
+longer lives (m=93),85.42484768548995,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.8861333115708666,0.16613207168406022,5
+longer lives (m=93),85.42484768548995,target_date_fund,Target-Date Fund (glide path),0.9630798460135839,0.14555682214871116,3
+longer lives (m=93),85.42484768548995,bills_only,100% Bills (cash),0.7510823790418878,0.3543728522839732,6
+"less dispersed (m=88, b=7)",84.0768940355599,balanced_all_equity,50/50 Domestic/International Equity,1.078815217551831,0.05957915972707029,2
+"less dispersed (m=88, b=7)",84.0768940355599,domestic_equity,100% Domestic Equity,0.9094195118865683,0.1521686763497942,4
+"less dispersed (m=88, b=7)",84.0768940355599,international_equity,100% International Equity,1.140230593696229,0.04478734148496149,1
+"less dispersed (m=88, b=7)",84.0768940355599,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.8943962971626369,0.1362422075326693,5
+"less dispersed (m=88, b=7)",84.0768940355599,target_date_fund,Target-Date Fund (glide path),0.9745688939665641,0.11441735198063521,3
+"less dispersed (m=88, b=7)",84.0768940355599,bills_only,100% Bills (cash),0.757601809495012,0.26655248289290456,6

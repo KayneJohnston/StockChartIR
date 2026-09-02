@@ -1,0 +1,13 @@
+window,strategy,label,cec,rank
+1890-1955,international_equity,100% International Equity,1.0165482769361323,1
+1890-1955,balanced_all_equity,50/50 Domestic/International Equity,0.9708130538869169,2
+1890-1955,target_date_fund,Target-Date Fund (glide path),0.8543436473999834,3
+1890-1955,domestic_equity,100% Domestic Equity,0.8198237698188667,4
+1890-1955,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.8011482259081318,5
+1890-1955,bills_only,100% Bills (cash),0.7159976327400331,6
+1956-2020,international_equity,100% International Equity,1.1328896414105116,1
+1956-2020,balanced_all_equity,50/50 Domestic/International Equity,1.069213553371059,2
+1956-2020,target_date_fund,Target-Date Fund (glide path),1.0206911992000338,3
+1956-2020,sixty_forty,60/40 Domestic Equity/Domestic Bonds,0.9449776103909802,4
+1956-2020,domestic_equity,100% Domestic Equity,0.9169839030149605,5
+1956-2020,bills_only,100% Bills (cash),0.7766876791253682,6

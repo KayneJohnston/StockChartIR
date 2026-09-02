@@ -25,15 +25,19 @@ import pandas as pd
 from src import accumulation as acc
 from src import allocation as al
 from src import bootstrap as bs
+from src import cohorts as coh
 from src import data_loader as dl
 from src import fees as fee
 from src import glidepath as gp
 from src import hedging as hg
 from src import housing as hsg
 from src import leverage as lev
+from src import humancapital as hc
 from src import lifecycle as lc
+from src import mortality as mrt
 from src import mortgage as mgg
 from src import observed as obs
+from src import oos
 from src import panel_robustness as pr
 from src import plots
 from src import provenance as pvn
@@ -143,6 +147,15 @@ def _apply_quick(cfg: Dict[str, Any]) -> Dict[str, Any]:
         cfg["glide_path"]["n_paths"] = 2000
         cfg["glide_path"]["n_sweeps"] = 1
         cfg["glide_path"]["restart_equity_starts"] = [0.6]
+    if "cohorts" in cfg:
+        cfg["cohorts"]["cluster_bootstrap_draws"] = 400
+    if "out_of_sample" in cfg:
+        cfg["out_of_sample"]["n_paths"] = 1500
+    if "human_capital" in cfg:
+        cfg["human_capital"]["n_paths"] = 3000
+        cfg["human_capital"]["correlation_grid"] = [0.0, 0.3, 0.6]
+    if "mortality" in cfg:
+        cfg["mortality"]["n_paths"] = 4000
     LOGGER.warning("quick mode: n_paths reduced to %s",
                    cfg["bootstrap"]["n_paths"])
     return cfg
@@ -2556,6 +2569,246 @@ def step20_fees(cfg: Dict[str, Any],
     return state
 
 
+# ---------------------------------------------------------------------------
+# Step 21
+# ---------------------------------------------------------------------------
+def step21_cohorts(cfg: Dict[str, Any],
+                   state: Dict[str, Any]) -> Dict[str, Any]:
+    """Run the lifetimes the panel actually contains, with no resampling."""
+    coh_cfg = cfg.get("cohorts", {})
+    if not coh_cfg.get("enabled", False):
+        LOGGER.info("cohort backtest disabled; skipping step 21")
+        return state
+    LOGGER.info("=== STEP 21: the realised record, without the bootstrap ===")
+    started = time.perf_counter()
+
+    panel = state.get("panel") or dl.build_panel(cfg)
+    spec = state.get("spec") or lc.spec_from_config(cfg)
+    strategies = state.get("strategies") or lc.build_strategies(cfg, spec)
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    pair = (str(coh_cfg["challenger"]), str(coh_cfg["incumbent"]))
+
+    cohorts = coh.enumerate_cohorts(panel, spec.horizon)
+    census = coh.census(panel, spec.horizon)
+    effective = coh.effective_sample(panel, spec.horizon)
+    LOGGER.info("%d complete lifetimes on the record, %d of them independent",
+                effective["n_cohorts"], effective["n_independent"])
+
+    outcomes = coh.run(panel, cohorts, spec, strategies)
+    summary = coh.summarise(outcomes, cfg, spec, gamma)
+    detail = coh.per_cohort(outcomes, cohorts, spec, pair)
+    countries = coh.by_country(detail, pair)
+    realised = coh.long_run_returns(panel, cohorts, spec.horizon)
+    spread = coh.dispersion(realised)
+    interval = coh.cluster_bootstrap(
+        detail, n_boot=int(coh_cfg.get("cluster_bootstrap_draws", 4000)),
+        seed=int(coh_cfg.get("cluster_bootstrap_seed", 20260901)))
+    signs = coh.sign_test(detail)
+    findings = coh.verdict(summary, detail, interval, signs, effective, pair)
+    LOGGER.info("cohort verdict: winner=%s, mean gap %.2f%%, 95%% [%.2f, %.2f]",
+                findings["winner"], findings["mean_cohort_gap_pct"],
+                findings["ci_low"], findings["ci_high"])
+
+    tables = cfg["run"]["table_dir"]
+    for frame, name in ((census, "cohort_census"),
+                        (summary, "cohort_summary"),
+                        (detail, "cohort_detail"),
+                        (countries, "cohort_by_country"),
+                        (realised, "cohort_long_run_returns")):
+        _save_table(frame, tables, name)
+
+    figures = [str(plots.plot_cohorts(census, detail, realised, countries,
+                                      cfg["run"]["figure_dir"],
+                                      interval=interval))]
+
+    elapsed = time.perf_counter() - started
+    rp.write_doc_21(
+        Path("docs") / "21_realised_cohorts.md", cfg,
+        {"census": census, "summary": summary, "detail": detail,
+         "by_country": countries, "realised": realised},
+        figures,
+        {"elapsed_seconds": elapsed, "gamma": gamma, "pair": pair,
+         "effective": effective, "interval": interval, "signs": signs,
+         "dispersion": spread, "verdict": findings})
+    LOGGER.info("docs/21 written (%.0fs)", elapsed)
+    state["cohort_summary"] = summary
+    return state
+
+
+# ---------------------------------------------------------------------------
+# Step 22
+# ---------------------------------------------------------------------------
+def step22_out_of_sample(cfg: Dict[str, Any],
+                         state: Dict[str, Any]) -> Dict[str, Any]:
+    """Solve every schedule on one half of history and score it on the other."""
+    oos_cfg = cfg.get("out_of_sample", {})
+    if not oos_cfg.get("enabled", False):
+        LOGGER.info("out-of-sample check disabled; skipping step 22")
+        return state
+    LOGGER.info("=== STEP 22: do the solved schedules transfer? ===")
+    started = time.perf_counter()
+
+    panel = state.get("panel") or dl.build_panel(cfg)
+    spec = state.get("spec") or lc.spec_from_config(cfg)
+    strategies = state.get("strategies") or lc.build_strategies(cfg, spec)
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    n_paths = int(oos_cfg.get("n_paths", 20000))
+    cut = int(oos_cfg.get("cut_year", 1955))
+    families = [str(f) for f in oos_cfg.get("families", oos.FAMILIES)]
+    seed = int(oos_cfg.get("seed", 4242))
+
+    benchmarks = oos.benchmark_table(cfg, panel, spec, strategies, gamma,
+                                     cut, n_paths, seed=seed)
+    stability = oos.ranking_is_stable(benchmarks)
+    frame = oos.transfer(cfg, panel, spec, strategies, gamma, cut, n_paths,
+                         families=families, seed=seed)
+    findings = oos.verdict(frame, stability)
+    LOGGER.info("out-of-sample verdict: %d of %d runs beat the benchmark",
+                findings["runs_that_beat_the_benchmark"], findings["runs"])
+
+    tables = cfg["run"]["table_dir"]
+    _save_table(frame, tables, "oos_transfer")
+    _save_table(benchmarks, tables, "oos_benchmarks")
+
+    figures = [str(plots.plot_out_of_sample(frame, benchmarks,
+                                            cfg["run"]["figure_dir"]))]
+
+    elapsed = time.perf_counter() - started
+    rp.write_doc_22(
+        Path("docs") / "22_out_of_sample.md", cfg,
+        {"transfer": frame, "benchmarks": benchmarks},
+        figures,
+        {"elapsed_seconds": elapsed, "gamma": gamma, "n_paths": n_paths,
+         "cut_year": cut, "stability": stability, "verdict": findings,
+         # The count section 21 arrives at, so the two sections agree on how
+         # much evidence the panel actually holds.
+         "independent_lifetimes": coh.effective_sample(
+             panel, spec.horizon)["n_independent"]})
+    LOGGER.info("docs/22 written (%.0fs)", elapsed)
+    state["oos_transfer"] = frame
+    return state
+
+
+# ---------------------------------------------------------------------------
+# Step 23
+# ---------------------------------------------------------------------------
+def step23_human_capital(cfg: Dict[str, Any],
+                         state: Dict[str, Any]) -> Dict[str, Any]:
+    """Correlate the pay cheque with the home market and re-run the headline."""
+    hc_cfg = cfg.get("human_capital", {})
+    if not hc_cfg.get("enabled", False):
+        LOGGER.info("human-capital sweep disabled; skipping step 23")
+        return state
+    LOGGER.info("=== STEP 23: human capital correlated with the home market ===")
+    started = time.perf_counter()
+
+    panel = state.get("panel") or dl.build_panel(cfg)
+    spec = state.get("spec") or lc.spec_from_config(cfg)
+    strategies = state.get("strategies") or lc.build_strategies(cfg, spec)
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    n_paths = int(hc_cfg.get("n_paths", cfg["bootstrap"]["n_paths"]))
+    grid = [float(v) for v in hc_cfg.get("correlation_grid", hc.DEFAULT_GRID)]
+    pair = (str(hc_cfg["challenger"]), str(hc_cfg["incumbent"]))
+
+    # The headline summariser, with the spec swapped: the only thing that
+    # differs between these rows is the correlation.
+    def summarise(tweaked: lc.LifecycleSpec, rho: float) -> pd.DataFrame:
+        return _run_variant(cfg, panel, tweaked, strategies, n_paths)
+
+    frame = hc.sweep(summarise, spec, grid)
+    curve = hc.gap_curve(frame, pair)
+    ranking = hc.ranking(frame)
+    fitted = hc.sensitivity(curve)
+    findings = hc.verdict(curve, fitted, pair)
+    LOGGER.info("human-capital verdict: lead moves %.2f pp over the grid, "
+                "winner changes=%s", findings["change_pp"],
+                findings["winner_ever_changes"])
+
+    tables = cfg["run"]["table_dir"]
+    _save_table(frame, tables, "human_capital_sweep")
+    _save_table(curve, tables, "human_capital_gap")
+    _save_table(ranking, tables, "human_capital_ranking")
+
+    figures = [str(plots.plot_human_capital(curve, ranking,
+                                            cfg["run"]["figure_dir"]))]
+
+    elapsed = time.perf_counter() - started
+    rp.write_doc_23(
+        Path("docs") / "23_human_capital.md", cfg,
+        {"sweep": frame, "curve": curve, "ranking": ranking},
+        figures,
+        {"elapsed_seconds": elapsed, "gamma": gamma, "n_paths": n_paths,
+         "grid": grid, "fitted": fitted, "verdict": findings})
+    LOGGER.info("docs/23 written (%.0fs)", elapsed)
+    state["human_capital_curve"] = curve
+    return state
+
+
+# ---------------------------------------------------------------------------
+# Step 24
+# ---------------------------------------------------------------------------
+def step24_mortality(cfg: Dict[str, Any],
+                     state: Dict[str, Any]) -> Dict[str, Any]:
+    """Re-score the headline with a random lifespan instead of a fixed one."""
+    mort_cfg = cfg.get("mortality", {})
+    if not mort_cfg.get("enabled", False):
+        LOGGER.info("mortality study disabled; skipping step 24")
+        return state
+    LOGGER.info("=== STEP 24: death at a random age ===")
+    started = time.perf_counter()
+
+    panel = state.get("panel") or dl.build_panel(cfg)
+    spec = state.get("spec") or lc.spec_from_config(cfg)
+    strategies = state.get("strategies") or lc.build_strategies(cfg, spec)
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    n_paths = int(mort_cfg.get("n_paths", cfg["bootstrap"]["n_paths"]))
+    pair = (str(mort_cfg["challenger"]), str(mort_cfg["incumbent"]))
+    calibrations = [(str(c["label"]), float(c["modal_age"]),
+                     float(c["dispersion"]))
+                    for c in mort_cfg.get("calibrations", [])] \
+        or list(mrt.DEFAULT_CALIBRATIONS)
+
+    # Re-weighting, not re-simulating: under the headline withdrawal rule the
+    # policy does not see the death age, so the same paths carry every law.
+    outcomes = state.get("outcomes")
+    if outcomes is None:
+        sampler = bs.from_config(panel, cfg, horizon_years=spec.horizon)
+        outcomes = lc.run_chunked(sampler, strategies, spec, n_paths,
+                                  int(cfg["bootstrap"]["chunk_size"]),
+                                  income_seed=int(cfg["run"]["seed"]))
+    frame = mrt.compare(outcomes, spec, cfg, gamma, calibrations)
+    curve = mrt.gap_curve(frame, pair)
+    shift = mrt.ranking_shift(frame)
+    findings = mrt.verdict(frame, curve, pair)
+    LOGGER.info("mortality verdict: lead spans %.2f-%.2f%%, ordering changes=%s",
+                findings["min_gap_pct"], findings["max_gap_pct"],
+                findings["ordering_ever_changes"])
+
+    laws = {"fixed horizon": np.append(np.ones(spec.horizon), 0.0)}
+    for label, modal, disp in calibrations:
+        laws[label] = mrt.survival(spec, modal, disp)
+    ages = np.arange(spec.age_start, spec.age_death + 1, dtype=float)
+
+    tables = cfg["run"]["table_dir"]
+    _save_table(frame, tables, "mortality_comparison")
+    _save_table(curve, tables, "mortality_gap")
+    _save_table(shift, tables, "mortality_ranking")
+
+    figures = [str(plots.plot_mortality(frame, curve, laws, ages,
+                                        cfg["run"]["figure_dir"]))]
+
+    elapsed = time.perf_counter() - started
+    rp.write_doc_24(
+        Path("docs") / "24_mortality.md", cfg,
+        {"comparison": frame, "curve": curve, "ranking": shift},
+        figures,
+        {"elapsed_seconds": elapsed, "gamma": gamma, "n_paths": n_paths,
+         "calibrations": calibrations, "verdict": findings})
+    LOGGER.info("docs/24 written (%.0fs)", elapsed)
+    state["mortality_curve"] = curve
+    return state
+
+
 STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
          4: step4_report, 5: step5_sensitivity, 6: step6_spending,
          7: step7_glide_path, 8: step8_hedging, 9: step9_retirement_timing,
@@ -2564,11 +2817,13 @@ STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
          14: step14_provenance, 15: step15_valuation,
          16: step16_housing, 17: step17_mortgage,
          18: step18_sleeve, 19: step19_panel,
-         20: step20_fees}
+         20: step20_fees, 21: step21_cohorts,
+         22: step22_out_of_sample, 23: step23_human_capital,
+         24: step24_mortality}
 
 
 def run(config_path: str = "config.yaml",
-        steps: Sequence[int] = tuple(range(1, 21)),
+        steps: Sequence[int] = tuple(range(1, 25)),
         quick: bool = False) -> Dict[str, Any]:
     """Execute the pipeline and return the accumulated state."""
     cfg = dl.load_config(config_path)
@@ -2598,8 +2853,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--steps", nargs="+", type=int,
-                        default=list(range(1, 21)),
-                        choices=list(range(1, 21)))
+                        default=list(range(1, 25)),
+                        choices=list(range(1, 25)))
     parser.add_argument("--quick", action="store_true",
                         help="small N for smoke tests")
     parser.add_argument("--verbose", action="store_true")

@@ -149,3 +149,50 @@ class TestReadingOrder:
     def test_the_closing_sections_come_last(self) -> None:
         assert list(content.SECTION_ORDER[-3:]) == [
             "discussion", "limitations", "conclusion"]
+
+
+class TestExtensionGroups:
+    """The abstract announces a count and then describes that many studies.
+
+    It has gone stale before. Deriving the counts from the reading order only
+    helps if the groups and the order cannot drift apart, which is what these
+    check.
+    """
+
+    def test_the_groups_partition_the_extensions(self) -> None:
+        flat = [key for _, members in content.EXTENSION_GROUPS
+                for key in members]
+        assert sorted(flat) == sorted(content.EXTENSION_SECTIONS)
+
+    def test_no_study_is_in_two_groups(self) -> None:
+        flat = [key for _, members in content.EXTENSION_GROUPS
+                for key in members]
+        assert len(flat) == len(set(flat))
+
+    def test_each_group_is_contiguous_in_the_reading_order(self) -> None:
+        # A group the abstract introduces as "four ask whether..." has to be
+        # four consecutive sections, or the prose walks the paper out of
+        # order.
+        for name, members in content.EXTENSION_GROUPS:
+            numbers = [content.section_number(k) for k in members]
+            assert numbers == list(range(min(numbers), max(numbers) + 1)), name
+
+    def test_the_groups_run_in_reading_order(self) -> None:
+        firsts = [content.section_number(members[0])
+                  for _, members in content.EXTENSION_GROUPS]
+        assert firsts == sorted(firsts)
+
+    def test_the_count_word_matches_the_membership(self) -> None:
+        for name, members in content.EXTENSION_GROUPS:
+            word = content.group_count_word(name)
+            assert content.NUMBER_WORDS.get(len(members), str(len(members))) \
+                == word
+
+    def test_an_unknown_group_is_an_error(self) -> None:
+        with pytest.raises(KeyError):
+            content.group_count_word("nonexistent")
+
+    def test_every_new_study_has_a_section(self) -> None:
+        for key in ("cohorts", "out_of_sample", "human_capital", "mortality"):
+            assert key in content.SECTION_ORDER
+            assert hasattr(content, f"section_{key}")

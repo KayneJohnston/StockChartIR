@@ -736,3 +736,58 @@ fees:
   # because the distance is the margin of safety.
   differential_grid: [0.0, 0.0005, 0.0010, 0.0015, 0.0020, 0.0030, 0.0050,
                       0.0075, 0.0100, 0.0150, 0.0200]
+
+# ---------------------------------------------------------------------
+# Step 21 - the same lifetimes without the bootstrap
+# ---------------------------------------------------------------------
+cohorts:
+  enabled: true
+  challenger: international_equity
+  incumbent: balanced_all_equity
+  # Resampling the countries, not the cohorts: cohorts overlap almost
+  # completely within a country and share the same wars across countries,
+  # so a country is the coarsest unit the panel offers and the only one
+  # an interval can honestly be built on.
+  cluster_bootstrap_draws: 4000
+  cluster_bootstrap_seed: 20260901
+
+# ---------------------------------------------------------------------
+# Step 22 - do the solved schedules survive data they did not see?
+# ---------------------------------------------------------------------
+out_of_sample:
+  enabled: true
+  # Fewer paths than the headline: this step solves four schedules and the
+  # question is whether a gain transfers, not what its fourth decimal is.
+  n_paths: 20000
+  cut_year: 1955
+  families: [glide, simplex]
+  seed: 4242
+
+# ---------------------------------------------------------------------
+# Step 23 - human capital correlated with the home market
+# ---------------------------------------------------------------------
+human_capital:
+  enabled: true
+  n_paths: 50000
+  challenger: international_equity
+  incumbent: balanced_all_equity
+  # A correlation, not a loading: raising it changes which part of career
+  # risk is systematic, not how much career risk there is.
+  correlation_grid: [0.0, 0.1, 0.2, 0.3, 0.4, 0.6]
+
+# ---------------------------------------------------------------------
+# Step 24 - death at a random age
+# ---------------------------------------------------------------------
+mortality:
+  enabled: true
+  n_paths: 100000
+  challenger: international_equity
+  incumbent: balanced_all_equity
+  # Gompertz (modal age, dispersion). The middle pair is the calibration the
+  # actuarial spending rule already uses; the others move the mode five years
+  # either way, which is wider than real life tables disagree.
+  calibrations:
+    - {label: "shorter lives (m=83)", modal_age: 83.0, dispersion: 10.0}
+    - {label: "baseline (m=88)", modal_age: 88.0, dispersion: 10.0}
+    - {label: "longer lives (m=93)", modal_age: 93.0, dispersion: 10.0}
+    - {label: "less dispersed (m=88, b=7)", modal_age: 88.0, dispersion: 7.0}

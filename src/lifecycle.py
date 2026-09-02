@@ -50,6 +50,15 @@ class LifecycleSpec:
     permanent_shock_sd: float = 0.10
     transitory_shock_sd: float = 0.25
     income_shocks_enabled: bool = True
+    # Correlation between the permanent labour-income innovation and the
+    # domestic equity return of the same year.  Zero -- the default, and what
+    # every headline result uses -- makes human capital an independent asset.
+    # It is the textbook reason to hold *less* of your own market: if your
+    # salary is already a claim on it, buying the index doubles the bet.
+    # Sweeping it is `docs/23`.  Because it is a correlation and not a
+    # loading, raising it re-labels which part of income risk is systematic
+    # without changing how much income risk there is.
+    income_return_correlation: float = 0.0
     # Floor on labour income, as a multiple of economy-wide average earnings,
     # standing in for unemployment insurance and in-work benefits.  Default 0
     # (no floor), which leaves every existing result unchanged.
@@ -90,6 +99,8 @@ class LifecycleSpec:
         if self.social_security_formula not in ("progressive", "flat"):
             raise ValueError(
                 f"unknown social_security_formula {self.social_security_formula!r}")
+        if not -1.0 <= self.income_return_correlation <= 1.0:
+            raise ValueError("income_return_correlation must lie in [-1, 1]")
 
     @property
     def horizon(self) -> int:
@@ -208,6 +219,8 @@ def spec_from_config(cfg: Mapping[str, Any]) -> LifecycleSpec:
         permanent_shock_sd=float(income["permanent_shock_sd"]),
         transitory_shock_sd=float(income["transitory_shock_sd"]),
         income_shocks_enabled=bool(income["shocks_enabled"]),
+        income_return_correlation=float(
+            income.get("return_correlation", 0.0)),
         working_income_floor=float(income.get("working_income_floor", 0.0)),
         social_security_enabled=bool(ss["enabled"]),
         replacement_rate=float(ss["replacement_rate"]),
@@ -239,9 +252,24 @@ def draw_income_shocks(n_paths: int, n_years: int,
             rng.standard_normal((n_paths, n_years)))
 
 
+def _standardise(matrix: np.ndarray) -> np.ndarray:
+    """A matrix rescaled to zero mean and unit variance over all its entries.
+
+    Standardising the *realised* draws rather than using a population moment
+    keeps the requested correlation exact for the sample actually simulated,
+    which is what makes a sweep over it interpretable.
+    """
+    values = np.asarray(matrix, dtype=float)
+    sd = float(values.std())
+    if not np.isfinite(sd) or sd <= 0.0:
+        return np.zeros_like(values)
+    return (values - float(values.mean())) / sd
+
+
 def simulate_income(spec: LifecycleSpec, n_paths: int,
                     rng: np.random.Generator | None = None,
-                    shocks: Tuple[np.ndarray, np.ndarray] | None = None
+                    shocks: Tuple[np.ndarray, np.ndarray] | None = None,
+                    dom_eq: np.ndarray | None = None,
                     ) -> np.ndarray:
     """Real labour income over the working years, shape ``(n_paths, n_working)``.
 
@@ -253,6 +281,16 @@ def simulate_income(spec: LifecycleSpec, n_paths: int,
     :func:`draw_income_shocks`; they are sliced to the spec's working years,
     so a shorter career is a prefix of a longer one rather than an
     independent draw.
+
+    ``dom_eq`` supplies the domestic equity returns of the same paths. It is
+    used only when ``spec.income_return_correlation`` is non-zero, where the
+    permanent innovation is rotated toward the market:
+    ``rho * u + sqrt(1 - rho^2) * z``. Because that rotation preserves unit
+    variance, raising ``rho`` changes how much of a career's risk is
+    *systematic* without changing how much risk it carries -- so a sweep over
+    it isolates the correlation and does not confound it with a level of
+    income volatility. At ``rho = 0`` the arithmetic is untouched and every
+    other result in the project is bit-identical.
     """
     profile = spec.deterministic_income()[None, :]
     floor = spec.working_income_floor * float(
@@ -271,6 +309,17 @@ def simulate_income(spec: LifecycleSpec, n_paths: int,
             raise ValueError(
                 f"pre-drawn shocks are too small: need ({n_paths}, {n_work}), "
                 f"got {z_perm.shape}")
+    rho = float(spec.income_return_correlation)
+    if rho:
+        if dom_eq is None:
+            raise ValueError(
+                "income_return_correlation is set but no domestic equity "
+                "returns were supplied to correlate the shocks with")
+        market = _standardise(np.asarray(dom_eq)[:n_paths, :n_work])
+        if market.shape != (n_paths, n_work):
+            raise ValueError(
+                f"dom_eq must cover ({n_paths}, {n_work}), got {market.shape}")
+        z_perm = rho * market + np.sqrt(1.0 - rho ** 2) * z_perm
     perm = -0.5 * spec.permanent_shock_sd ** 2 + spec.permanent_shock_sd * z_perm
     tran = -0.5 * spec.transitory_shock_sd ** 2 + spec.transitory_shock_sd * z_tran
     permanent = np.exp(np.cumsum(perm, axis=1))
@@ -460,7 +509,8 @@ def run_chunked(
     results: Dict[str, LifecycleOutcome] = {}
     for chunk in sampler.chunks(n_paths, chunk_size):
         rng = np.random.default_rng(next(income_children))
-        income = simulate_income(spec, chunk.n_paths, rng)
+        income = simulate_income(spec, chunk.n_paths, rng,
+                                 dom_eq=chunk.dom_eq)
         outcomes = simulate_all(chunk, strategies, spec, income)
         for key, outcome in outcomes.items():
             results[key] = outcome if key not in results \

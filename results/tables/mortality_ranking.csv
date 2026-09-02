@@ -1,0 +1,7 @@
+strategy,label,baseline (m=88),fixed horizon,"less dispersed (m=88, b=7)",longer lives (m=93),shorter lives (m=83)
+balanced_all_equity,50/50 Domestic/International Equity,2.0,2.0,2.0,2.0,2.0
+bills_only,100% Bills (cash),6.0,6.0,6.0,6.0,6.0
+domestic_equity,100% Domestic Equity,4.0,4.0,4.0,4.0,4.0
+international_equity,100% International Equity,1.0,1.0,1.0,1.0,1.0
+sixty_forty,60/40 Domestic Equity/Domestic Bonds,5.0,5.0,5.0,5.0,5.0
+target_date_fund,Target-Date Fund (glide path),3.0,3.0,3.0,3.0,3.0

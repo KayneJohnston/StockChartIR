@@ -2727,3 +2727,270 @@ def plot_fees(common: pd.DataFrame, differential: pd.DataFrame,
 
         fig.tight_layout()
         return _save(fig, directory, name)
+
+
+def plot_cohorts(census: pd.DataFrame, detail: pd.DataFrame,
+                 realised: pd.DataFrame, by_country: pd.DataFrame,
+                 directory: str | Path, interval: Mapping[str, Any] | None = None,
+                 name: str = "fig46_cohorts") -> Path:
+    """The realised record: who is in it, what it paid, and why it is thin."""
+    with plt.rc_context(STYLE):
+        fig, axes = _grid(4, 3.0)
+
+        # -- 1. how many lifetimes each market actually supports -----------
+        ax = axes[0]
+        block = census.sort_values("cohorts")
+        y = np.arange(len(block), dtype=float)
+        ax.barh(y, block["cohorts"], color=_colour(0), height=0.72)
+        ax.set_yticks(y)
+        ax.set_yticklabels(block["iso"], fontsize=6.5)
+        ax.set_xlabel("Complete lifetimes on the record")
+        _title(ax, "A market closure removes a lifetime, not a year")
+        ax.grid(axis="y", alpha=0.0)
+
+        # -- 2. the distribution of the realised gap ----------------------
+        ax = axes[1]
+        gaps = detail["gap_pct"].to_numpy(dtype=float)
+        ax.hist(gaps, bins=30, color=_colour(0), alpha=0.85)
+        ax.axvline(0.0, color="black", linewidth=1.2)
+        ax.axvline(float(np.mean(gaps)), color=_colour(1), linewidth=1.6,
+                   linestyle="--")
+        share = float((gaps > 0).mean())
+        ax.annotate(f"ahead in {share:.0%}\nof cohorts",
+                    xy=(0.97, 0.95), xycoords="axes fraction", ha="right",
+                    va="top", fontsize=6.5, color="0.3")
+        ax.set_xlabel("All-international over 50/50, one realised lifetime (%)")
+        ax.set_ylabel("Cohorts")
+        _title(ax, "Every lifetime the panel can actually run")
+
+        # -- 3. the long-run legs, which is the mechanism ------------------
+        ax = axes[2]
+        ax.scatter(realised["domestic_annualised"] * 100,
+                   realised["sleeve_annualised"] * 100, s=14,
+                   color=_colour(0), alpha=0.55, zorder=3)
+        lo = float(min(realised["domestic_annualised"].min(),
+                       realised["sleeve_annualised"].min()) * 100) - 0.6
+        hi = float(max(realised["domestic_annualised"].max(),
+                       realised["sleeve_annualised"].max()) * 100) + 0.6
+        ax.plot([lo, hi], [lo, hi], color="black", linewidth=1.2,
+                label="equal returns")
+        ax.set_xlim(lo, hi)
+        ax.set_ylim(lo, hi)
+        ax.set_xlabel("Home market, 68-year annualised (%)")
+        ax.set_ylabel("The sleeve, same years (%)")
+        # Classified, not asserted: the claim is about this panel's record.
+        worst_sleeve = float(realised["sleeve_annualised"].min()) * 100
+        worst_home = float(realised["domestic_annualised"].min()) * 100
+        _title(ax, (f"The sleeve never fell below {worst_sleeve:.1f}%; "
+                    f"a home market reached {worst_home:.1f}%")
+               if worst_sleeve > worst_home else
+               "The worst realised lifetime was the sleeve's")
+        ax.legend(fontsize=6.5, loc="lower right")
+
+        # -- 4. by market, with the interval the countries support ---------
+        ax = axes[3]
+        block = by_country.sort_values("mean_gap_pct")
+        y = np.arange(len(block), dtype=float)
+        colours = [_colour(0) if v > 0 else _colour(1)
+                   for v in block["mean_gap_pct"]]
+        ax.barh(y, block["mean_gap_pct"], color=colours, height=0.72)
+        ax.set_yticks(y)
+        ax.set_yticklabels(block["iso"], fontsize=6.5)
+        ax.axvline(0.0, color="black", linewidth=1.2)
+        if interval:
+            ax.axvspan(float(interval["ci_low"]), float(interval["ci_high"]),
+                       color="0.85", alpha=0.55, zorder=0)
+            ax.axvline(float(interval["mean_gap_pct"]), color="0.35",
+                       linewidth=1.4, linestyle=":")
+            ax.annotate("95% over countries", xy=(float(interval["ci_high"]), 0.2),
+                        xytext=(4, 0), textcoords="offset points",
+                        fontsize=6, color="0.35", va="bottom")
+        ax.set_xlabel("Mean realised lead (%)")
+        ahead = int((block["mean_gap_pct"] > 0).sum())
+        _title(ax, (f"All {len(block)} markets favour the sleeve"
+                    if ahead == len(block) else
+                    f"{ahead} of {len(block)} markets, but not all"))
+        ax.grid(axis="y", alpha=0.0)
+
+        fig.tight_layout()
+    return _save(fig, directory, name)
+
+
+def plot_out_of_sample(frame: pd.DataFrame, benchmarks: pd.DataFrame,
+                       directory: str | Path,
+                       name: str = "fig47_out_of_sample") -> Path:
+    """What a solved schedule keeps when it meets history it was not fitted to."""
+    with plt.rc_context(STYLE):
+        fig, axes = _grid(2, 3.2)
+
+        # -- 1. in-sample gain against what transferred -------------------
+        ax = axes[0]
+        labels = [f"{r.family}\n{r.train_window} to {r.test_window}"
+                  for r in frame.itertuples()]
+        y = np.arange(len(frame), dtype=float)
+        height = 0.36
+        ax.barh(y + height / 2, frame["in_sample_gain_pct"], height=height,
+                color="0.72", label="measured where it was solved")
+        ax.barh(y - height / 2, frame["transfer_gain_pct"], height=height,
+                color=[_colour(0) if v > 0 else _colour(1)
+                       for v in frame["transfer_gain_pct"]],
+                label="measured on the other half")
+        ax.axvline(0.0, color="black", linewidth=1.2)
+        ax.set_yticks(y)
+        ax.set_yticklabels(labels, fontsize=6)
+        ax.set_xlabel("Gain over the best fixed strategy (%)")
+        _title(ax, "The gain is measured where the search ran")
+        ax.margins(y=0.10)
+        ax.legend(fontsize=6, loc="upper left", frameon=True,
+                  framealpha=0.92, edgecolor="none", labelspacing=0.3,
+                  handlelength=1.4)
+        ax.grid(axis="y", alpha=0.0)
+
+        # -- 2. the fixed strategies on both halves -----------------------
+        ax = axes[1]
+        windows = list(dict.fromkeys(benchmarks["window"]))
+        strategies = list(benchmarks[benchmarks["window"] == windows[0]]
+                          .sort_values("cec", ascending=False)["strategy"])
+        y = np.arange(len(strategies), dtype=float)
+        width = 0.8 / max(len(windows), 1)
+        for i, window in enumerate(windows):
+            block = (benchmarks[benchmarks["window"] == window]
+                     .set_index("strategy").reindex(strategies))
+            offset = (i - (len(windows) - 1) / 2) * width
+            ax.barh(y + offset, block["cec"], height=width * 0.9,
+                    color=_colour(i), label=window)
+        ax.set_yticks(y)
+        ax.set_yticklabels([_flat(s, 22) for s in strategies], fontsize=6.5)
+        ax.set_xlabel("Certainty equivalent consumption")
+        survivors = ", ".join(dict.fromkeys(
+            str(v) for v in benchmarks.sort_values(["window", "rank"])
+            .groupby("window").head(1)["strategy"]))
+        _title(ax, f"Both halves are won by {_flat(survivors, 999)}"
+               if "," not in survivors else
+               "The two halves are won by different strategies")
+        ax.legend(fontsize=6.5, loc="lower right", frameon=True,
+                  framealpha=0.92, edgecolor="none")
+        ax.grid(axis="y", alpha=0.0)
+
+        fig.tight_layout()
+    return _save(fig, directory, name)
+
+
+def plot_human_capital(curve: pd.DataFrame, ranking: pd.DataFrame,
+                       directory: str | Path,
+                       name: str = "fig48_human_capital") -> Path:
+    """What happens when the pay cheque is a claim on the home market."""
+    with plt.rc_context(STYLE):
+        fig, axes = _grid(2, 3.0)
+
+        ax = axes[0]
+        x = curve["correlation"].to_numpy(dtype=float)
+        y = curve["gap_pct"].to_numpy(dtype=float)
+        ax.plot(x, y, marker=_marker(0), color=_colour(0), linewidth=1.8)
+        ax.axhline(0.0, color="black", linewidth=1.2)
+        ax.fill_between(x, 0.0, y, color=_colour(0), alpha=0.10)
+        base = float(y[0]) if y.size else float("nan")
+        ax.axhline(base, color="0.5", linewidth=1.0, linestyle=":")
+        ax.annotate("independent human capital", xy=(x[0], base),
+                    xytext=(4, 6), textcoords="offset points", fontsize=6,
+                    color="0.35")
+        ax.set_xlabel("Correlation of the pay cheque with the home market")
+        ax.set_ylabel("All-international over 50/50 (%)")
+        widens = bool(y.size and y[-1] > y[0])
+        _title(ax, "Correlated human capital argues against the home market"
+               if widens else
+               "Correlated human capital argues for the home market")
+
+        ax = axes[1]
+        levels = [c for c in ranking.columns if isinstance(c, float)]
+        for i, (_, row) in enumerate(ranking.iterrows()):
+            ax.plot(levels, [float(row[c]) for c in levels],
+                    marker=_marker(i), color=_colour(i), linewidth=1.5,
+                    markersize=3.5, label=_flat(row["label"], 999))
+        ax.set_xlabel("Correlation of the pay cheque with the home market")
+        ax.set_ylabel("Certainty equivalent consumption")
+        orders = {tuple(ranking.sort_values(c, ascending=False)["strategy"])
+                  for c in levels}
+        _title(ax, "Nothing changes places" if len(orders) <= 1 else
+               "The order is not the same at every correlation")
+        ax.margins(y=0.16)
+        ax.legend(fontsize=5.5, ncol=2, loc="lower left", labelspacing=0.3,
+                  handlelength=1.4, columnspacing=1.0, frameon=True,
+                  framealpha=0.92, edgecolor="none")
+
+        fig.tight_layout()
+    return _save(fig, directory, name)
+
+
+def plot_mortality(frame: pd.DataFrame, curve: pd.DataFrame,
+                   survival: Mapping[str, np.ndarray], ages: np.ndarray,
+                   directory: str | Path,
+                   name: str = "fig49_mortality") -> Path:
+    """A random lifespan, and what it does to the ranking."""
+    with plt.rc_context(STYLE):
+        fig, axes = _grid(3, 3.0)
+
+        # -- 1. the mortality laws themselves ------------------------------
+        ax = axes[0]
+        for i, (label, curve_values) in enumerate(survival.items()):
+            ax.plot(ages, np.asarray(curve_values) * 100, color=_colour(i),
+                    linewidth=1.6, label=_wrap(label, 22))
+        ax.set_xlabel("Age")
+        ax.set_ylabel("Still alive (%)")
+        _title(ax, "The laws swept")
+        ax.legend(fontsize=5.5, loc="lower left", labelspacing=0.3,
+                  handlelength=1.4)
+
+        # -- 2. certainty equivalent under each law ------------------------
+        ax = axes[1]
+        laws = list(dict.fromkeys(frame["mortality"]))
+        strategies = list(frame[frame["mortality"] == laws[0]]
+                          .sort_values("cec", ascending=False)["strategy"])
+        x = np.arange(len(laws), dtype=float)
+        for i, key in enumerate(strategies):
+            block = frame[frame["strategy"] == key].set_index("mortality") \
+                .reindex(laws)
+            ax.plot(x, block["cec"], marker=_marker(i), color=_colour(i),
+                    linewidth=1.5, markersize=3.5, label=_flat(key, 999))
+        ax.set_xticks(x)
+        ax.set_xticklabels([_wrap(str(v), 14) for v in laws], fontsize=5.5)
+        ax.set_ylabel("Certainty equivalent consumption")
+        _title(ax, "The ranking under each law")
+        ax.margins(y=0.22)
+        ax.legend(fontsize=5.5, ncol=2, loc="lower left", labelspacing=0.3,
+                  handlelength=1.2, columnspacing=1.0, frameon=True,
+                  framealpha=0.92, edgecolor="none")
+
+        # -- 3. the lead, and what happens to ruin -------------------------
+        ax = axes[2]
+        x = np.arange(len(curve), dtype=float)
+        ax.bar(x, curve["gap_pct"], width=0.55, color=_colour(0),
+               label="lead of all-international (left)")
+        ax.axhline(0.0, color="black", linewidth=1.2)
+        ax.set_xticks(x)
+        ax.set_xticklabels([_wrap(str(v), 16) for v in curve["mortality"]],
+                           fontsize=5.5)
+        ax.set_ylabel("All-international over 50/50 (%)")
+        ruin_col = [c for c in curve.columns if c.startswith("ruin_")]
+        if ruin_col:
+            twin = ax.twinx()
+            twin.plot(x, curve[ruin_col[0]] * 100, marker=_marker(1),
+                      color=_colour(1), linewidth=1.6,
+                      label="chance of outliving the portfolio (right)")
+            twin.set_ylabel("Outlives the portfolio (%)")
+            twin.grid(False)
+            handles = (ax.get_legend_handles_labels()[0]
+                       + twin.get_legend_handles_labels()[0])
+            labels = (ax.get_legend_handles_labels()[1]
+                      + twin.get_legend_handles_labels()[1])
+            ax.legend(handles, labels, fontsize=5.5, loc="lower left",
+                      labelspacing=0.3, handlelength=1.4, frameon=True,
+                      framealpha=0.92, edgecolor="none")
+        ruin = curve[ruin_col[0]].to_numpy(dtype=float) if ruin_col else None
+        kinder = bool(ruin is not None and ruin[1:].max() < ruin[0])
+        _title(ax, "Outliving the money is a smaller risk when life is finite"
+               if kinder else
+               "The lead barely moves; the chance of outliving the money does")
+
+        fig.tight_layout()
+    return _save(fig, directory, name)

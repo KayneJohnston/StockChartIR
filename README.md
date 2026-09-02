@@ -99,9 +99,13 @@ is the read-through; the table below is the build.
 | [`docs/18_sleeve_weighting.md`](docs/18_sleeve_weighting.md) | Whether the headline needs an equal-weighted international sleeve, or survives five constructions: equal, real GDP, population, GDP per capita and inverse volatility |
 | [`docs/19_panel_robustness.md`](docs/19_panel_robustness.md) | Delete-one-country influence, the jackknife standard error sixteen countries actually support, and whether the ranking is stable through time |
 | [`docs/20_fees.md`](docs/20_fees.md) | What fund costs do to the headline, and how large a domestic-versus-international fee differential it takes to undo it |
+| [`docs/21_realised_cohorts.md`](docs/21_realised_cohorts.md) | The lifetimes the panel actually contains -- one country, one birth year, sixty-eight years in calendar order -- run with no resampling of any kind |
+| [`docs/22_out_of_sample.md`](docs/22_out_of_sample.md) | Solving each schedule on one half of the record and scoring it on the other, to separate the transferable part of an in-sample gain from the fitted part |
+| [`docs/23_human_capital.md`](docs/23_human_capital.md) | Correlating labour income with the home market -- the textbook reason to hold less of it, and the assumption every other result quietly makes |
+| [`docs/24_mortality.md`](docs/24_mortality.md) | Replacing the certain ninety-third birthday with a Gompertz lifespan, by re-weighting the utility aggregation rather than re-simulating |
 
-All fourteen are **generated** by `main.py` from live pipeline objects -- edit
-`src/report.py`, not the Markdown.
+All twenty-four are **generated** by `main.py` from live pipeline objects --
+edit `src/report.py`, not the Markdown.
 
 ## How much of this data is real
 

@@ -153,6 +153,37 @@ def front_matter(ctx: Any) -> List[Flowable]:
     spend_worst = str(families["variant"].iloc[-1]).split(" (")[0]
     spend_spread = (float(families["cec_gamma5"].iloc[0])
                     / float(families["cec_gamma5"].iloc[-1]) - 1.0) * 100.0
+    # The four studies added after the first pass, read from their own tables
+    # so the abstract cannot drift from the sections.
+    from src import cohorts as _coh, humancapital as _hcp, mortality as _mrt
+    from src import oos as _oos
+    coh_detail = f.table("cohort_detail")
+    coh_summary = f.table("cohort_summary")
+    coh_census = f.table("cohort_census")
+    coh_signs = _coh.sign_test(coh_detail)
+    coh_winner = str(coh_summary["strategy"].iloc[0])
+    coh_n = int(len(coh_detail))
+    coh_independent = int(coh_census["cohorts"].gt(0).sum())
+    _coh_ci = _coh.cluster_bootstrap(coh_detail, n_boot=2000)
+    coh_ci = (float(_coh_ci["ci_low"]), float(_coh_ci["ci_high"]))
+    hc_curve = f.table("human_capital_gap")
+    hc_found = _hcp.verdict(hc_curve, _hcp.sensitivity(hc_curve),
+                            ("international_equity", "balanced_all_equity"))
+    hc_change = float(hc_found["change_pp"])
+    hc_changes = bool(hc_found["winner_ever_changes"])
+    mort_curve = f.table("mortality_gap")
+    mort_found = _mrt.verdict(f.table("mortality_comparison"), mort_curve,
+                              ("international_equity", "balanced_all_equity"))
+    mort_change = float(mort_found["largest_change_pp"])
+    mort_changes = bool(mort_found["ordering_ever_changes"])
+    oos_frame = f.table("oos_transfer")
+    oos_found = _oos.verdict(
+        oos_frame, _oos.ranking_is_stable(f.table("oos_benchmarks")))
+    oos_none = bool(oos_found["no_run_transfers"])
+    oos_wins = int(oos_found["runs_that_beat_the_benchmark"])
+    oos_runs = int(oos_found["runs"])
+    oos_forward = float(oos_found["forward_gain_pct"])
+    oos_backward = float(oos_found["backward_gain_pct"])
 
     out: List[Flowable] = [
         Spacer(1, 1.1 * cm),
@@ -195,8 +226,22 @@ def front_matter(ctx: Any) -> List[Flowable]:
         f"fund at a five-percent ruin tolerance). "
         f"We then push past replication with "
         f"{extension_count_word().lower()} further studies, taken in the "
-        f"order the paper presents them. Four ask whether the result holds "
-        f"up. Deleting each country in "
+        f"order the paper presents them. "
+        f"{group_count_word('robustness')} ask whether the result holds up. "
+        f"Re-running the lifetimes the panel actually contains — one country, "
+        f"one birth year, sixty-eight years in the order they happened, with "
+        f"no resampling of any kind — "
+        + (f"leaves all-international ahead in "
+           f"{int(coh_signs['countries_won'])} of "
+           f"{int(coh_signs['countries_total'])} markets, so the ordering is "
+           f"not a property of the block bootstrap"
+           if coh_winner == "international_equity" else
+           "reverses the ordering, which the rest of the paper has to be "
+           "read against")
+        + f"; that record holds {coh_n} complete lifetimes but only "
+        f"{coh_independent} independent ones, and a bootstrap over countries "
+        f"puts the realised lead at [{coh_ci[0]:.1f}, {coh_ci[1]:.1f}]. "
+        f"Deleting each country in "
         f"turn and rebuilding the panel around its absence "
         + (f"leaves the ranking intact in all {n_deletions} cases"
            if survives_all else
@@ -221,9 +266,21 @@ def front_matter(ctx: Any) -> List[Flowable]:
         f"{fee_be_bp:.0f} basis points to cancel the lead — beyond any "
         f"index-fund pair. Currency hedging the international leg loses "
         f"certainty-equivalent consumption at every ratio tested, even when "
-        f"the hedge is free. "
-        f"Three more ask whether a better portfolio exists inside the same "
-        f"asset menu. Solving the glide path directly by coordinate ascent "
+        f"the hedge is free. Correlating labour income with the home market — "
+        f"the textbook reason to hold less of it, and assumed away everywhere "
+        f"else — moves the lead {hc_change:+.2f} points across a correlation "
+        f"range running past anything a labour economist would defend, "
+        + ("without changing the order"
+           if not hc_changes else "and does change the order")
+        + f"; replacing the certain ninety-third birthday with a Gompertz "
+        f"lifespan moves it by at most {mort_change:.2f} points and "
+        + ("leaves the ranking identical"
+           if not mort_changes else "does reorder the strategies")
+        + f". "
+        f"{group_count_word('portfolio')} ask whether a better portfolio "
+        f"exists inside the same asset menu, and whether solving for one "
+        f"survives data it did not see. Solving the glide path directly by "
+        f"coordinate ascent "
         f"under common random numbers reproduces the all-equity corner rather "
         f"than an interior optimum; freeing all four portfolio weights at "
         f"every age — {alloc_params} parameters on the simplex — adds "
@@ -232,8 +289,21 @@ def front_matter(ctx: Any) -> List[Flowable]:
         f"borrowing to invest is worth {lev_free:+.2f}% at a zero borrowing "
         f"spread over the real bill rate but decays quickly in that spread, "
         f"breaking even by {break_even:.2%}, with the optimiser levering a "
-        f"diversified portfolio rather than a concentrated one. "
-        f"Two widen the menu. Adding housing — de-smoothed to undo the "
+        f"diversified portfolio rather than a concentrated one. Splitting "
+        f"the record in half and scoring each solved schedule on the half it "
+        f"was never fitted to "
+        + ("leaves none of them ahead of the best constant mix, so those "
+           "in-sample gains are upper bounds"
+           if oos_none else
+           f"leaves {oos_wins} of {oos_runs} ahead of the best constant mix — "
+           f"the ones fitted to the turbulent first half and applied forward "
+           f"({oos_forward:+.2f}%), not the ones fitted to the calm post-war "
+           f"half and applied back ({oos_backward:+.2f}%)"
+           if oos_found["asymmetric"] else
+           f"leaves {oos_wins} of {oos_runs} ahead of the best constant mix")
+        + f"; the strategy that transfers is a fixed allocation held "
+        f"unchanged for a lifetime. "
+        f"{group_count_word('menu')} widen the menu. Adding housing — de-smoothed to undo the "
         f"appraisal lag the published index carries — "
         + (f"earns {pc(float(house_free['mean_housing']), 0)} of the "
            f"portfolio when it is free to hold and "
@@ -254,8 +324,9 @@ def front_matter(ctx: Any) -> List[Flowable]:
            f"{pc(mort_ret, 0)} in retirement, contrary to observed household "
            f"behaviour")
         + ". "
-        f"The last five leave the portfolio alone and search the rest of the "
-        f"plan, in the order a life meets it. Conditioning a lifetime on how "
+        f"The last {group_count_word('plan').lower()} leave the portfolio "
+        f"alone and search the rest of the plan, in the order a life meets "
+        f"it. Conditioning a lifetime on how "
         f"expensive its market was at the moment it began — using the "
         f"trailing dividend yield an investor could observe, ranked against "
         f"tercile boundaries computed only from country-years that had "
@@ -328,27 +399,49 @@ def contents(ctx: Any) -> List[Flowable]:
 #: means editing this tuple and the matching block in :func:`story` -- and
 #: nothing else. Hand-numbered references were how a reference came to point
 #: at the wrong heading twice in this project's history; the token cannot.
+#: The reading order, and therefore the numbering. Four movements:
+#:
+#: 1. **The claim** -- what was replicated, on what data, by what method, and
+#:    what came out.
+#: 2. **Is the claim real?** -- ordered from the most internal test to the
+#:    most external. First the model's own parameters, then its sampler, then
+#:    which countries and eras it was given, then how the foreign sleeve was
+#:    built and whether to hedge it, then when the investor happened to start,
+#:    then what implementation costs, and last the two assumptions that were
+#:    quietly flattering the result.
+#: 3. **What else the investor decides** -- the portfolio first (glide,
+#:    simplex, leverage), immediately followed by the check on whether any of
+#:    those solved schedules survives data it was not fitted to; then the
+#:    wider asset menu, then the cash-flow decisions in the order a life
+#:    presents them: save, retire, spend.
+#: 4. **What it means.**
 SECTION_ORDER: Tuple[str, ...] = (
     "introduction",
     "background",
     "data",
     "methods",
-    # The result, and everything that tests whether it holds.
+    # The claim.
     "baseline",
+    # Is the claim real? From the model's own dials outward.
     "sensitivity",
+    "cohorts",
     "panel",
     "sleeve",
-    "fees",
     "hedging",
-    # Can a better portfolio be found inside the same asset menu?
+    "valuation",
+    "fees",
+    "human_capital",
+    "mortality",
+    # What else the investor decides. The portfolio, and whether solving for
+    # it survives contact with data it did not see.
     "glide",
     "allocation",
     "leverage",
+    "out_of_sample",
     # Widening the menu.
     "housing",
     "mortgage",
-    # When you live, and what you do about it -- in lifecycle order.
-    "valuation",
+    # The cash-flow decisions, in the order a life presents them.
     "saving",
     "accumulation",
     "retirement",
@@ -373,20 +466,56 @@ SECTION_TOKEN = re.compile(r"#([a-z_]+)((?:\.\d+)*)")
 #: from the reading order rather than typed -- it went stale twice before this
 #: was here.
 EXTENSION_SECTIONS: Tuple[str, ...] = SECTION_ORDER[
-    SECTION_ORDER.index("panel"):SECTION_ORDER.index("discussion")]
+    SECTION_ORDER.index("cohorts"):SECTION_ORDER.index("discussion")]
+
+#: How the abstract walks the extensions. The names are the groups it uses;
+#: the sizes are derived from these tuples rather than typed, and
+#: ``tests/test_paper_sections.py`` requires them to partition
+#: :data:`EXTENSION_SECTIONS` exactly -- so a reordering cannot leave the
+#: abstract announcing "four" and then describing five.
+EXTENSION_GROUPS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
+    ("robustness", ("cohorts", "panel", "sleeve", "hedging", "valuation",
+                    "fees", "human_capital", "mortality")),
+    ("portfolio", ("glide", "allocation", "leverage", "out_of_sample")),
+    ("menu", ("housing", "mortgage")),
+    ("plan", ("saving", "accumulation", "retirement", "spending")),
+)
+
+
+def group_count_word(name: str) -> str:
+    """`Eight`, for the group of that name, or the numeral past the table."""
+    for key, members in EXTENSION_GROUPS:
+        if key == name:
+            return NUMBER_WORDS.get(len(members), str(len(members)))
+    raise KeyError(f"unknown extension group {name!r}")
+
 
 #: Cardinals spelled out, for a title that should not contain a numeral.
 NUMBER_WORDS: Dict[int, str] = {
+    1: "One", 2: "Two", 3: "Three", 4: "Four", 5: "Five", 6: "Six",
+    7: "Seven", 8: "Eight", 9: "Nine",
     10: "Ten", 11: "Eleven", 12: "Twelve", 13: "Thirteen", 14: "Fourteen",
     15: "Fifteen", 16: "Sixteen", 17: "Seventeen", 18: "Eighteen",
-    19: "Nineteen", 20: "Twenty",
+    19: "Nineteen", 20: "Twenty", 21: "Twenty-one", 22: "Twenty-two",
+    23: "Twenty-three", 24: "Twenty-four", 25: "Twenty-five",
 }
 
 
 def extension_count_word() -> str:
-    """`Fourteen`, or the numeral if the paper ever grows past the table."""
+    """`Eighteen`, or the numeral if the paper grows past the table."""
     n = len(EXTENSION_SECTIONS)
     return NUMBER_WORDS.get(n, str(n))
+
+
+def _pretty_strategy(key: str) -> str:
+    """A configured strategy label for a bare key, so no table prints one.
+
+    The label lives in ``config.yaml``; falling back to the de-underscored key
+    keeps this working for the solved schedules, which are not configured
+    strategies and have no label of their own.
+    """
+    from src import plots
+    return plots.STRATEGY_LABEL.get(key, key.replace("_", " "))
 
 
 def section_number(key: str) -> int:
@@ -5135,8 +5264,10 @@ def section_panel(ctx: Any) -> List[Flowable]:
            f"({pc(float(why['counterexample_arithmetic']), 2)}), and removing "
            f"it costs the sleeve only "
            f"{float(why['counterexample_delta']):+.2f} points. How a market's "
-           f"good years line up against the other fourteen matters as much as "
-           f"its average, and that is what the measured column captures."
+           f"good years line up against the "
+           f"{NUMBER_WORDS.get(n - 2, str(n - 2)).lower()} "
+           f"others it shares any given sleeve with matters as much as its "
+           f"average, and that is what the measured column captures."
            if why.get("counterexample") else "")))
 
     out.append(ctx.h2("#panel.4 What sixteen countries actually support"))
@@ -6367,6 +6498,539 @@ def _check_section_order(parts: List[Flowable]) -> None:
 # ---------------------------------------------------------------------------
 # Assembly
 # ---------------------------------------------------------------------------
+def section_cohorts(ctx: Any) -> List[Flowable]:
+    f = ctx.f
+    census = f.table("cohort_census")
+    summary = f.table("cohort_summary")
+    detail = f.table("cohort_detail")
+    by_country = f.table("cohort_by_country")
+    realised = f.table("cohort_long_run_returns")
+
+    from src import cohorts as ch
+    cfg = f.cfg
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    pair = (str(cfg["cohorts"]["challenger"]), str(cfg["cohorts"]["incumbent"]))
+    horizon = int(cfg["lifecycle"]["age_death"]) - int(cfg["lifecycle"]["age_start"])
+    interval = ch.cluster_bootstrap(detail, n_boot=2000)
+    signs = ch.sign_test(detail)
+    spread = ch.dispersion(realised)
+    n_cohorts = int(len(detail))
+    independent = int(census["cohorts"].gt(0).sum())
+    cec_col = [c for c in summary.columns if c.startswith("cec_crra_")][0]
+    values = dict(zip(summary["strategy"], summary[cec_col]))
+    cec_gap = (values[pair[0]] / values[pair[1]] - 1.0) * 100.0
+    winner = str(summary["strategy"].iloc[0])
+    richest = census.iloc[0]
+    poorest = census.iloc[-1]
+    losers = by_country[by_country["mean_gap_pct"] <= 0.0]
+
+    out: List[Flowable] = [
+        ctx.h1("#cohorts. The Realised Record, Without the Bootstrap")]
+    out.append(ctx.p(
+        f"Every number to this point comes from resampled histories. That is "
+        f"the right way to get a distribution out of {horizon * 2 - 5} years "
+        f"of annual data, and it leaves one question open that no amount of "
+        f"resampling can close: is the result a property of the world, or of "
+        f"the sampler? This section answers it by not resampling at all."))
+    out.append(ctx.p(
+        f"A <b>cohort</b> is one country and one birth year. The investor "
+        f"turns {int(cfg['lifecycle']['age_start'])} in the first year of the "
+        f"window, holds the strategy through that country’s realised returns "
+        f"and the realised leave-one-out sleeve of every other market, in "
+        f"calendar order, and dies {horizon} years later. Nothing is drawn. "
+        f"There is exactly one such lifetime for every (country, birth year) "
+        f"pair the panel can support, and labour income is deterministic "
+        f"here so that the whole cross-sectional spread is about returns."))
+
+    out.append(ctx.h2("#cohorts.1 How thin the realised record is"))
+    out.append(ctx.p(
+        f"The panel supports <b>{n_cohorts} complete lifetimes</b>. It does "
+        f"not contain {n_cohorts} pieces of evidence. Adjacent cohorts in the "
+        f"same country share {horizon - 1} of their {horizon} years, and cut "
+        f"into non-overlapping lifetimes the same record yields "
+        f"<b>{independent}</b> — one per market. Every cohort also lives "
+        f"through the same two world wars, so even those are not independent "
+        f"of one another. Inference below is therefore a bootstrap over "
+        f"<i>countries</i>, never a standard error over cohorts."))
+    out.extend(ctx.table(
+        [["Market", "Usable years", "Longest unbroken run", "Lifetimes",
+          "Earliest birth year"]]
+        + [[str(r["iso"]), f"{int(r['usable_years'])}",
+            f"{int(r['longest_unbroken'])}", f"{int(r['cohorts'])}",
+            f"{int(r['first_start'])}" if int(r["cohorts"]) else "—"]
+           for _, r in census.iterrows()],
+        "What each market contributes to the realised record.",
+        note="A lifetime cannot step over a market closure, so a gap costs "
+             "sixty-eight cohorts rather than the handful of years it spans."))
+    out.append(ctx.p(
+        f"<b>A market closure removes a lifetime, not a year.</b> The "
+        f"bootstrap refuses blocks that span a gap and keeps drawing; a "
+        f"cohort that spans one cannot be run at all. "
+        f"{str(richest['iso'])} contributes {int(richest['cohorts'])} "
+        f"lifetimes and {str(poorest['iso'])} contributes "
+        f"{int(poorest['cohorts'])}, the earliest of them beginning in "
+        f"{int(poorest['first_start'])}. Every runnable German, Japanese and "
+        f"Spanish lifetime therefore <i>begins after</i> that country’s "
+        f"catastrophe and rides the recovery. This design is structurally "
+        f"kinder to domestic equity than the bootstrap is, and that should be "
+        f"held in mind for everything that follows."))
+
+    out.append(ctx.h2("#cohorts.2 What the realised lifetimes paid"))
+    out.extend(ctx.table(
+        [["Strategy", "CEC", "Median retirement consumption",
+          "5th percentile", "P(ruin)"]]
+        + [[str(r["label"]), f"{float(r[cec_col]):.4f}",
+            f"{float(r['median_retirement_consumption']):.3f}",
+            f"{float(r['p5_retirement_consumption']):.3f}",
+            f"{float(r['prob_ruin']):.1%}"]
+           for _, r in summary.iterrows()],
+        f"Certainty equivalent over {n_cohorts} realised lifetimes, "
+        f"γ = {gamma:g}. No resampling of any kind."))
+    out.append(ctx.p(
+        (f"<b>The ordering survives with no resampling at all.</b> "
+         f"All-international delivers a certainty equivalent "
+         f"{cec_gap:.1f}% above the 50/50 split over the lifetimes the panel "
+         f"actually contains, and it is ahead in "
+         f"{signs['cohort_win_rate']:.0%} of them. Whatever else the headline "
+         f"is, it is not an artefact of the block bootstrap."
+         if winner == pair[0] else
+         f"<b>The ordering does not survive without resampling.</b> The best "
+         f"strategy over the realised record is "
+         f"<i>{_pretty_strategy(winner)}</i>, which contradicts the "
+         f"bootstrap result directly.")))
+    out.append(ctx.p(
+        f"Resampling <i>countries</i> rather than cohorts gives a mean lead "
+        f"of {interval['mean_gap_pct']:.1f}% with a 95% interval of "
+        f"[{interval['ci_low']:.1f}, {interval['ci_high']:.1f}]"
+        + (", which excludes zero. " if interval["excludes_zero"]
+           else ", which contains zero. ")
+        + f"Counting by market rather than by cohort — which gives the United "
+        f"States sixty-four votes instead of one — the lead holds in "
+        f"{signs['countries_won']} of {signs['countries_total']} markets."))
+    if len(losers):
+        out.append(ctx.p(
+            "The exceptions are the interesting rows: "
+            + ", ".join(f"<b>{str(r['iso'])}</b> ({float(r['mean_gap_pct']):+.0f}%, "
+                        f"{int(r['cohorts'])} lifetimes from "
+                        f"{int(r['first_start'])})"
+                        for _, r in losers.iterrows())
+            + ". Two of them are markets whose only runnable cohorts start at "
+              "the bottom of a post-war recovery, which is the composition "
+              "bias of the previous subsection showing up as a result."))
+
+    out.append(ctx.h2("#cohorts.3 Why the realised lead is larger than the "
+                      "resampled one"))
+    out.append(ctx.p(
+        "The bootstrap headline and the number above are not the same "
+        "quantity and should not be read as an estimate and a re-estimate of "
+        "one thing. A bootstrapped lifetime is a mosaic of blocks drawn from "
+        "different decades, so a market that underperformed for forty years "
+        "running contributes a few of those blocks and the rest of the "
+        "lifetime is spliced in from better eras. A cohort cannot splice."))
+    out.append(ctx.p(
+        f"The realised record makes the consequence visible. Over the "
+        f"{horizon}-year windows the panel supports, a home market’s "
+        f"annualised real return ranges from "
+        f"{spread['worst_domestic_pp']:.1f}% to "
+        f"{spread['best_domestic_pp']:.1f}%. The international sleeve over "
+        f"the identical years ranges from {spread['worst_sleeve_pp']:.1f}% to "
+        f"{spread['best_sleeve_pp']:.1f}%, with a standard deviation of "
+        f"{spread['sleeve_sd_pp']:.2f} points against "
+        f"{spread['domestic_sd_pp']:.2f} for the single market."))
+    out.append(ctx.note(
+        f"That is the argument of this paper stated without a single "
+        f"resampled path: there is no realised {horizon}-year window in which "
+        f"the diversified sleeve did badly, and there are several in which a "
+        f"single home market was destroyed. The sleeve was ahead in "
+        f"{spread['share_sleeve_ahead']:.0%} of realised lifetimes, by "
+        f"{spread['mean_excess_pp']:.2f} points a year."))
+
+    out.extend(ctx.figure(
+        "fig46_cohorts",
+        "Top left: how many complete lifetimes each market contributes, which "
+        "a market closure reduces by a lifetime rather than by a year. Top "
+        "right: the realised lead, one observation per lifetime the panel can "
+        "run. Bottom left: the two legs' annualised returns over the same "
+        "sixty-eight years, cohort by cohort. Bottom right: the mean lead by "
+        "market, against the interval a bootstrap over countries supports."))
+
+    out.append(ctx.h2("#cohorts.4 What this section adds, and what it does not"))
+    out.extend(ctx.bullets([
+        "The ordering is not an artefact of the block bootstrap. It is in the "
+        "realised record, without resampling, in "
+        f"{signs['countries_won']} of {signs['countries_total']} markets.",
+        f"The honest interval on the realised lead is "
+        f"[{interval['ci_low']:.1f}, {interval['ci_high']:.1f}] from "
+        f"{independent} independent lifetimes. This section adds confidence "
+        f"in the <i>direction</i> and almost none in the magnitude.",
+        "The design cannot see the worst domestic histories in the panel, "
+        "because a lifetime cannot step over a market closure. The bootstrap "
+        "can, which is one of the reasons it stays the headline.",
+    ]))
+    return out
+
+
+def section_out_of_sample(ctx: Any) -> List[Flowable]:
+    f = ctx.f
+    transfer = f.table("oos_transfer")
+    benchmarks = f.table("oos_benchmarks")
+
+    from src import oos as oo
+    cfg = f.cfg
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    cut = int(cfg["out_of_sample"]["cut_year"])
+    n_paths = int(cfg["out_of_sample"]["n_paths"])
+    stability = oo.ranking_is_stable(benchmarks)
+    found = oo.verdict(transfer, stability)
+    winner = str(transfer["benchmark"].iloc[0])
+    # The same count section #cohorts arrives at, read off its own table so
+    # the two sections cannot disagree about how much evidence there is.
+    independent = int(f.table("cohort_census")["cohorts"].gt(0).sum())
+
+    out: List[Flowable] = [
+        ctx.h1("#out_of_sample. Do the Solved Schedules Survive Data They "
+               "Did Not See?")]
+    out.append(ctx.p(
+        f"Sections #glide, #allocation and #leverage each hand a "
+        f"coordinate-ascent search sixty-eight free parameters and report "
+        f"what it found. Every one of those gains is measured on the same "
+        f"history the search was given. That is the standard way to overstate "
+        f"a result: with sixty-eight parameters and the "
+        f"{independent} independent lifetimes "
+        f"section #cohorts counts, a search can fit a good deal of noise, and "
+        f"an in-sample gain is an upper bound on what an investor standing at "
+        f"the start could have had."))
+    out.append(ctx.p(
+        f"The design splits the calendar record at {cut}, solves on one half "
+        f"and scores on the other, against three references: the gain "
+        f"<i>where it was solved</i> — the number those sections report "
+        f"today; the gain <i>where it was scored</i>, against the best fixed "
+        f"strategy on the untouched half, which is what an investor of the "
+        f"period could actually have held; and a <i>ceiling</i>, the same "
+        f"family solved on the test half itself. Both directions are run, "
+        f"because the two halves of this panel are not interchangeable: one "
+        f"contains two world wars and the other contains the post-war "
+        f"expansion."))
+
+    out.append(ctx.h2("#out_of_sample.1 What transferred"))
+    out.extend(ctx.table(
+        [["Family", "Solved on", "Scored on", "Gain where solved (%)",
+          "Gain where scored (%)", "Ceiling (%)"]]
+        + [[str(r["label"]), str(r["train_window"]), str(r["test_window"]),
+            f"{float(r['in_sample_gain_pct']):+.2f}",
+            f"{float(r['transfer_gain_pct']):+.2f}",
+            f"{float(r['ceiling_gain_pct']):+.2f}"]
+           for _, r in transfer.iterrows()],
+        f"Solved schedules against the best fixed strategy, γ = {gamma:g}, "
+        f"{n_paths:,} lifetimes per window.",
+        note="A negative middle column is a schedule that would have been "
+             "worse than holding a constant mix."))
+    out.append(ctx.p(
+        (f"<b>No solved schedule beats a constant mix out of sample.</b> In "
+         f"all {found['runs']} runs the schedule solved on one half is worse "
+         f"on the other than simply holding the best fixed strategy. The "
+         f"in-sample gains those sections report — averaging "
+         f"{found['mean_in_sample_gain_pct']:.2f}% — are descriptions of the "
+         f"window the search was given."
+         if found["no_run_transfers"] else
+         f"<b>Every solved schedule survives the split.</b> All "
+         f"{found['runs']} runs beat the best fixed strategy on data they "
+         f"were not fitted to."
+         if found["every_run_transfers"] else
+         f"<b>The solved schedules transfer in "
+         f"{found['runs_that_beat_the_benchmark']} of {found['runs']} runs, "
+         f"and which ones is the finding.</b> A schedule learned on "
+         f"{found['earlier_window']} and applied to "
+         f"{found['later_window']} keeps "
+         f"{found['forward_gain_pct']:+.2f}%; the same exercise run backwards "
+         f"— learned on {found['later_window']}, applied to "
+         f"{found['earlier_window']} — delivers "
+         f"{found['backward_gain_pct']:+.2f}%. The in-sample gain averages "
+         f"{found['mean_in_sample_gain_pct']:.2f}% either way."
+         if found["asymmetric"] else
+         f"<b>The solved schedules transfer in "
+         f"{found['runs_that_beat_the_benchmark']} of {found['runs']} runs.</b> "
+         f"The in-sample gain averages "
+         f"{found['mean_in_sample_gain_pct']:.2f}% and what survives the "
+         f"split averages {found['mean_transfer_gain_pct']:.2f}%.")))
+    if found.get("asymmetric"):
+        out.append(ctx.p(
+            f"That asymmetry has a reading, and it is not a flattering one "
+            f"for the optimiser. The earlier half contains two world wars, "
+            f"several market closures and the Depression; the later half "
+            f"contains the post-war expansion. A schedule fitted to the "
+            f"turbulent window carries something forward into the calm one. "
+            f"A schedule fitted to the calm window learns a world that never "
+            f"came back, and applying it to the turbulent half costs "
+            f"{abs(found['backward_gain_pct']):.2f}% against simply holding a "
+            f"constant mix. An investor solving today would be in the second "
+            f"position, not the first."))
+    out.append(ctx.note(
+        f"The benchmark the solved schedules are measured against is "
+        f"<i>{_pretty_strategy(winner)}</i> in every run. The strategy that "
+        f"does transfer is a constant mix, held unchanged for a lifetime — "
+        f"which is the strategy this paper is actually about."))
+
+    out.append(ctx.h2("#out_of_sample.2 Are the two halves the same world?"))
+    out.extend(ctx.table(
+        [["Window", "Strategy", "CEC", "Rank"]]
+        + [[str(r["window"]), str(r["label"]), f"{float(r['cec']):.4f}",
+            f"{int(r['rank'])}"] for _, r in benchmarks.iterrows()],
+        "Every fixed strategy on each half of the record.",
+        note="If the fixed ranking moves across the split, some of what fails "
+             "to transfer is the world changing rather than the search "
+             "overfitting."))
+    out.append(ctx.p(
+        ("The fixed strategies keep exactly their order across the two "
+         "halves, so the split is not simply comparing two different worlds."
+         if stability.get("stable") else
+         f"The fixed strategies do <b>not</b> keep their order across the "
+         f"halves — {int(stability.get('n_positions_moved', 0))} positions "
+         f"move, though the winner is "
+         f"{'the same' if stability.get('same_winner') else 'different'}. "
+         f"Some of what fails to transfer above is therefore the world "
+         f"changing between the halves rather than the search overfitting, "
+         f"and this test cannot separate the two.")))
+
+    out.extend(ctx.figure(
+        "fig47_out_of_sample",
+        "Left: the gain each solved schedule reports where it was solved, "
+        "against what it delivers on the half it never saw. Right: the fixed "
+        "strategies on both halves of the record."))
+
+    out.append(ctx.h2("#out_of_sample.3 What this changes"))
+    out.extend(ctx.bullets([
+        f"The gains reported in sections #glide, #allocation and #leverage "
+        f"should be read as <b>upper bounds</b>. The transferable part "
+        f"averages {found['mean_transfer_gain_pct']:.2f}% against "
+        f"{found['mean_in_sample_gain_pct']:.2f}% in sample.",
+        "The headline of this paper does not depend on any of it. The "
+        "comparison that carries the paper is between fixed strategies, none "
+        "of which is fitted to anything.",
+        "What this test cannot do is prove that a failure to transfer is "
+        "overfitting rather than a changed world. The two halves are not "
+        "draws from one process, and the benchmark table is the evidence.",
+    ]))
+    return out
+
+
+def section_human_capital(ctx: Any) -> List[Flowable]:
+    f = ctx.f
+    curve = f.table("human_capital_gap")
+    ranking = f.table("human_capital_ranking")
+
+    from src import humancapital as hcp
+    cfg = f.cfg
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    n_paths = int(cfg["human_capital"]["n_paths"])
+    pair = (str(cfg["human_capital"]["challenger"]),
+            str(cfg["human_capital"]["incumbent"]))
+    fitted = hcp.sensitivity(curve)
+    found = hcp.verdict(curve, fitted, pair)
+    level_cols = [c for c in ranking.columns
+                  if c not in ("strategy", "label")]
+
+    out: List[Flowable] = [
+        ctx.h1("#human_capital. When the Pay Cheque Is a Claim on the Home "
+               "Market")]
+    out.append(ctx.p(
+        "Labour income in this model is a hump-shaped real profile multiplied "
+        "by a permanent random walk and a transitory shock, and every result "
+        "so far has drawn those shocks independently of the return panel. "
+        "That independence is a gift to domestic equity. A worker whose "
+        "employer, industry and tax base are the index is long that index "
+        "twice: once in the portfolio and once in the pay cheque. Holding "
+        "less of the home market than its weight in a global index is the "
+        "standard prescription that follows, and the model has been assuming "
+        "the premise away."))
+    out.append(ctx.p(
+        "The parameter swept here is a <b>correlation, not a loading</b>. The "
+        "permanent innovation becomes <i>ρ·u + √(1 − ρ²)·z</i>, with <i>u</i> "
+        "the standardised domestic equity return of the same year. That "
+        "rotation preserves unit variance, so raising ρ changes which part of "
+        "a career’s risk is systematic without changing how much risk a "
+        "career carries. Any movement below is therefore the correlation and "
+        "not extra income volatility smuggled in alongside it; at ρ = 0 every "
+        "other result in this paper is unchanged to the last bit."))
+
+    out.append(ctx.h2("#human_capital.1 The sweep"))
+    out.extend(ctx.table(
+        [["Correlation with the home market",
+          "All-international over 50/50 (%)", "Best strategy"]]
+        + [[f"{float(r['correlation']):.1f}", f"{float(r['gap_pct']):.2f}",
+            _pretty_strategy(str(r["winner"]))]
+           for _, r in curve.iterrows()],
+        f"γ = {gamma:g}, {n_paths:,} lifetimes per level."))
+    out.append(ctx.p(
+        (f"<b>The ranking depends on the assumption.</b> The best strategy "
+         f"changes across the swept correlations, which means the headline "
+         f"was resting on human capital being independent of the home market "
+         f"rather than merely being flattered by it."
+         if found["winner_ever_changes"] else
+         f"<b>Correlated human capital widens the lead, and nothing changes "
+         f"places.</b> Going from independence to a correlation of "
+         f"{found['highest_correlation']:.1f} moves the lead from "
+         f"{found['baseline_gap_pct']:.2f}% to "
+         f"{found['gap_at_highest_pct']:.2f}% — {found['change_pp']:+.2f} "
+         f"points, or about {found['slope_per_10pp']:+.2f} points per 0.1 of "
+         f"correlation. The direction is the one theory predicts, so the "
+         f"independence assumption used everywhere else in this paper is "
+         f"conservative."
+         if found["widens_with_correlation"] else
+         f"<b>Correlated human capital narrows the lead</b>, from "
+         f"{found['baseline_gap_pct']:.2f}% to "
+         f"{found['gap_at_highest_pct']:.2f}%. That is the opposite of the "
+         f"textbook prediction and needs explaining rather than reporting.")))
+    out.extend(ctx.table(
+        [["Strategy"] + [f"ρ = {c}" for c in level_cols]]
+        + [[str(r["label"])] + [f"{float(r[c]):.4f}" for c in level_cols]
+           for _, r in ranking.iterrows()],
+        "Certainty equivalent for every strategy at every correlation.",
+        note="Every strategy loses ground as the correlation rises, because "
+             "a career correlated with the market is a riskier career; what "
+             "matters here is whether the gaps between them move."))
+
+    out.extend(ctx.figure(
+        "fig48_human_capital",
+        "Left: the lead of all-international over the 50/50 split as human "
+        "capital becomes a claim on the home market. Right: every strategy’s "
+        "certainty equivalent over the same range."))
+
+    out.append(ctx.h2("#human_capital.2 What this changes"))
+    out.extend(ctx.bullets([
+        "The independence assumption used everywhere else in this paper is "
+        "conservative: relaxing it makes the case for the home market worse, "
+        "not better.",
+        f"The size is the useful part. Over a correlation range that runs "
+        f"past anything a labour economist would defend, the lead moves "
+        f"{found['change_pp']:+.2f} points — a second-order lever against "
+        f"the fee differential of section #fees and the country-deletion "
+        f"range of section #panel.",
+        "What is not modelled: unemployment spells, industry, and any "
+        "correlation between labour income and the international sleeve, "
+        "which is not zero either and would push the other way. This is a "
+        "bound on one channel, not a calibrated model of human capital.",
+    ]))
+    return out
+
+
+def section_mortality(ctx: Any) -> List[Flowable]:
+    f = ctx.f
+    curve = f.table("mortality_gap")
+    comparison = f.table("mortality_comparison")
+    ranking = f.table("mortality_ranking")
+
+    from src import mortality as mrt
+    cfg = f.cfg
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    n_paths = int(cfg["mortality"]["n_paths"])
+    pair = (str(cfg["mortality"]["challenger"]),
+            str(cfg["mortality"]["incumbent"]))
+    found = mrt.verdict(comparison, curve, pair)
+    age_death = int(cfg["lifecycle"]["age_death"])
+    age_retire = int(cfg["lifecycle"]["age_retire"])
+    ruin_cols = [c for c in curve.columns if c.startswith("ruin_")]
+    law_cols = [c for c in ranking.columns if c not in ("strategy", "label")]
+
+    out: List[Flowable] = [ctx.h1("#mortality. Death at a Random Age")]
+    out.append(ctx.p(
+        f"Every result before this section kills the investor on schedule at "
+        f"{age_death}. That is a modelling convenience, and it distorts in "
+        f"two directions at once: it understates longevity risk, because "
+        f"nobody knows they have exactly {age_death - age_retire} retired "
+        f"years to fund; and it overstates the far tail, because a strategy "
+        f"is rewarded for consumption at ninety-two that most investors never "
+        f"live to spend."))
+    out.append(ctx.p(
+        "The treatment here is a <b>re-weighting, not a re-simulation</b>. "
+        "Under the headline withdrawal rule the policy does not depend on the "
+        "death age, so a random lifespan changes only which years of an "
+        "already-simulated path are experienced and with what probability. "
+        "Consumption in each year is weighted by the probability of being "
+        "alive to enjoy it, and the estate is whatever wealth is left in the "
+        "year the investor dies. A certain stream <i>c</i> paired with the "
+        "matching bequest still returns exactly <i>c</i>, so these certainty "
+        "equivalents are in the same units as every other one in the paper — "
+        "and at a degenerate law that kills everyone at "
+        f"{age_death}, the arithmetic reproduces the paper’s own certainty "
+        "equivalent to machine precision."))
+    out.append(ctx.note(
+        "Exact for any policy that does not condition on the death age — the "
+        "fixed real rule, the constant-percentage rule, every constant-weight "
+        "strategy. Approximate for the horizon-based spending rules of "
+        "section #spending, which amortise over a planning horizon and would "
+        "themselves change if they knew the mortality table."))
+
+    out.append(ctx.h2("#mortality.1 The sweep"))
+    out.extend(ctx.table(
+        [["Mortality", "E[age at death]",
+          "All-international over 50/50 (%)"]
+         + [f"P(outlives the money): {c[5:].replace('_', ' ')}"
+            for c in ruin_cols]]
+        + [[str(r["mortality"]), f"{float(r['life_expectancy']):.0f}",
+            f"{float(r['gap_pct']):.2f}"]
+           + [f"{float(r[c]):.1%}" for c in ruin_cols]
+           for _, r in curve.iterrows()],
+        f"Gompertz survival, γ = {gamma:g}, {n_paths:,} lifetimes.",
+        note="Expected ages are within the model: mass beyond the simulated "
+             "horizon is carried at the final age, so these are lower bounds "
+             "on each law's own life expectancy."))
+    out.append(ctx.p(
+        (f"<b>The ranking is not invariant to the mortality assumption.</b> "
+         f"The order of the strategies changes between the fixed horizon and "
+         f"at least one law swept, so results elsewhere in this paper carry a "
+         f"dependence on dying at {age_death} that was not visible before."
+         if found["ordering_ever_changes"] else
+         f"<b>Nothing changes places.</b> Across a fixed horizon and "
+         f"{found['laws'] - 1} mortality laws spanning expected death ages "
+         f"from {found['shortest_life_expectancy']:.0f} to "
+         f"{found['longest_life_expectancy']:.0f}, the ordering is identical "
+         f"and the lead moves by at most {found['largest_change_pp']:.2f} "
+         f"points from its fixed-horizon value of "
+         f"{found['fixed_horizon_gap_pct']:.2f}%.")))
+    out.append(ctx.p(
+        ("Outliving the portfolio becomes <i>less</i> likely under every law, "
+         "which is not the portfolio getting safer: it is the investor having "
+         "fewer years in which to outlive it. A certain ninety-third birthday "
+         "is a pessimistic longevity assumption, and the ruin probabilities "
+         "quoted elsewhere in this paper inherit that pessimism."
+         if found["ruin_falls_under_mortality"] else
+         "Outliving the portfolio does not become uniformly less likely under "
+         "the swept laws, which is worth noting: fewer expected years should "
+         "mean fewer years in which to run out of money.")))
+    out.extend(ctx.table(
+        [["Strategy"] + [str(c) for c in law_cols]]
+        + [[str(r["label"])] + [f"{int(r[c])}" for c in law_cols]
+           for _, r in ranking.iterrows()],
+        "Rank under each mortality assumption."))
+
+    out.extend(ctx.figure(
+        "fig49_mortality",
+        "Top left: the survival curves swept, against the certain death the "
+        "rest of the paper assumes. Top right: every strategy’s certainty "
+        "equivalent under each. Bottom: the lead, and what a finite life does "
+        "to the chance of outliving the portfolio."))
+
+    out.append(ctx.h2("#mortality.2 What this changes"))
+    out.extend(ctx.bullets([
+        ("The results elsewhere in this paper are not resting on the fixed "
+         "horizon."
+         if not found["ordering_ever_changes"] else
+         "The results elsewhere in this paper carry a dependence on the fixed "
+         "horizon, and section #limitations should be read with that in mind."),
+        f"The lead spans {found['min_gap_pct']:.2f}% to "
+        f"{found['max_gap_pct']:.2f}% across every assumption tested, against "
+        f"{found['fixed_horizon_gap_pct']:.2f}% at the fixed horizon.",
+        "Ruin probabilities quoted elsewhere are computed against a certain "
+        f"{age_death}rd birthday. Under any of these laws they are too high.",
+        "What is not modelled: a couple rather than an individual, mortality "
+        "correlated with wealth, and a policy that adapts to the mortality "
+        "table. The last would raise every certainty equivalent here, so "
+        "these numbers are a floor.",
+    ]))
+    return out
+
+
 def story(ctx: Any) -> List[Flowable]:
     parts: List[Flowable] = []
     parts += front_matter(ctx)
@@ -6379,16 +7043,20 @@ def story(ctx: Any) -> List[Flowable]:
     # fails the build if the two ever drift apart.
     parts += section_baseline(ctx)
     parts += section_sensitivity(ctx)
+    parts += section_cohorts(ctx)
     parts += section_panel(ctx)
     parts += section_sleeve(ctx)
-    parts += section_fees(ctx)
     parts += section_hedging(ctx)
+    parts += section_valuation(ctx)
+    parts += section_fees(ctx)
+    parts += section_human_capital(ctx)
+    parts += section_mortality(ctx)
     parts += section_glide(ctx)
     parts += section_allocation(ctx)
     parts += section_leverage(ctx)
+    parts += section_out_of_sample(ctx)
     parts += section_housing(ctx)
     parts += section_mortgage(ctx)
-    parts += section_valuation(ctx)
     parts += section_saving(ctx)
     parts += section_accumulation(ctx)
     parts += section_retirement(ctx)
