@@ -1,0 +1,4 @@
+mode,label,correlation_low,correlation_high,gap_low_pct,gap_high_pct,change_pp,winner_changes,winner_at_high,share_of_home_effect
+home,home market only (foreign correlation left free),0.0,0.6,5.727140592105351,11.6288377888907,5.901697196785348,False,international_equity,1.0
+strict,home market only (foreign correlation pinned to zero),0.0,0.6,5.727140592105351,15.113395412936125,9.386254820830775,False,international_equity,1.590433142849732
+diagonal,both markets equally,0.0,0.6,5.727140592105351,7.712036983068327,1.9848963909629758,False,international_equity,0.3363263693101957

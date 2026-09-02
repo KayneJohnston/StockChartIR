@@ -1,0 +1,5 @@
+system,label,mean_pension,mean_retirement_consumption,pension_share_of_consumption
+age_pension_untested,"Age Pension rate, paid to everyone (no means test)",0.44928690490503115,1.5148468982277763,0.2965889856134327
+age_pension_matched,"Australian Age Pension, saving 10%",0.06329408302453085,1.128854076347276,0.05606932228949964
+australia_as_legislated,"Australia as legislated: 10% voluntary + 12% SG, means-tested pension",0.03281937733735899,2.1852505638493045,0.01501858774471513
+australia_non_homeowner,"Australia as legislated, non-homeowner thresholds",0.04767938344603493,2.2001105699579804,0.021671357838595154
