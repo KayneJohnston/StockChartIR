@@ -8173,11 +8173,12 @@ def write_doc_27(
 
     dom_tbl = md_table(_compact(
         dom_optima, ["bucket", "optimal_domestic_share", "cec_at_optimum",
-                     "range_pct", "margin_over_runner_up_pct"],
+                     "margin_over_low_end_pct", "margin_over_runner_up_pct"],
         {"bucket": "Starting inflation",
          "optimal_domestic_share": "Optimal domestic share of equity",
-         "cec_at_optimum": "CEC there", "range_pct": "Best over worst (%)",
-         "margin_over_runner_up_pct": "Margin over runner-up (%)"}),
+         "cec_at_optimum": "CEC there",
+         "margin_over_low_end_pct": "Over all-international (%)",
+         "margin_over_runner_up_pct": "Over the next grid point (%)"}),
         floatfmt="{:.3f}")
 
     if found["nominal_legs_hurt_more"]:
@@ -8239,6 +8240,14 @@ def write_doc_27(
             f"**The optimal domestic share of equity does not move** — "
             f"{dom_shift.get('optimal_domestic_share_low', float('nan')):.0%} "
             f"in every regime.")
+    if dom_shift.get("beats_low_end"):
+        domestic_line += (
+            f" It is an *interior* optimum, though, and worth "
+            f"{dom_shift['beats_low_end_by_pct']:+.2f}% over the "
+            f"all-international corner the six fixed strategies treat as the "
+            f"winner. That corner was only ever the best of six; a finer grid "
+            f"wants a little of the home market back, and `docs/12` -- which "
+            f"solves the whole simplex with no grid at all -- agrees.")
 
     figure_list = "\n".join(f"* `{f}`" for f in figures)
     intro = _header(

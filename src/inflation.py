@@ -501,13 +501,26 @@ def optimum_by_bucket(frame: pd.DataFrame, parameter: Mapping[str, float],
         worst = float(scored[column].min())
         runners = scored[scored["strategy"] != best["strategy"]]
         second = float(runners[column].max()) if len(runners) else float("nan")
+        # The two ends of the grid are the interpretable reference portfolios
+        # -- all-international and all-domestic on one axis, all-bonds and
+        # all-equity on the other -- and the margin over them is the question
+        # a reader actually has. The runner-up margin answers a different and
+        # much narrower one: whether the grid can tell one step from the next.
+        low_end = float(scored[column].iloc[0])
+        high_end = float(scored[column].iloc[-1])
         rows.append({
             "bucket": label,
             "n_paths": int(best["n_paths"]),
             f"optimal_{name}": float(best[name]),
             "cec_at_optimum": top,
             "cec_at_worst": worst,
+            "cec_at_low_end": low_end,
+            "cec_at_high_end": high_end,
             "range_pct": (top / worst - 1.0) * 100.0 if worst > 0 else float("nan"),
+            "margin_over_low_end_pct": (top / low_end - 1.0) * 100.0
+            if low_end > 0 else float("nan"),
+            "margin_over_high_end_pct": (top / high_end - 1.0) * 100.0
+            if high_end > 0 else float("nan"),
             "margin_over_runner_up_pct": (top / second - 1.0) * 100.0
             if np.isfinite(second) and second > 0 else float("nan"),
             "at_grid_edge": bool(float(best[name]) in
@@ -543,6 +556,16 @@ def optimum_shift(optima: pd.DataFrame, name: str,
         "smallest_margin_pct": float(margins.min()) if len(margins) else float("nan"),
         "identified": bool(len(margins) and float(margins.min()) > 0.05),
         "any_at_grid_edge": bool(optima["at_grid_edge"].any()),
+        # Whether the interior optimum is worth anything against the corner a
+        # reader would otherwise have held. A flat ridge between neighbouring
+        # grid points can still sit well above both ends of the grid, and
+        # reporting only the runner-up margin would hide that.
+        "beats_low_end_by_pct": (float(optima["margin_over_low_end_pct"].min())
+                                 if "margin_over_low_end_pct" in optima
+                                 else float("nan")),
+        "beats_low_end": bool("margin_over_low_end_pct" in optima
+                              and float(optima["margin_over_low_end_pct"].min())
+                              > 0.05),
     }
 
 

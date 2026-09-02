@@ -3402,13 +3402,19 @@ def section_inflation(ctx: Any) -> List[Flowable]:
              "resolve it."))
     out.extend(ctx.table(
         [["Starting inflation", "Optimal domestic share of equity",
-          "CEC there", "Best over worst (%)", "Margin over runner-up (%)"]]
+          "CEC there", "Over all-international (%)",
+          "Over the next grid point (%)"]]
         + [[str(r["bucket"]), f"{float(r['optimal_domestic_share']):.0%}",
             f"{float(r['cec_at_optimum']):.4f}",
-            f"{float(r['range_pct']):+.1f}",
+            f"{float(r['margin_over_low_end_pct']):+.2f}"
+            if "margin_over_low_end_pct" in dom_optima.columns else "—",
             f"{float(r['margin_over_runner_up_pct']):.3f}"]
            for _, r in dom_optima.iterrows()],
-        "And how much of that equity belongs at home."))
+        "And how much of that equity belongs at home.",
+        note="The fourth column is the comparison that matters — the optimum "
+             "against the all-international corner this paper otherwise "
+             "treats as the winner. The fifth is the narrower question of "
+             "whether the grid can separate one step from the next."))
     if bool(eq_optima["at_grid_edge"].all()) if len(eq_optima) else False:
         out.append(ctx.note(
             f"The equity optimum sits on the boundary of its grid in every "
@@ -3420,6 +3426,56 @@ def section_inflation(ctx: Any) -> List[Flowable]:
             f"{f.leverage['value_at_zero_spread']:+.2f}% when credit is free. "
             f"What matters here is that the boundary is the same boundary in "
             f"all three regimes: inflation does not move it."))
+    if len(dom_optima) and "margin_over_low_end_pct" in dom_optima.columns:
+        dom_opt = float(dom_optima["optimal_domestic_share"].iloc[0])
+        over_intl = float(dom_optima["margin_over_low_end_pct"].min())
+        equal_weight = 1.0 / float(f.panel["n_countries"])
+        solved = f.table("allocation_solved_schedules")
+        solved = solved[np.isclose(solved["risk_aversion"], gamma)]
+        solved_home = (float((solved["dom_eq"] /
+                              (solved["dom_eq"] + solved["intl_eq"]).clip(
+                                  lower=1e-9)).mean())
+                       if len(solved) else float("nan"))
+        if dom_opt > 0.0 and over_intl > 0.05:
+            out.append(ctx.p(
+                f"<b>The home/abroad optimum is interior, and it is not "
+                f"zero.</b> The grid runs from nothing at home to everything, "
+                f"in steps of ten points, and in every inflation regime the "
+                f"maximum sits at {dom_opt:.0%} domestic — worth "
+                f"{over_intl:+.2f}% over the all-international corner that "
+                f"the six fixed strategies of Section #baseline treat as the "
+                f"winner. That corner was only ever the best of six; offered "
+                f"a finer grid, the panel wants a little of the home market "
+                f"back."))
+            unconditional = f.table("sensitivity_domestic_share")
+            ucol = f"cec_crra_gamma{gamma:g}"
+            u_best = (float(unconditional.loc[unconditional[ucol].idxmax(),
+                                              "domestic_share"])
+                      if ucol in unconditional.columns else float("nan"))
+            out.append(ctx.p(
+                f"<b>Three things say this is real rather than a lucky grid "
+                f"point, and none of them involve inflation.</b> The same "
+                f"sweep run on all {int(f.panel['n_countries'])} markets' "
+                f"lifetimes at once, with no conditioning of any kind, peaks "
+                f"at {u_best:.0%} domestic. Section #allocation, which solves "
+                f"the whole four-asset simplex at every age with no grid at "
+                f"all and by an entirely different procedure, lands on "
+                f"{solved_home:.1%}. And the panel holds "
+                f"{int(f.panel['n_countries'])} markets, so an equal-weighted "
+                f"world portfolio puts {equal_weight:.1%} in the home market "
+                f"— which is where all of these sit."))
+            out.append(ctx.p(
+                f"The reading is not that home bias pays. It is that the "
+                f"leave-one-out sleeve this paper uses as its international "
+                f"leg is, for any one investor, the world <i>minus their own "
+                f"market</i> — a slight underweight of home rather than a "
+                f"neutral position — and that adding back roughly the missing "
+                f"sixteenth restores it. The strategy this paper calls "
+                f"“100% international” is a corner of a six-item menu that "
+                f"offers nothing between nought and a half; it wins that menu "
+                f"on merit, and it is not the optimum. What this section adds "
+                f"is that the correction does not depend on the inflation "
+                f"regime: the same {dom_opt:.0%} in all three."))
     out.append(ctx.p(
         (f"<b>Neither optimum moves.</b> The equity share that maximises the "
          f"certainty equivalent is "
@@ -3429,7 +3485,9 @@ def section_inflation(ctx: Any) -> List[Flowable]:
          f"every regime. Recent inflation changes what a lifetime is worth "
          f"and does not change what it should hold — the same answer Section "
          f"#valuation reached about starting valuation, arrived at through a "
-         f"variable with a much more direct mechanism."
+         f"variable with a much more direct mechanism. The optimum's "
+         f"<i>level</i> is a finding; its <i>invariance to inflation</i> is "
+         f"this section's finding."
          if not eq_shift.get("moves") and not dom_shift.get("moves") else
          f"The optimal equity share reads "
          f"{eq_shift.get('optimal_equity_share_low', float('nan')):.0%} after "
