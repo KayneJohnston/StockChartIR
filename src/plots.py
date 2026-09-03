@@ -3290,35 +3290,51 @@ def plot_franking(curve: pd.DataFrame, crossings: pd.DataFrame,
     return _save(fig, directory, name)
 
 
-def plot_inflation_timing(birth: pd.DataFrame, retirement: pd.DataFrame,
-                          ret_eq: pd.DataFrame, ret_dom: pd.DataFrame,
-                          ret_sweep: pd.DataFrame,
-                          eq_param: Mapping[str, float],
-                          dom_param: Mapping[str, float], column: str,
-                          strategy: str, directory: str | Path,
-                          name: str = "fig54_inflation_timing") -> Path:
-    """The same state variable read at two dates, and the retiree's choice."""
+def plot_state_timing(birth: pd.DataFrame, retirement: pd.DataFrame,
+                      ret_eq: pd.DataFrame, ret_dom: pd.DataFrame,
+                      ret_sweep: pd.DataFrame,
+                      eq_param: Mapping[str, float],
+                      dom_param: Mapping[str, float], column: str,
+                      strategy: str, directory: str | Path,
+                      name: str = "fig54_inflation_timing") -> Path:
+    """The same state variable read at two dates, and the retiree's choice.
+
+    Nothing here is specific to which state variable it is. Sections
+    #inflation and #valuation ask the same question of trailing inflation and
+    of the dividend yield, and drawing both through one function is what keeps
+    the two figures readable side by side.
+    """
     with plt.rc_context(STYLE):
         fig, axes = _grid(3, 3.0)
 
-        # -- 1. the level, conditioned at each date ------------------------
+        # -- 1. the spread, conditioned at each date -----------------------
+        #
+        # Each bucket against its own read's average, not the raw level.
+        # Levels here run from about 1.00 to 1.09, so a zero-based bar chart
+        # renders a five-per-cent spread -- and a sign flip between the two
+        # dates -- as four bars of indistinguishable height; truncating the
+        # axis to fix that would exaggerate it instead. The difference is the
+        # quantity in question, so it is what is drawn.
         ax = axes[0]
         for i, (label, frame) in enumerate((("at age 25", birth),
                                             ("at retirement", retirement))):
             block = frame[frame["strategy"] == strategy]
             if not len(block):
                 continue
+            values = block[column].to_numpy(dtype=float)
+            mean = float(values.mean())
             idx = np.arange(len(block)) + (i - 0.5) * 0.36
-            ax.bar(idx, block[column].to_numpy(dtype=float), width=0.34,
-                   color=_colour(i), label=label)
+            ax.bar(idx, (values / mean - 1.0) * 100.0 if mean else values,
+                   width=0.34, color=_colour(i), label=label)
+        ax.axhline(0.0, color="black", linewidth=1.1)
         block = birth[birth["strategy"] == strategy]
         if len(block):
             ax.set_xticks(np.arange(len(block)))
             _strategy_ticks(ax, [_wrap(str(b), 12) for b in block["bucket"]],
                             fontsize=5.5)
-        ax.set_ylabel("Certainty equivalent consumption")
-        _title(ax, "When the state variable is read decides whether it matters")
-        ax.legend(fontsize=5.5, loc="lower left", labelspacing=0.3,
+        ax.set_ylabel("Consumption against the average\nof its own reading (%)")
+        _title(ax, "When the state variable is read decides what it says")
+        ax.legend(fontsize=5.5, loc="best", labelspacing=0.3,
                   handlelength=1.2, frameon=True, framealpha=0.92,
                   edgecolor="none")
 

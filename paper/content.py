@@ -3962,11 +3962,14 @@ def section_inflation(ctx: Any) -> List[Flowable]:
 
     out.extend(ctx.figure(
         "fig54_inflation_timing",
-        "Left: the same portfolio's certainty equivalent by inflation "
-        "tercile, with the tercile assigned at age 25 and again at "
-        "retirement. Middle and right: what a retiree should hold from the "
-        "day they stop working, given the inflation they observe then, with "
-        "the maximum circled."))
+        "Left: the same portfolio's certainty-equivalent consumption by "
+        "inflation tercile, each bucket measured against the average of its "
+        "own reading, with the tercile assigned at age 25 and again at "
+        "retirement — a difference rather than a level, because the levels "
+        "differ by too little to see and truncating the axis would "
+        "exaggerate them. Middle and right: what a retiree should hold from "
+        "the day they stop working, given the inflation they observe then, "
+        "with the maximum circled."))
 
     out.extend(ctx.figure(
         "fig52_inflation_state",
@@ -5453,6 +5456,179 @@ def section_valuation(ctx: Any) -> List[Flowable]:
         "computed them at each date, drifting down across the century; a "
         "pooled split replaces both lines with a single pair of values and is "
         "what the recursive construction exists to avoid."))
+
+    out.extend(_valuation_at_retirement(ctx))
+    return out
+
+
+def _valuation_at_retirement(ctx: Any) -> List[Flowable]:
+    """The same yield read at the retirement date rather than at birth.
+
+    Kept as its own function because it is a second experiment on the same
+    state variable rather than a further reading of the first, and because it
+    is skipped entirely when the pipeline was run without it.
+    """
+    f = ctx.f
+    try:
+        retire = f.table("valuation_retirement_by_bucket")
+        ret_eq = f.table("valuation_retirement_equity")
+        ret_dom = f.table("valuation_retirement_domestic")
+        birth = f.table("valuation_by_bucket")
+    except (KeyError, FileNotFoundError):
+        return []
+    if not len(retire):
+        return []
+
+    from src import inflation as ifl
+
+    cfg = f.cfg
+    vcfg = cfg["valuation"]
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    column = f"cec_crra_gamma{gamma:g}"
+    labels = [str(x) for x in vcfg.get("bucket_labels", ifl.BUCKET_LABELS)]
+    incumbent = str(vcfg.get("accumulation_strategy", "balanced_all_equity"))
+    birth_level = ifl.level_spread(birth, incumbent, column, labels)
+    retire_level = ifl.level_spread(retire, incumbent, column, labels)
+    retire_ruin = ifl.level_spread(retire, incumbent, "prob_ruin", labels)
+    timing = ifl.timing_comparison(birth_level, retire_level)
+    if not timing.get("measured"):
+        return []
+
+    out: List[Flowable] = [
+        ctx.h2("#valuation.5 The same yield, read at the retirement date")]
+    out.append(ctx.p(
+        "Everything above asks what a twenty-five-year-old should make of the "
+        "market they are about to start saving into. That is not the only "
+        "person who can read a dividend yield, and Section #inflation gives "
+        "the reason to doubt they are the one for whom it matters most: a "
+        "sixty-eight-year lifetime has time to average a starting condition "
+        "away, and a thirty-year decumulation does not. So the same yield is "
+        "read again at the retirement date, against the tercile boundaries in "
+        "force then. Both reads are look-ahead free for the person standing "
+        "there. What differs is who can act on it."))
+    block = retire[retire["strategy"] == incumbent]
+    if len(block):
+        out.extend(ctx.table(
+            [["Yield at retirement", "Lifetimes", "CEC", "P(ruin)"]]
+            + [[str(r["bucket"]), f"{int(r['n_paths']):,}",
+                f"{float(r[column]):.4f}", f"{float(r['prob_ruin']):.1%}"]
+               for _, r in block.iterrows()],
+            f"Outcomes for <i>{_pretty_strategy(incumbent)}</i> by the "
+            f"valuation its investor retired into, γ = {gamma:g}."))
+    if not timing.get("same_sign"):
+        verdict = (
+            f"<b>The same yield points opposite ways at the two dates.</b> A "
+            f"lifetime that <i>began</i> in a cheap market ends "
+            f"{birth_level['high_over_low_pct']:+.2f}% better off than one "
+            f"that began in a dear one — high forward returns, and "
+            f"sixty-eight years to compound them. A lifetime that "
+            f"<i>retired</i> into a cheap market ends "
+            f"{retire_level['high_over_low_pct']:+.2f}%, the wrong side of "
+            f"zero, because a cheap market at sixty-three means the portfolio "
+            f"being handed over is small and thirty years is not long enough "
+            f"to make that back. The magnitudes are close "
+            f"({timing['ratio']:.1f} times), so it is the sign that carries "
+            f"the result. A dividend yield is a buy signal to a saver and a "
+            f"warning to a retiree, and nothing in the birth-date reading "
+            f"above says so.")
+    elif timing.get("retirement_matters_much_more"):
+        verdict = (
+            f"<b>The date the yield is read at decides how much it "
+            f"matters.</b> Conditioning a whole lifetime on the valuation it "
+            f"opened at moves retirement consumption by "
+            f"{birth_level['high_over_low_pct']:+.2f}%. Conditioning the same "
+            f"lifetimes on the valuation they <i>retired</i> into moves it by "
+            f"{retire_level['high_over_low_pct']:+.2f}% — "
+            f"{timing['ratio']:.1f} times as much. The dilution the "
+            f"birth-date reading suffers is not a property of the signal but "
+            f"of the horizon it was measured over.")
+    else:
+        verdict = (
+            f"<b>Reading the yield at retirement changes little.</b> The "
+            f"level spread is {birth_level['high_over_low_pct']:+.2f}% at the "
+            f"birth date against {retire_level['high_over_low_pct']:+.2f}% at "
+            f"retirement, a factor of {timing['ratio']:.1f} and in the same "
+            f"direction, so unlike the inflation state of Section #inflation "
+            f"this signal does not sharpen when it is read later.")
+    out.append(ctx.p(verdict))
+    if retire_ruin.get("measured"):
+        better = (retire_level["high_bucket"]
+                  if retire_level["high_over_low_pct"] > 0
+                  else retire_level["low_bucket"])
+        safer = (retire_ruin["high_bucket"]
+                 if retire_ruin["high_over_low_pct"] < 0
+                 else retire_ruin["low_bucket"])
+        out.append(ctx.p(
+            (f"Consumption and failure point at different buckets, which is "
+             f"the substance of the result rather than a footnote. Retiring "
+             f"into the <i>{better}</i> bucket gives the higher "
+             f"certainty-equivalent consumption — the portfolio is simply "
+             f"worth more the day the wage stops — while the lower "
+             f"probability of running out belongs to <i>{safer}</i>: "
+             f"{retire_level['high_over_low_pct']:+.2f}% in consumption "
+             f"against {retire_ruin['high_over_low_pct']:+.2f}% in ruin "
+             f"across the same buckets. The valuation a retiree faces is a "
+             f"transfer between the early years of their retirement and the "
+             f"late ones. High prices pay out now and are repaid in the "
+             f"forward returns they imply."
+             if better != safer else
+             f"Consumption and failure agree here. The <i>{better}</i> bucket "
+             f"gives both the higher certainty equivalent and the lower "
+             f"probability of running out — "
+             f"{retire_level['high_over_low_pct']:+.2f}% and "
+             f"{retire_ruin['high_over_low_pct']:+.2f}% across the buckets — "
+             f"so there is no trade to weigh.")))
+
+    eq_shift = ifl.optimum_shift(ret_eq, "equity_share", labels)
+    dom_shift = ifl.optimum_shift(ret_dom, "domestic_share", labels)
+    out.append(ctx.p(
+        f"What a retiree can choose is not a lifetime allocation — the "
+        f"accumulation has happened — but what to hold from the day they stop "
+        f"working. Sweeping those weights alone, with "
+        f"<i>{_pretty_strategy(incumbent)}</i> held through the working "
+        f"years, gives an instruction they could follow."))
+    if len(ret_eq) and len(ret_dom):
+        merged = ret_eq.merge(ret_dom, on="bucket", suffixes=("_eq", "_dom"))
+        out.extend(ctx.table(
+            [["Yield at retirement", "Optimal equity share",
+              "Optimal domestic share", "Smallest margin (%)"]]
+            + [[str(r["bucket"]),
+                f"{float(r['optimal_equity_share']):.0%}",
+                f"{float(r['optimal_domestic_share']):.0%}",
+                f"{min(float(r['margin_over_runner_up_pct_eq']), float(r['margin_over_runner_up_pct_dom'])):.2f}"]
+               for _, r in merged.iterrows()],
+            "What to hold from the retirement date, by the valuation read "
+            "there.",
+            note="The margin column is the smaller of the two, and is what "
+                 "stops a flat maximum being read as an identification."))
+    out.append(ctx.p(
+        (f"The retiree's equity share moves "
+         f"{eq_shift.get('optimal_equity_share_low', float('nan')):.0%} to "
+         f"{eq_shift.get('optimal_equity_share_high', float('nan')):.0%} "
+         f"across the buckets"
+         if eq_shift.get("moves") else
+         f"The retiree's equity share does not move across the buckets, "
+         f"holding at "
+         f"{eq_shift.get('optimal_equity_share_low', float('nan')):.0%}")
+        + ", and "
+        + (f"the domestic share moves "
+           f"{dom_shift.get('optimal_domestic_share_low', float('nan')):.0%} "
+           f"to "
+           f"{dom_shift.get('optimal_domestic_share_high', float('nan')):.0%}"
+           if dom_shift.get("moves") else
+           f"the domestic share holds at "
+           f"{dom_shift.get('optimal_domestic_share_low', float('nan')):.0%}")
+        + ". Either way the instruction is a schedule read against a number "
+          "the retiree can look up, not a rule of thumb about age."))
+    out.extend(ctx.figure(
+        "fig57_valuation_timing",
+        "Left: certainty-equivalent consumption by valuation bucket, each "
+        "bucket measured against the average of its own reading, with the "
+        "same lifetimes classified by the yield at age 25 and by the yield "
+        "at retirement; the two readings lean opposite ways, which is the "
+        "subsection's result. Middle and right: what a retiree should hold "
+        "from the retirement date — equity share and then the domestic share "
+        "of it — one curve per bucket, with the argmax circled."))
     return out
 
 

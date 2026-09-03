@@ -409,3 +409,71 @@ class TestExpandingBoundaries:
             years, np.asarray(paths.calendar_index)[:, 0])
         np.testing.assert_array_equal(
             countries, np.asarray(paths.domestic_country)[:, 0])
+
+
+class TestReadingTheYieldAtAnyAge:
+    """The state variable read at the retirement date rather than at birth.
+
+    A sixty-eight-year lifetime averages a starting valuation away; a
+    thirty-year decumulation cannot. Both reads use only years already
+    finished, so neither involves look-ahead for the person standing there --
+    what differs is who can act on it, and that is why the offset has to be a
+    parameter rather than a constant.
+    """
+
+    @staticmethod
+    def _paths(n_paths: int = 5, horizon: int = 10):
+        class _P:
+            calendar_index = np.tile(np.arange(horizon), (n_paths, 1))
+            domestic_country = np.zeros((n_paths, horizon), dtype=int)
+        return _P()
+
+    def test_offset_zero_is_the_birth_date_read(self) -> None:
+        blended = np.arange(10, dtype=float).reshape(10, 1) / 100.0
+        paths = self._paths()
+        assert np.array_equal(vln.path_yield_at(paths, blended, 0)[0],
+                              vln.path_starting_yield(paths, blended))
+
+    def test_a_later_offset_reads_a_later_year(self) -> None:
+        blended = np.arange(10, dtype=float).reshape(10, 1) / 100.0
+        paths = self._paths()
+        value, year = vln.path_yield_at(paths, blended, 6)
+        assert np.allclose(value, 0.06)
+        assert np.array_equal(year, np.full(5, 6))
+
+    def test_it_follows_the_country_as_well_as_the_year(self) -> None:
+        """Under ``per_block`` the domestic market changes mid-lifetime, so
+        reading the year without the country would price the wrong market."""
+        blended = np.array([[0.01, 0.09]] * 4)
+
+        class _P:
+            calendar_index = np.array([[0, 1, 2, 3]])
+            domestic_country = np.array([[0, 0, 1, 1]])
+
+        assert vln.path_yield_at(_P(), blended, 0)[0][0] == pytest.approx(0.01)
+        assert vln.path_yield_at(_P(), blended, 3)[0][0] == pytest.approx(0.09)
+
+    def test_the_cells_agree_with_the_yield(self) -> None:
+        blended = np.arange(20, dtype=float).reshape(10, 2) / 100.0
+
+        class _P:
+            calendar_index = np.array([[0, 1, 2, 3, 4, 5, 6, 7, 8, 9]])
+            domestic_country = np.array([[1, 1, 0, 0, 1, 1, 0, 0, 1, 1]])
+
+        for offset in range(10):
+            year, country = vln.path_cells_at(_P(), offset)
+            value, year2 = vln.path_yield_at(_P(), blended, offset)
+            assert np.array_equal(year, year2)
+            assert value[0] == pytest.approx(blended[year[0], country[0]])
+
+    def test_an_offset_past_the_horizon_is_refused(self) -> None:
+        """Silently clipping would read the last year and call it retirement."""
+        blended = np.zeros((10, 1))
+        for offset in (10, 11, -1):
+            with pytest.raises(ValueError, match="outside the simulated"):
+                vln.path_yield_at(self._paths(), blended, offset)
+
+    def test_path_start_cells_still_reads_the_first_window(self) -> None:
+        year, country = vln.path_start_cells(self._paths())
+        assert np.array_equal(year, np.zeros(5, dtype=int))
+        assert np.array_equal(country, np.zeros(5, dtype=int))

@@ -624,6 +624,20 @@ valuation:
   # The market a reader is most likely to be starting from, used to locate
   # today's valuation in the panel's own distribution.
   reference_country: USA
+  # Read the state a second time at the retirement date. A sixty-eight-year
+  # lifetime averages a starting valuation away; a thirty-year decumulation
+  # cannot, and the two reads are answers to different people's questions.
+  # Step 27 found the same conditioning worth eighty-two times as much when
+  # asked at retirement, which is why it is asked here too.
+  retirement_view: true
+  # The portfolio a retiree arrives with, before they choose what to hold next.
+  accumulation_strategy: balanced_all_equity
+  # Grids for the retiree's own choice, matching step 27's so the two
+  # sections' answers are read off the same axes.
+  equity_grid: [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+  domestic_grid: [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+  equity_domestic_share: 0.5
+  fixed_income_bond_share: 0.7
 
 
 # ---------------------------------------------------------------------

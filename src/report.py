@@ -5067,6 +5067,16 @@ def write_doc_15(
     """What the starting valuation predicts, and what it does to a lifetime."""
     predictive = frames["predictive"]
     buckets = frames["buckets"]
+    retire_buckets = frames.get("retirement_buckets", pd.DataFrame())
+    ret_eq = frames.get("retirement_equity", pd.DataFrame())
+    ret_dom = frames.get("retirement_domestic", pd.DataFrame())
+    timing = notes.get("timing", {"measured": False})
+    birth_level = notes.get("birth_level", {"measured": False})
+    retire_level = notes.get("retirement_level", {"measured": False})
+    retire_ruin = notes.get("retirement_ruin", {"measured": False})
+    eq_shift = notes.get("retirement_equity_shift", {})
+    dom_shift = notes.get("retirement_domestic_shift", {})
+    incumbent = str(notes.get("accumulation_strategy", ""))
     advantage = frames["advantage"]
     distribution = frames["distribution"]
     position = notes["position"]
@@ -5367,6 +5377,163 @@ not a measurement. So here is the measurement.
         "answer depends on it.",
     )
 
+    if timing.get("measured"):
+        level_tbl = md_table(_compact(
+            retire_buckets[retire_buckets["strategy"] == incumbent],
+            ["bucket", "n_paths", column, "prob_ruin"],
+            {"bucket": "Yield at retirement", "n_paths": "Lifetimes",
+             column: "CEC", "prob_ruin": "P(ruin)"}), floatfmt="{:.4f}")
+        eq_tbl = md_table(_compact(
+            ret_eq, ["bucket", "optimal_equity_share", "cec_at_optimum",
+                     "margin_over_runner_up_pct"],
+            {"bucket": "Yield at retirement",
+             "optimal_equity_share": "Optimal equity share",
+             "cec_at_optimum": "CEC at the optimum",
+             "margin_over_runner_up_pct": "Margin over the runner-up (%)"}),
+            floatfmt="{:.4f}") if len(ret_eq) else ""
+        dom_tbl = md_table(_compact(
+            ret_dom, ["bucket", "optimal_domestic_share", "cec_at_optimum",
+                      "margin_over_runner_up_pct"],
+            {"bucket": "Yield at retirement",
+             "optimal_domestic_share": "Optimal domestic share",
+             "cec_at_optimum": "CEC at the optimum",
+             "margin_over_runner_up_pct": "Margin over the runner-up (%)"}),
+            floatfmt="{:.4f}") if len(ret_dom) else ""
+
+        # The sign is the first thing to classify on. A flip means the same
+        # observable is a buy signal to one person and a warning to another,
+        # which no ratio can express and which no reader should have to
+        # infer from two signed numbers in a table.
+        if not timing.get("same_sign"):
+            headline = (
+                f"**The same yield points opposite ways at the two dates.** "
+                f"A lifetime that *began* in a cheap market ends "
+                f"{birth_level['high_over_low_pct']:+.2f}% better off than "
+                f"one that began in a dear one: high forward returns, and "
+                f"sixty-eight years to compound them. A lifetime that "
+                f"*retired* into a cheap market ends "
+                f"{retire_level['high_over_low_pct']:+.2f}% -- the wrong side "
+                f"of zero -- because a cheap market at sixty-three means the "
+                f"portfolio being handed over is small, and thirty years is "
+                f"not enough to make that back. The magnitudes are similar "
+                f"({timing['ratio']:.1f} times), so it is the sign that "
+                f"carries the result, not the size.")
+        elif timing.get("retirement_matters_much_more"):
+            headline = (
+                f"**The date the yield is read at decides how much it "
+                f"matters.** Conditioning a whole lifetime on the valuation "
+                f"it opened at moves retirement consumption by "
+                f"{birth_level['high_over_low_pct']:+.2f}%. Conditioning the "
+                f"same lifetimes on the valuation they *retired* into moves "
+                f"it by {retire_level['high_over_low_pct']:+.2f}% -- "
+                f"{timing['ratio']:.1f} times as much.")
+        elif timing.get("retirement_matters_more"):
+            headline = (
+                f"**Reading the yield at retirement matters more, but not "
+                f"dramatically so.** The level spread across buckets is "
+                f"{birth_level['high_over_low_pct']:+.2f}% read at the birth "
+                f"date against {retire_level['high_over_low_pct']:+.2f}% read "
+                f"at the retirement date, a factor of {timing['ratio']:.1f}, "
+                f"and the two point the same way.")
+        else:
+            headline = (
+                f"**The retirement date is not where this signal lives.** "
+                f"The level spread is {birth_level['high_over_low_pct']:+.2f}% "
+                f"read at the birth date and "
+                f"{retire_level['high_over_low_pct']:+.2f}% read at "
+                f"retirement, so unlike the inflation state of `docs/27` the "
+                f"dividend yield does not sharpen when it is read later.")
+
+        if (retire_ruin.get("measured")
+                and np.isfinite(retire_level.get("high_over_low_pct",
+                                                 float("nan")))):
+            # A spread is "high over low", so more consumption is better and
+            # more ruin is worse: two spreads of the same sign point in
+            # *opposite* welfare directions, which is the case worth naming.
+            better = (retire_level["high_bucket"]
+                      if retire_level["high_over_low_pct"] > 0
+                      else retire_level["low_bucket"])
+            safer = (retire_ruin["high_bucket"]
+                     if retire_ruin["high_over_low_pct"] < 0
+                     else retire_ruin["low_bucket"])
+            ruin_line = (
+                f"Consumption and failure point at different buckets, and "
+                f"that is the substance of the result rather than a "
+                f"footnote. Retiring into the `{better}` bucket gives the "
+                f"higher certainty-equivalent consumption -- the portfolio is "
+                f"simply worth more the day the wage stops -- while the "
+                f"lower probability of running out belongs to `{safer}`. "
+                f"Across the same buckets consumption moves "
+                f"{retire_level['high_over_low_pct']:+.2f}% and the "
+                f"probability of ruin moves "
+                f"{retire_ruin['high_over_low_pct']:+.2f}%. The valuation a "
+                f"retiree faces is a transfer between the early years of "
+                f"their retirement and the late ones: high prices pay out "
+                f"now and are repaid in the forward returns they imply."
+                if better != safer else
+                f"Consumption and failure agree for once. The `{better}` "
+                f"bucket at the retirement date gives both the higher "
+                f"certainty equivalent and the lower probability of running "
+                f"out: consumption moves "
+                f"{retire_level['high_over_low_pct']:+.2f}% across the "
+                f"buckets and ruin {retire_ruin['high_over_low_pct']:+.2f}%, "
+                f"so there is no trade to weigh here.")
+        else:
+            ruin_line = ""
+
+        eq_line = (
+            f"A retiree facing an expensive market should hold "
+            f"{eq_shift.get('optimal_equity_share_low', float('nan')):.0%} "
+            f"equity against "
+            f"{eq_shift.get('optimal_equity_share_high', float('nan')):.0%} "
+            f"facing a cheap one"
+            if eq_shift.get("moves") else
+            f"The optimal equity share does not move across the buckets, "
+            f"holding at "
+            f"{eq_shift.get('optimal_equity_share_low', float('nan')):.0%}")
+        dom_line = (
+            f"the domestic share moves "
+            f"{dom_shift.get('optimal_domestic_share_low', float('nan')):.0%} "
+            f"to "
+            f"{dom_shift.get('optimal_domestic_share_high', float('nan')):.0%}"
+            if dom_shift.get("moves") else
+            f"the domestic share holds at "
+            f"{dom_shift.get('optimal_domestic_share_low', float('nan')):.0%}")
+
+        timing_section = f"""Everything above asks what a twenty-five-year-old
+should make of the market they are about to start saving into. That is not the
+only person who can read a dividend yield, and it may not be the one for whom
+it matters most. A sixty-eight-year lifetime has time to average a starting
+valuation away. A thirty-year decumulation does not, and the retiree cannot go
+back and accumulate differently.
+
+Both reads are look-ahead free for the person standing there -- the trailing
+yield uses only years already finished, and the tercile boundaries are those
+in force at the date being read. What differs is who can act on it.
+
+{{level_tbl}}
+
+{headline}
+
+{ruin_line}
+
+**And what should a retiree hold?** Only the weights from the retirement date
+onward are theirs to choose; the accumulation has already happened. Sweeping
+those weights alone, holding `{incumbent}` through the working years:
+
+{{eq_tbl}}
+
+{{dom_tbl}}
+
+{eq_line}, and {dom_line}. The margin columns are what stop a flat
+maximum being read as an identification."""
+        timing_section = timing_section.format(level_tbl=level_tbl,
+                                               eq_tbl=eq_tbl, dom_tbl=dom_tbl)
+    else:
+        timing_section = (
+            "Not run. `valuation.retirement_view` is off in `config.yaml`, so "
+            "the yield is read at the birth date only.")
+
     body = f"""
 ## 1. The assumption this relaxes
 
@@ -5452,14 +5619,20 @@ changes much with valuation -- the spread above is
 {float(lead.mean()):.1f}% -- but what happens to the level.
 {verdict_5}
 
-## 7. What this does not do
+## 7. The same yield, read at the retirement date
 
-The conditioning applies to the **first** drawn block only. A lifetime is a
-chain of calendar windows and only the first is a starting condition; the rest
-are the future, which no investor chooses. So the effect measured here is the
-effect of the opening decade's valuation on a 68-year outcome, diluted by
-everything that follows. A design that made the whole chain valuation-dependent
-would report a larger effect and would be assuming a great deal more.
+{timing_section}
+
+## 8. What this does not do
+
+Everything before section 7 conditions on the **first** drawn block only. A
+lifetime is a chain of calendar windows and only the first is a starting
+condition; the rest are the future, which no investor chooses. So the effect
+measured there is the effect of the opening decade's valuation on a 68-year
+outcome, diluted by everything that follows -- which is exactly what section 7
+undoes by reading the same yield again at a date the dilution has not reached.
+A design that made the whole chain valuation-dependent would report a larger
+effect still and would be assuming a great deal more.
 
 Nor is the expanding window the only real-time normalisation available. A
 rolling window would forget the distant past rather than accumulate it, and
@@ -5476,11 +5649,11 @@ contains no mechanism for choosing when to begin, and the retirement-timing
 study of `09_retirement_timing.md` is the closest this project comes to that
 question.
 
-## 7. Figures
+## 9. Figures
 
 {chr(10).join(f"* `{f}`" for f in figures)}
 
-## 8. Reproduction
+## 10. Reproduction
 
 ```bash
 python main.py --steps 15

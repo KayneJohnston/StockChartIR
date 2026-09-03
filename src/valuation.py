@@ -186,6 +186,38 @@ def predictive_power(yields: np.ndarray, returns: np.ndarray,
     return pd.DataFrame.from_records(rows)
 
 
+def path_cells_at(paths: Any, offset: int = 0) -> Tuple[np.ndarray, np.ndarray]:
+    """``(year_index, country_index)`` of one window of every path.
+
+    ``offset`` is years since the lifetime began: ``0`` is the morning the
+    investor started saving, ``spec.n_working`` the morning they retired.
+    """
+    offset = int(offset)
+    calendar = np.asarray(paths.calendar_index)
+    if not 0 <= offset < calendar.shape[1]:
+        raise ValueError(
+            f"offset {offset} is outside the simulated horizon "
+            f"{calendar.shape[1]}")
+    return calendar[:, offset], np.asarray(paths.domestic_country)[:, offset]
+
+
+def path_yield_at(paths: Any, blended: np.ndarray,
+                  offset: int = 0) -> Tuple[np.ndarray, np.ndarray]:
+    """The blended yield each lifetime faced at one age, and the year it was.
+
+    Both reads are observable *at that moment* -- the trailing yield uses only
+    years already finished -- so conditioning on either involves no look-ahead
+    for somebody standing there. What differs is who can act on it. A
+    twenty-five-year-old reading a rich market has sixty-eight years to average
+    it away; a retiree reading one has only what they arrived with, and a
+    decumulation to fund out of it. Asking the question at both dates is what
+    separates those two, and Section #inflation shows the answer can be a null
+    at one and an eight-point effect at the other.
+    """
+    year, country = path_cells_at(paths, offset)
+    return blended[year, country], year
+
+
 def path_starting_yield(paths: Any, blended: np.ndarray) -> np.ndarray:
     """The yield each simulated lifetime began at, one number per path.
 
@@ -193,9 +225,7 @@ def path_starting_yield(paths: Any, blended: np.ndarray) -> np.ndarray:
     condition -- the rest are the future, which the investor does not choose --
     so the state variable is the blended yield at the first drawn country-year.
     """
-    first_year = np.asarray(paths.calendar_index)[:, 0]
-    first_country = np.asarray(paths.domestic_country)[:, 0]
-    return blended[first_year, first_country]
+    return path_yield_at(paths, blended, 0)[0]
 
 
 def bucket_paths(starting: np.ndarray,
@@ -408,8 +438,7 @@ def expanding_cuts(blended: np.ndarray, edges: Sequence[float] = DEFAULT_EDGES,
 
 def path_start_cells(paths: Any) -> Tuple[np.ndarray, np.ndarray]:
     """``(year_index, country_index)`` of the first window of every path."""
-    return (np.asarray(paths.calendar_index)[:, 0],
-            np.asarray(paths.domestic_country)[:, 0])
+    return path_cells_at(paths, 0)
 
 
 def expanding_bucket_paths(starting: np.ndarray, start_year: np.ndarray,
