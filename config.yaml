@@ -966,6 +966,40 @@ plan:
   domestic_band_years: 5
   max_rounds: 4
 
+# ---------------------------------------------------------------------
+# Step 32 - what a year of retirement is worth
+# ---------------------------------------------------------------------
+# Section #plan finds a decision this model cannot price: with labour free,
+# the retirement date runs to the ceiling. This supplies the missing side of
+# the ledger as a consumption equivalent -- a retired year at c is worth as
+# much as a working year at L*c -- and reports the break-even rather than a
+# recommendation, because the calibration is not this project's to make.
+leisure:
+  enabled: true
+  n_paths: 100000
+  # The portfolio held throughout. The allocation question is settled
+  # elsewhere; this section is about the date.
+  strategy: balanced_all_equity
+  # Retirement dates scored. Wide on both sides so an optimum on either end
+  # would be visible as the grid's answer rather than the model's.
+  ages: [50, 52, 55, 58, 60, 62, 63, 65, 67, 70]
+  # Consumption-equivalent value of a retired year. 1.0 charges nothing for
+  # working and reproduces every other section.
+  leisure_grid: [1.0, 1.05, 1.10, 1.15, 1.20, 1.25, 1.30, 1.40, 1.50,
+                 1.75, 2.00]
+  # Whether the pension is reduced for being claimed early. Left unadjusted
+  # this model pays a full unreduced benefit from whatever age work stops,
+  # which is worth more than any plausible value of leisure and decides the
+  # answer on its own. Both arms are run; the adjusted one is the result and
+  # the unadjusted one is the diagnostic that motivates it.
+  claim_arms: [unadjusted, actuarial]
+  # The birthday the actuarial adjustment is measured against.
+  claim_reference_age: 63
+  # Gompertz parameters for the survival-weighted arm, matching step 24.
+  mortality_modal_age: 88.0
+  mortality_dispersion: 10.0
+
+
 
 # ---------------------------------------------------------------------
 # Step 25 - a pension system that is not the American one

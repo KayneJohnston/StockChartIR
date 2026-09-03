@@ -201,6 +201,17 @@ class LifecycleSpec:
     def retirement_slice(self) -> slice:
         return slice(self.n_working, self.horizon)
 
+    #: Multiplier on the retirement benefit, for studies that make the
+    #: retirement date a decision variable.  Every other section fixes that
+    #: date, so the benefit's start date is common to all strategies and the
+    #: factor cancels; ``1.0`` is therefore the default and leaves every
+    #: existing result bit-identical.  Section #leisure sets it, because once
+    #: the date can move a benefit that starts whenever work stops -- with no
+    #: reduction for the longer claiming period -- pays an investor who
+    #: retires at fifty-five a full pension for thirty-eight years and makes
+    #: early retirement look free.
+    ss_claim_factor: float = 1.0
+
     def social_security_benefit(self, career_average: np.ndarray) -> np.ndarray:
         """Real annual retirement benefit from career-average real earnings.
 
@@ -214,7 +225,8 @@ class LifecycleSpec:
         if not self.social_security_enabled:
             return np.zeros_like(career_average)
         if self.social_security_formula == "flat":
-            return self.replacement_rate * career_average
+            return (self.ss_claim_factor * self.replacement_rate
+                    * career_average)
         if self.social_security_formula == "means_tested":
             # A flat pension does not depend on career earnings at all, so the
             # career-average signature has nothing to say about it.  What comes
@@ -229,9 +241,9 @@ class LifecycleSpec:
         tranche1 = np.minimum(career_average, bend1)
         tranche2 = np.clip(career_average - bend1, 0.0, bend2 - bend1)
         tranche3 = np.maximum(career_average - bend2, 0.0)
-        return (self.pia_rate1 * tranche1
-                + self.pia_rate2 * tranche2
-                + self.pia_rate3 * tranche3)
+        return self.ss_claim_factor * (self.pia_rate1 * tranche1
+                                       + self.pia_rate2 * tranche2
+                                       + self.pia_rate3 * tranche3)
 
     def means_tested_benefit(self, assets: np.ndarray) -> np.ndarray:
         """The Australian Age Pension: a flat rate, tapered against assets.

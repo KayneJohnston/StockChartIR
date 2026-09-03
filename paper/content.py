@@ -615,6 +615,7 @@ SECTION_ORDER: Tuple[str, ...] = (
     "sequence",
     "spending",
     "plan",
+    "leisure",
     # Closing.
     "discussion",
     "limitations",
@@ -650,7 +651,7 @@ EXTENSION_GROUPS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
                    "out_of_sample")),
     ("menu", ("housing", "mortgage")),
     ("plan", ("saving", "accumulation", "retirement", "sequence",
-              "spending", "plan")),
+              "spending", "plan", "leisure")),
 )
 
 
@@ -670,6 +671,8 @@ NUMBER_WORDS: Dict[int, str] = {
     15: "Fifteen", 16: "Sixteen", 17: "Seventeen", 18: "Eighteen",
     19: "Nineteen", 20: "Twenty", 21: "Twenty-one", 22: "Twenty-two",
     23: "Twenty-three", 24: "Twenty-four", 25: "Twenty-five",
+    26: "Twenty-six", 27: "Twenty-seven", 28: "Twenty-eight",
+    29: "Twenty-nine", 30: "Thirty", 31: "Thirty-one", 32: "Thirty-two",
 }
 
 
@@ -6991,7 +6994,8 @@ def section_plan(ctx: Any) -> List[Flowable]:
         "requires a matched comparison and why the date is held fixed above. "
         "Reporting the corner is the point: a joint optimisation is the "
         "cleanest way to find out which decisions a model can rank and which "
-        "it merely appears to."))
+        "it merely appears to. Section #leisure supplies the missing side of "
+        "that ledger and the corner does not survive it."))
 
     out.extend(ctx.figure(
         "fig58_plan",
@@ -7028,6 +7032,226 @@ def section_plan(ctx: Any) -> List[Flowable]:
         "and may change rule as well as rate, so the gains here are a lower "
         "bound on what a genuinely adaptive plan would earn. And there is no "
         "disutility of labour, which is why #plan.3 exists.",
+    ]))
+    return out
+
+
+def section_leisure(ctx: Any) -> List[Flowable]:
+    f = ctx.f
+    swept = f.table("leisure_sweep")
+    claim = f.table("leisure_claim_factors")
+    anchors = f.table("leisure_anchors")
+    optima = f.table("leisure_optimal_age")
+    crossings = f.table("leisure_break_even")
+
+    from src import leisure as lei
+    cfg = f.cfg
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    arm = str(cfg["leisure"]["claim_arms"][-1])
+    reference = int(cfg["leisure"]["claim_reference_age"])
+    head = optima[optima["claim_arm"] == arm].sort_values("leisure") \
+        if "claim_arm" in optima.columns else optima.sort_values("leisure")
+    flat = optima[optima["claim_arm"] == "unadjusted"].sort_values("leisure") \
+        if "claim_arm" in optima.columns else pd.DataFrame()
+    early = crossings[crossings["is_earlier"]] if len(crossings) else crossings
+    if "claim_arm" in early.columns:
+        early = early[early["claim_arm"] == arm]
+    early = early.sort_values("retire_age", ascending=False)
+    block = swept[swept["claim_arm"] == arm] if "claim_arm" in swept.columns \
+        else swept
+
+    out: List[Flowable] = [
+        ctx.h1("#leisure. What a Year of Retirement Is Worth")]
+    out.append(ctx.p(
+        "Section #plan solves the withdrawal rule and the allocation "
+        "together, and finds that the third leg of a retirement plan — the "
+        "date — cannot be solved at all. Left free it runs to the oldest age "
+        "on the grid and stays there, because nothing in this model charges "
+        "anyone for the years they spend working. Another year is more "
+        "contributions, a shorter drawdown and a larger benefit, at no cost "
+        "whatever. This section supplies the missing side of that ledger."))
+    out.append(ctx.p(
+        "Rather than invent a disutility of labour in utils — a quantity "
+        "nothing here can calibrate — the cost is written as a "
+        "<i>consumption equivalent</i>. Let <i>L</i> be the number such that "
+        "a retired year at consumption <i>c</i> is worth exactly as much as a "
+        "working year at <i>L·c</i>. Working years are then evaluated at "
+        "<i>c/L</i> and retired years left alone, so <i>L</i> = 1 charges "
+        "nothing and reproduces every other result in this paper exactly."))
+    out.append(ctx.note(
+        "The aggregation here runs from age 25, not from the retirement date. "
+        "A retirement-window objective cannot price a retirement date: it "
+        "charges the investor for the years they worked and credits them "
+        "nothing for the ones they did not. These certainty equivalents are "
+        "therefore not comparable with those elsewhere in the paper."))
+
+    out.append(ctx.h2("#leisure.1 The pension you claim early"))
+    out.append(ctx.p(
+        "There is a larger thing to fix first. Every other section holds the "
+        "retirement date fixed, so the benefit starts on the same birthday "
+        "for every strategy and its start date cancels. It does not cancel "
+        "here: left alone, this model pays whoever stops work at fifty a full "
+        "unreduced pension for forty-three years. That is not a preference "
+        "for leisure, it is a gift, and it is worth more than any plausible "
+        "value of leisure."))
+    out.append(ctx.p(
+        f"Real systems reduce a benefit claimed early and raise one deferred, "
+        f"by roughly enough to leave its expected present value alone. The "
+        f"multiplier that does that exactly is the ratio of annuity factors, "
+        f"<i>A</i>(reference)/<i>A</i>(age), derived from this model's own "
+        f"Gompertz survival curve and discount factor rather than taken from "
+        f"a statute."))
+    if len(claim):
+        out.extend(ctx.table(
+            [["Retire at", "Benefit multiplier", "Adjustment (%)",
+              "Per year from the reference (%)"]]
+            + [[str(int(r["retire_age"])),
+                f"{float(r['claim_factor']):.3f}",
+                f"{float(r['adjustment_pct']):+.1f}",
+                ("—" if not np.isfinite(float(r["per_year_pct"]))
+                 else f"{float(r['per_year_pct']):+.2f}")]
+               for _, r in claim.sort_values("retire_age").iterrows()],
+            f"The actuarially fair claiming adjustment, measured against age "
+            f"{reference}.",
+            note="Fair by construction in this model rather than "
+                 "approximately fair in someone else's: it is solved from "
+                 "the same survival law Section #mortality uses."))
+        rates = claim["per_year_pct"].dropna().abs()
+        out.append(ctx.p(
+            f"That works out at {rates.min():.1f}% to "
+            f"{rates.max():.1f}% a year away from "
+            f"{reference}. The US schedule reduces a benefit by about 6.7% "
+            f"for each of the first three years claimed early and raises it "
+            f"about 8% for each year deferred past full retirement age. "
+            f"Nothing here was fitted to that; the agreement is a check on "
+            f"the survival law, not a coincidence to lean on."))
+    if len(flat) and len(head):
+        moved = int(flat["optimal_age"].iloc[0]) != int(head["optimal_age"].iloc[0])
+        out.append(ctx.p(
+            (f"<b>The claiming rule decides the answer before leisure gets a "
+             f"say.</b> Unadjusted, the best date is "
+             f"{int(flat['optimal_age'].iloc[0])} even when working costs "
+             f"nothing at all. Adjusted, it is "
+             f"{int(head['optimal_age'].iloc[0])}. Everything below is the "
+             f"adjusted arm."
+             if moved else
+             f"The adjustment does not move the zero-leisure optimum, which "
+             f"stays at {int(head['optimal_age'].iloc[0])}.")))
+
+    out.append(ctx.h2("#leisure.2 When to stop"))
+    if len(head):
+        out.extend(ctx.table(
+            [["A retired year is worth", "Retire at", "Lifetime CEC",
+              "Runner-up", "Margin (%)"]]
+            + [[f"+{float(r['leisure_pct']):.0f}%",
+                str(int(r["optimal_age"])),
+                f"{float(r['cec_at_optimum']):.4f}",
+                str(int(r["runner_up_age"])),
+                f"{float(r['margin_over_runner_up_pct']):.2f}"]
+               for _, r in head.iterrows()],
+            f"The best retirement date at each value of leisure, γ = "
+            f"{gamma:g}.",
+            note="An optimum sitting on either end of the age grid would be "
+                 "the grid's answer rather than the model's; the grid runs "
+                 "from 50 to 70 for that reason."))
+        out.append(ctx.p(
+            (f"<b>Pricing the cost of working gives the date an interior "
+             f"optimum.</b> It runs from {int(head['optimal_age'].iloc[0])} "
+             f"when a retired year is worth no more than a working one to "
+             f"{int(head['optimal_age'].iloc[-1])} at the top of the grid. "
+             f"Section #plan's corner is gone — not because the model changed "
+             f"its mind, but because both sides of the decision are now "
+             f"priced."
+             if head["optimal_age"].nunique() > 1 else
+             f"The optimal date does not move across the grid, holding at "
+             f"{int(head['optimal_age'].iloc[0])}.")))
+    if "cec_survival_weighted" in block.columns:
+        alive = block.loc[block.groupby("leisure")[
+            "cec_survival_weighted"].idxmax()].sort_values("leisure")
+        paired = head.merge(
+            alive[["leisure", "retire_age"]], on="leisure", how="inner")
+        gap = paired["optimal_age"] - paired["retire_age"]
+        out.append(ctx.p(
+            (f"Weighting by survival pulls it earlier still, at "
+             f"{int((gap > 0).sum())} of the {len(paired)} values of leisure "
+             f"tested and by up to {int(gap.max())} years. Deferring is a bet "
+             f"that you will be there to collect, and the Gompertz law of "
+             f"Section #mortality prices that bet where a certain "
+             f"ninety-third birthday cannot."
+             if (gap > 0).any() else
+             "Weighting by survival does not pull the date earlier at any "
+             "value of leisure tested, which is worth stating because it is "
+             "the opposite of what mortality risk would suggest.")))
+
+    out.append(ctx.h2("#leisure.3 The break-even, which is the number to carry"))
+    out.append(ctx.p(
+        "An optimal date depends on a calibration nobody can hand you. A "
+        "break-even does not. For each date earlier than the one an investor "
+        "would choose if working cost nothing, this is the value of leisure "
+        "at which it becomes worthwhile."))
+    if len(early):
+        out.extend(ctx.table(
+            [["Retire at", "Years earlier", "Leisure must be worth",
+              "which is a consumption drop of"]]
+            + [[str(int(r["retire_age"])), str(int(r["years_earlier"])),
+                f"{float(r['break_even_pct']):.1f}%",
+                f"{float(r['implied_consumption_drop']):.0%}"]
+               for _, r in early.iterrows()],
+            f"What each year of earlier retirement costs to justify, against "
+            f"age {int(early['reference_age'].iloc[0])}.",
+            note="The reference is the date that wins when working costs "
+                 "nothing, so what is priced is the earlier retirement "
+                 "rather than the model's own lean toward it."))
+        first, last = early.iloc[0], early.iloc[-1]
+        out.append(ctx.p(
+            f"That turns the question into one a reader can settle for "
+            f"themselves. Stopping {int(first['years_earlier'])} years early "
+            f"is a claim that a year of your own time is worth at least "
+            f"{float(first['break_even_pct']):.0f}% of a year's consumption "
+            f"— about the size of the consumption drop actually observed at "
+            f"retirement. Stopping {int(last['years_earlier'])} years early "
+            f"is a much larger claim: "
+            f"{float(last['break_even_pct']):.0f}%. Whether either is true, "
+            f"this paper does not say."))
+
+    out.extend(ctx.figure(
+        "fig59_cost_of_working",
+        "Top left: lifetime certainty equivalent against the retirement date, "
+        "one line per value of leisure, with each line's maximum circled — a "
+        "cost on working buys an interior optimum. Top right: how that "
+        "optimum moves, with and without survival weighting. Bottom left: the "
+        "break-even value of leisure for each earlier date, against the "
+        "consumption drops observed at retirement. Bottom right: the claiming "
+        "adjustment that makes the date of the pension worth nothing either "
+        "way."))
+
+    out.append(ctx.h2("#leisure.4 What this changes"))
+    out.extend(ctx.bullets([
+        (f"<b>The retirement date is not unpriceable — it was unpriced.</b> "
+         f"Charging for the years spent working turns Section #plan's corner "
+         f"into an interior optimum between "
+         f"{int(head['optimal_age'].min())} and "
+         f"{int(head['optimal_age'].max())}, depending on what a year is "
+         f"worth." if len(head) else
+         "Charging for the years spent working gives the date an optimum."),
+        "<b>The claiming rule matters more than leisure does.</b> An "
+        "unreduced pension starting whenever work stops is worth more than "
+        "any plausible value of leisure and would have decided the answer on "
+        "its own. That is worth stating for its own sake: a lifecycle model "
+        "that lets the retirement date move must price the pension's start "
+        "date, or it is not measuring preferences at all.",
+        "<b>The output is a break-even, not a recommendation.</b> The value "
+        "of your own time is not something this panel of returns can "
+        "measure. What it can do is say what you must believe to justify a "
+        "given date, and leave the believing to you.",
+        "<b>What is not modelled</b>: partial retirement, which is what most "
+        "people actually do; any change in the value of leisure with age or "
+        "health, when both plainly change; an earliest claiming age, so the "
+        "adjusted benefit here can start at fifty where no real system would "
+        "pay it; and the possibility that work is worth something positive — "
+        "purpose, company, structure — which would push the date later and "
+        "which this parameterisation cannot represent, since <i>L</i> is "
+        "bounded below at one.",
     ]))
     return out
 
@@ -9719,6 +9943,7 @@ def story(ctx: Any) -> List[Flowable]:
     parts += section_sequence(ctx)
     parts += section_spending(ctx)
     parts += section_plan(ctx)
+    parts += section_leisure(ctx)
     parts += section_discussion(ctx)
     parts += section_limitations(ctx)
     parts += section_conclusion(ctx)

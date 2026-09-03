@@ -3065,6 +3065,116 @@ def plot_sequence(frame: pd.DataFrame, ranking: pd.DataFrame,
     return _save(fig, directory, name)
 
 
+def plot_leisure(swept: pd.DataFrame, optima: pd.DataFrame,
+                 crossings: pd.DataFrame, claim: pd.DataFrame,
+                 anchors: pd.DataFrame, arm: str, spec: Any,
+                 directory: str | Path,
+                 name: str = "fig59_cost_of_working") -> Path:
+    """What a year of retirement has to be worth to justify taking it early."""
+    with plt.rc_context(STYLE):
+        fig, axes = _grid(4, 3.0)
+        block = swept[swept["claim_arm"] == arm] if "claim_arm" in swept \
+            else swept
+
+        # -- 1. the surface: lifetime CEC by date, one line per leisure ----
+        ax = axes[0]
+        grid = sorted(block["leisure"].unique())
+        show = [grid[0], grid[len(grid) // 3], grid[2 * len(grid) // 3],
+                grid[-1]]
+        for i, value in enumerate(dict.fromkeys(show)):
+            sub = block[np.isclose(block["leisure"], value)].sort_values(
+                "retire_age")
+            ax.plot(sub["retire_age"].to_numpy(dtype=float),
+                    sub["cec"].to_numpy(dtype=float), marker=_marker(i),
+                    color=_colour(i), linewidth=1.5, markersize=3.2,
+                    label=f"+{(value - 1) * 100:.0f}%")
+            best = sub.loc[sub["cec"].idxmax()]
+            ax.scatter([float(best["retire_age"])], [float(best["cec"])],
+                       s=42, facecolors="none", edgecolors="black",
+                       linewidths=1.1, zorder=5)
+        ax.set_xlabel("Retirement age")
+        ax.set_ylabel("Lifetime certainty equivalent")
+        _title(ax, "A cost on working buys an interior optimum")
+        # Upper right: the curves fall away to the right, and the lower
+        # left is where the most heavily discounted one puts its maximum.
+        ax.legend(fontsize=5.0, loc="upper right", labelspacing=0.25,
+                  handlelength=1.2, frameon=True, framealpha=0.92,
+                  edgecolor="none", title="leisure worth",
+                  title_fontsize=5.0)
+
+        # -- 2. the optimum against the value of leisure -------------------
+        ax = axes[1]
+        if len(optima):
+            ordered = optima.sort_values("leisure")
+            ax.plot(ordered["leisure_pct"].to_numpy(dtype=float),
+                    ordered["optimal_age"].to_numpy(dtype=float),
+                    marker=_marker(0), color=_colour(0), linewidth=1.7,
+                    markersize=4.0, drawstyle="steps-post",
+                    label="certain death at %d" % int(spec.age_death))
+        if "cec_survival_weighted" in block.columns:
+            alive = block.loc[block.groupby("leisure")[
+                "cec_survival_weighted"].idxmax()].sort_values("leisure")
+            ax.plot((alive["leisure"].to_numpy(dtype=float) - 1) * 100,
+                    alive["retire_age"].to_numpy(dtype=float),
+                    marker=_marker(1), color=_colour(2), linewidth=1.5,
+                    markersize=3.4, linestyle="--", drawstyle="steps-post",
+                    label="survival weighted")
+        for _, r in anchors.iterrows():
+            if float(r["leisure"]) > 1.0:
+                ax.axvline((float(r["leisure"]) - 1) * 100, color="0.78",
+                           linewidth=0.8, linestyle=":", zorder=0)
+        ax.set_xlabel("Value of a retired year (% of consumption)")
+        ax.set_ylabel("Optimal retirement age")
+        _title(ax, "Where the date settles, and what mortality does to it)"
+               .replace(")", ""))
+        ax.legend(fontsize=5.0, loc="upper right", labelspacing=0.25,
+                  handlelength=1.4, frameon=True, framealpha=0.92,
+                  edgecolor="none")
+
+        # -- 3. the break-even, which is the deliverable -------------------
+        ax = axes[2]
+        early = crossings[crossings["is_earlier"]] if len(crossings) \
+            else crossings
+        if len(early):
+            early = early.sort_values("retire_age")
+            idx = np.arange(len(early))
+            ax.bar(idx, early["break_even_pct"].to_numpy(dtype=float),
+                   width=0.62, color=_colour(0))
+            for _, r in anchors.iterrows():
+                if float(r["leisure"]) > 1.0:
+                    ax.axhline((float(r["leisure"]) - 1) * 100, color="0.55",
+                               linewidth=0.9, linestyle="--", zorder=0)
+                    ax.text(len(early) - 0.4, (float(r["leisure"]) - 1) * 100,
+                            f" {float(r['consumption_drop']):.0%} drop",
+                            fontsize=4.6, va="center", color="0.35")
+            ax.set_xticks(idx)
+            _strategy_ticks(ax, [str(int(a)) for a in early["retire_age"]],
+                            fontsize=6.0)
+        ax.set_xlabel("Retiring at this age instead")
+        ax.set_ylabel("Leisure must be worth at least (%)")
+        _title(ax, "What each year earlier costs to justify")
+
+        # -- 4. the pension you claim early ---------------------------------
+        ax = axes[3]
+        if len(claim):
+            ordered = claim.sort_values("retire_age")
+            ax.plot(ordered["retire_age"].to_numpy(dtype=float),
+                    ordered["claim_factor"].to_numpy(dtype=float) * 100.0,
+                    marker=_marker(0), color=_colour(0), linewidth=1.7,
+                    markersize=4.0)
+            ax.axhline(100.0, color="black", linewidth=0.9)
+            ref = int(ordered["reference_age"].iloc[0])
+            ax.axvline(float(ref), color="0.5", linewidth=1.0, linestyle="--")
+            ax.text(float(ref) + 0.3, 40, "reference", fontsize=5.5,
+                    color="0.35")
+        ax.set_xlabel("Retirement age")
+        ax.set_ylabel("Benefit, % of the reference-age one")
+        _title(ax, "The reduction that makes the claiming date fair")
+
+        fig.tight_layout()
+    return _save(fig, directory, name)
+
+
 def plot_plan(crossed: pd.DataFrame, optima: Mapping[str, pd.DataFrame],
               mechanism: Mapping[str, pd.DataFrame], ablation: pd.DataFrame,
               schedule: pd.DataFrame, age_curve: pd.DataFrame,

@@ -9754,3 +9754,246 @@ search paths, γ = {gamma:g}. Tables in
 `{cfg['run']['table_dir']}/plan_*.csv`.
 """
     return _write(path, [intro, body])
+
+
+def write_doc_32(
+    path: str | Path,
+    cfg: Mapping[str, Any],
+    frames: Mapping[str, pd.DataFrame],
+    figures: Sequence[str],
+    notes: Mapping[str, Any],
+) -> Path:
+    """What a year of retirement is worth, and when it should start."""
+    swept = frames["swept"]
+    claim = frames["claim"]
+    anchors = frames["anchors"]
+    optima = frames["optimal"]
+    crossings = frames["break_even"]
+    unadjusted = frames.get("unadjusted_optimal", pd.DataFrame())
+    found = notes["verdict"]
+    gamma = float(notes["gamma"])
+    reference = int(notes["reference_age"])
+    strategy = str(notes["strategy"])
+
+    claim_tbl = md_table(_compact(
+        claim, ["retire_age", "claim_factor", "adjustment_pct",
+                "per_year_pct"],
+        {"retire_age": "Retire at", "claim_factor": "Benefit multiplier",
+         "adjustment_pct": "Adjustment (%)",
+         "per_year_pct": "Per year away from the reference (%)"}),
+        floatfmt="{:.4f}")
+
+    anchor_tbl = md_table(_compact(
+        anchors, ["label", "consumption_drop", "leisure_pct"],
+        {"label": "Reading", "consumption_drop": "Consumption drop",
+         "leisure_pct": "Implied value of a retired year (%)"}),
+        floatfmt="{:.4f}")
+
+    optimum_tbl = md_table(_compact(
+        optima, ["leisure_pct", "optimal_age", "cec_at_optimum",
+                 "runner_up_age", "margin_over_runner_up_pct"],
+        {"leisure_pct": "A retired year is worth (%)",
+         "optimal_age": "Retire at", "cec_at_optimum": "Lifetime CEC",
+         "runner_up_age": "Runner-up", 
+         "margin_over_runner_up_pct": "Margin (%)"}), floatfmt="{:.4f}")
+
+    early = crossings[crossings["is_earlier"]] if len(crossings) else crossings
+    shown = early.sort_values("retire_age", ascending=False).copy()
+    if len(shown):
+        shown["implied_consumption_drop"] = (
+            shown["implied_consumption_drop"] * 100.0)
+    break_tbl = md_table(_compact(
+        shown, ["retire_age", "years_earlier", "break_even_pct",
+                "implied_consumption_drop"],
+        {"retire_age": "Retire at", "years_earlier": "Years earlier",
+         "break_even_pct": "Leisure must be worth (%)",
+         "implied_consumption_drop": "which is a consumption drop of (%)"}),
+        floatfmt="{:.1f}") if len(shown) else ""
+
+    rates = claim["per_year_pct"].dropna() if len(claim) else claim
+    per_year = (f"{rates.abs().min():.1f}% to {rates.abs().max():.1f}%"
+                if len(rates) else "n/a")
+
+    if found.get("claiming_rule_moves_the_answer"):
+        claiming_line = (
+            f"**And the claiming rule decides the answer before leisure gets "
+            f"a say.** Left unadjusted, the best date is "
+            f"{found['unadjusted_age_at_zero']} even when working costs "
+            f"nothing at all -- not a preference for leisure but a gift, and "
+            f"a large one. With the adjustment it is "
+            f"{found['optimal_age_at_zero']}. Every number below therefore "
+            f"comes from the adjusted arm.")
+    else:
+        claiming_line = (
+            f"The claiming adjustment does not move the zero-leisure "
+            f"optimum, which stays at {found['optimal_age_at_zero']}.")
+
+    if found.get("date_moves_with_leisure"):
+        moves_line = (
+            f"**Pricing the cost of working gives the date an interior "
+            f"optimum.** It runs from {found['optimal_age_at_zero']} when a "
+            f"retired year is worth no more than a working one to "
+            f"{found['optimal_age_at_top']} at the top of the grid, where it "
+            f"is worth "
+            f"{(found['highest_leisure'] - 1) * 100:.0f}% more. Section "
+            f"#plan's corner is gone: the date is a decision the model can "
+            f"now rank, because both sides of it are priced.")
+    else:
+        moves_line = (
+            f"The optimal date does not move across the leisure grid, "
+            f"holding at {found['optimal_age_at_zero']}.")
+
+    if found.get("survival_pulls_earlier"):
+        survival_line = (
+            f"Weighting by survival pulls it earlier still, at "
+            f"{found['survival_levels_earlier']} of the "
+            f"{found['survival_levels']} values of leisure tested and by up "
+            f"to {found['survival_max_years_earlier']} years. Deferring is a "
+            f"bet that you will be there to collect, and the Gompertz law of "
+            f"`docs/24` prices that bet where the certain-death horizon "
+            f"cannot.")
+    else:
+        survival_line = (
+            f"Weighting by survival does not pull the date earlier at any "
+            f"value of leisure tested, which is worth stating because it is "
+            f"the opposite of what the mortality risk would suggest.")
+
+    figure_list = "\n".join(f"* `{f}`" for f in figures)
+    intro = _header(
+        "32 - What a Year of Retirement Is Worth",
+        "Section #plan found a decision this model could not price. This is "
+        "the other side of that ledger.")
+
+    body = f"""
+## 1. The decision the last section could not make
+
+`docs/31` solves the withdrawal rule and the allocation together, and finds
+that the third leg of a retirement plan -- the date -- runs to the oldest age
+on the grid and stays there. Nothing in this model charges anyone for the
+years they spend working. Another year is more contributions, a shorter
+drawdown and a bigger benefit, at no cost whatever, so the optimiser takes
+every one it is offered.
+
+That is a statement about the model. This document supplies what is missing.
+
+## 2. The cost of working, in consumption units
+
+Rather than invent a disutility of labour in utils -- a quantity nothing here
+can calibrate -- the cost is written as a **consumption equivalent**. Let `L`
+be the number such that a retired year at consumption `c` is worth exactly as
+much as a working year at `L x c`. Then
+
+    effective consumption = c / L   while working
+                          = c       once retired
+
+`L = 1` charges nothing and reproduces every other result in this project
+exactly, which is the control. `L = 1.20` says a year of retirement is worth
+twenty per cent more than the same money earned while employed.
+
+One reading of the "retirement consumption puzzle" -- spending falls at
+retirement without a matching fall in reported wellbeing -- is precisely
+this, retirees substituting time for money. A fall of `d` at constant welfare
+implies `L = 1 / (1 - d)`:
+
+{anchor_tbl}
+
+That reading is contested and this project cannot test it. It is used only to
+put the swept grid on a scale a reader recognises; nothing below depends on
+it.
+
+**The horizon has to be the whole life.** Every other document scores
+consumption from the retirement date. That window cannot price a retirement
+date -- it charges the investor for the years they worked and credits them
+nothing for the ones they did not -- so the aggregation here runs from
+{int(cfg['lifecycle']['age_start'])}. These certainty equivalents are not
+comparable with the retirement-window ones elsewhere.
+
+## 3. The pension you claim early
+
+There is a second thing to fix first, and it is bigger than leisure. Every
+other document fixes the retirement date, so the benefit starts on the same
+birthday for every strategy and its start date cancels. It does not cancel
+here: left alone, this model pays whoever stops at fifty a full unreduced
+pension for forty-three years.
+
+Real systems reduce a benefit claimed early and increase one deferred, by
+roughly enough to leave its expected present value alone. The multiplier that
+does that exactly is the ratio of annuity factors, `A(reference) / A(age)`,
+derived from this model's own Gompertz survival and discount factor rather
+than taken from a statute:
+
+{claim_tbl}
+
+That works out at {per_year} a year away from age {reference}. The comparison
+is worth making: the US schedule reduces a benefit by about 6.7% for each of
+the first three years claimed early and raises it about 8% for each year
+deferred past full retirement age. Nothing here was fitted to that, and the
+agreement is a check on the survival law rather than a coincidence worth
+leaning on.
+
+{claiming_line}
+
+## 4. When to stop
+
+{optimum_tbl}
+
+{moves_line}
+
+{survival_line}
+
+## 5. The break-even, which is the number to carry
+
+An optimal date depends on a calibration nobody can hand you. A break-even
+does not. For each date earlier than the one an investor would choose if
+working cost nothing, this is the value of leisure at which it becomes
+worthwhile:
+
+{break_tbl}
+
+The question becomes one a reader can answer for themselves. Stopping
+{int(shown['years_earlier'].iloc[0]) if len(shown) else 0} years early is not a
+forecast; it is a claim that a year of your own time is worth at least
+{float(shown['break_even_pct'].iloc[0]) if len(shown) else float('nan'):.0f}%
+of a year's consumption -- about the size of the consumption drop actually
+observed at retirement, and so not a large claim at all. Stopping
+{int(shown['years_earlier'].iloc[-1]) if len(shown) else 0} years early is a
+much bigger one:
+{float(shown['break_even_pct'].iloc[-1]) if len(shown) else float('nan'):.0f}%,
+which is beyond anything that literature reports. Whether either is true, this
+document does not say.
+
+## 6. What this changes
+
+* The retirement date is not unpriceable -- it was unpriced. Charging for the
+  years spent working turns `docs/31`'s corner into an interior optimum at
+  {found['optimal_age_at_zero']}-{found['optimal_age_at_top']}, depending on
+  what a year is worth.
+* **The claiming rule matters more than leisure does.** An unreduced pension
+  starting whenever work stops is worth more than any plausible value of
+  leisure, and would have decided the answer on its own.
+* The smallest margin over the runner-up anywhere on the reported path is
+  {found.get('smallest_margin_pct', float('nan')):.2f}%, which is what to
+  check before reading any single row as an identification.
+* **What is not modelled**: partial retirement, which is what most people
+  actually do; any change in the value of leisure with age or health, when
+  both plainly change; an earliest claiming age, so the adjusted benefit here
+  can start at fifty where no real system would pay it; and the possibility
+  that work is worth something positive -- purpose, company, structure --
+  which would push the date the other way and which this parameterisation
+  cannot represent, since `L` is bounded below at 1.
+
+## 7. Figures
+
+{figure_list}
+
+## 8. Reproduction
+
+```bash
+python main.py --steps 32
+```
+
+Runtime {float(notes['elapsed_seconds']):.0f}s at {int(notes['n_paths']):,}
+paths, γ = {gamma:g}, holding `{strategy}` throughout. Tables in
+`{cfg['run']['table_dir']}/leisure_*.csv`.
+"""
+    return _write(path, [intro, body])

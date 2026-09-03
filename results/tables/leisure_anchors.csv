@@ -1,0 +1,5 @@
+label,consumption_drop,leisure,leisure_pct
+no value on leisure (every other section),0.0,1.0,0.0
+a 10% consumption drop at retirement,0.1,1.1111111111111112,11.111111111111116
+a 20% consumption drop at retirement,0.2,1.25,25.0
+a 30% consumption drop at retirement,0.3,1.4285714285714286,42.85714285714286

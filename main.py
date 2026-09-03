@@ -33,6 +33,7 @@ from src import glidepath as gp
 from src import hedging as hg
 from src import housing as hsg
 from src import inflation as inf
+from src import leisure as le
 from src import leverage as lev
 from src import humancapital as hc
 from src import lifecycle as lc
@@ -3914,6 +3915,112 @@ def step31_plan(cfg: Dict[str, Any],
     return state
 
 
+
+def step32_leisure(cfg: Dict[str, Any],
+                   state: Dict[str, Any]) -> Dict[str, Any]:
+    """Charge for the years spent working, and solve for the retirement date."""
+    lei_cfg = cfg.get("leisure", {})
+    if not lei_cfg.get("enabled", False):
+        LOGGER.info("leisure study disabled; skipping step 32")
+        return state
+    LOGGER.info("=== STEP 32: what a year of retirement is worth ===")
+    started = time.perf_counter()
+
+    panel = state.get("panel") or dl.build_panel(cfg)
+    spec = state.get("spec") or lc.spec_from_config(cfg)
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    beta = float(cfg["utility"]["discount_factor"])
+    n_paths = int(lei_cfg.get("n_paths", cfg["bootstrap"]["n_paths"]))
+    ages = [int(a) for a in lei_cfg.get("ages", le.DEFAULT_AGES)]
+    grid = [float(x) for x in lei_cfg.get("leisure_grid", le.DEFAULT_LEISURE)]
+    key = str(lei_cfg.get("strategy", "balanced_all_equity"))
+    reference = int(lei_cfg.get("claim_reference_age", spec.age_retire))
+
+    # One draw of paths and one draw of income shocks, shared by every
+    # retirement date: a shorter career is a prefix of a longer one, so the
+    # comparison across dates is paired rather than merely parallel.
+    for chunk in bs.from_config(panel, cfg).chunks(n_paths, n_paths):
+        paths = chunk
+    shocks = lc.draw_income_shocks(
+        n_paths, spec.horizon, np.random.default_rng(int(cfg["run"]["seed"])))
+    survive = mrt.survival(spec,
+                            float(lei_cfg.get("mortality_modal_age", 88.0)),
+                            float(lei_cfg.get("mortality_dispersion", 10.0)))
+
+    def simulate(age: int, factor: float) -> Any:
+        aged = dataclasses.replace(pl.spec_for(spec, age),
+                                   ss_claim_factor=float(factor))
+        income = lc.simulate_income(aged, n_paths, shocks=shocks,
+                                    dom_eq=paths.dom_eq, intl_eq=paths.intl_eq)
+        strategy = lc.build_strategies(cfg, aged)[key]
+        return lc.simulate_all(paths, {key: strategy}, aged, income)[key]
+
+    factors = le.fair_claim_factor(spec, survive, beta, reference, ages)
+    claim_tbl = le.claim_factor_table(factors, reference)
+    LOGGER.info("actuarially fair adjustment: %.1f%% to %.1f%% a year",
+                claim_tbl["per_year_pct"].min(), claim_tbl["per_year_pct"].max())
+
+    arms = [str(a) for a in lei_cfg.get("claim_arms", ("unadjusted",
+                                                       "actuarial"))]
+    frames: List[pd.DataFrame] = []
+    optima: Dict[str, pd.DataFrame] = {}
+    crossings: Dict[str, pd.DataFrame] = {}
+    for arm in arms:
+        LOGGER.info("--- claiming arm: %s ---", arm)
+        block = le.sweep(simulate, spec, cfg, gamma, ages, grid, survive,
+                         None if arm == "unadjusted" else factors)
+        block.insert(0, "claim_arm", arm)
+        frames.append(block)
+        optima[arm] = le.optimal_age(block).assign(claim_arm=arm)
+        crossings[arm] = le.break_even(block).assign(claim_arm=arm)
+        LOGGER.info("%s: optimal age %d with no value on leisure, %d at the "
+                    "top of the grid", arm,
+                    int(optima[arm]["optimal_age"].iloc[0]),
+                    int(optima[arm]["optimal_age"].iloc[-1]))
+    swept = pd.concat(frames, ignore_index=True)
+
+    headline = arms[-1]
+    anchors = le.anchor_table()
+    found = le.verdict(swept[swept["claim_arm"] == headline], optima[headline],
+                       crossings[headline], anchors)
+    found["claim_arm"] = headline
+    if "unadjusted" in optima:
+        found["unadjusted_age_at_zero"] = int(
+            optima["unadjusted"]["optimal_age"].iloc[0])
+        found["claiming_rule_moves_the_answer"] = bool(
+            found["unadjusted_age_at_zero"] != found["optimal_age_at_zero"])
+    LOGGER.info("break-even: %s", {
+        int(r["retire_age"]): f"{r['break_even_pct']:.1f}%"
+        for _, r in crossings[headline].iterrows() if r["is_earlier"]})
+
+    tables = cfg["run"]["table_dir"]
+    _save_table(swept, tables, "leisure_sweep")
+    _save_table(claim_tbl, tables, "leisure_claim_factors")
+    _save_table(anchors, tables, "leisure_anchors")
+    _save_table(pd.concat(optima.values(), ignore_index=True),
+                tables, "leisure_optimal_age")
+    _save_table(pd.concat(crossings.values(), ignore_index=True),
+                tables, "leisure_break_even")
+
+    figures = [str(plots.plot_leisure(
+        swept, optima[headline], crossings[headline], claim_tbl, anchors,
+        headline, spec, cfg["run"]["figure_dir"]))]
+
+    elapsed = time.perf_counter() - started
+    rp.write_doc_32(
+        Path("docs") / "32_cost_of_working.md", cfg,
+        {"swept": swept, "claim": claim_tbl, "anchors": anchors,
+         "optimal": optima[headline], "break_even": crossings[headline],
+         "unadjusted_optimal": optima.get("unadjusted", pd.DataFrame())},
+        figures,
+        {"elapsed_seconds": elapsed, "gamma": gamma, "n_paths": n_paths,
+         "strategy": key, "reference_age": reference, "arms": arms,
+         "headline_arm": headline, "verdict": found})
+    LOGGER.info("docs/32 written (%.0fs)", elapsed)
+    state["leisure_break_even"] = crossings[headline]
+    return state
+
+
 STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
          4: step4_report, 5: step5_sensitivity, 6: step6_spending,
          7: step7_glide_path, 8: step8_hedging, 9: step9_retirement_timing,
@@ -3927,11 +4034,12 @@ STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
          24: step24_mortality, 25: step25_pension,
          26: step26_turnover, 27: step27_inflation,
          28: step28_withholding, 29: step29_sequence,
-         30: step30_franking, 31: step31_plan}
+         30: step30_franking, 31: step31_plan,
+         32: step32_leisure}
 
 
 def run(config_path: str = "config.yaml",
-        steps: Sequence[int] = tuple(range(1, 32)),
+        steps: Sequence[int] = tuple(range(1, 33)),
         quick: bool = False) -> Dict[str, Any]:
     """Execute the pipeline and return the accumulated state."""
     cfg = dl.load_config(config_path)
@@ -3961,8 +4069,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--steps", nargs="+", type=int,
-                        default=list(range(1, 32)),
-                        choices=list(range(1, 32)))
+                        default=list(range(1, 33)),
+                        choices=list(range(1, 33)))
     parser.add_argument("--quick", action="store_true",
                         help="small N for smoke tests")
     parser.add_argument("--verbose", action="store_true")

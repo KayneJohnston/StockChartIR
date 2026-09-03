@@ -128,8 +128,9 @@ is the read-through; the table below is the build.
 | [`docs/29_sequence_risk.md`](docs/29_sequence_risk.md) | Sequence-of-returns risk, isolated by keeping each lifetime's returns and shuffling their order: how much of the outcome is the ordering, which phase it lands in, and why that turns out to be a property of the withdrawal rule |
 | [`docs/30_franking_credits.md`](docs/30_franking_credits.md) | Dividend imputation -- the credit that lands only on the home leg, exactly mirroring the withholding tax that falls only on the foreign one -- and what the two of them together do to the case for going abroad |
 | [`docs/31_plan_and_portfolio.md`](docs/31_plan_and_portfolio.md) | Dropping the assumption every other document makes: the withdrawal rule and the allocation solved *together* rather than one at a time, which shows the ranking of portfolios separates from the rule and the location of the optimum does not |
+| [`docs/32_cost_of_working.md`](docs/32_cost_of_working.md) | Putting a price on the years spent working, so the retirement date has an optimum instead of a corner -- and reporting the break-even rather than a recommendation: what a year of your own time must be worth to justify stopping early |
 
-All thirty-one are **generated** by `main.py` from live pipeline objects --
+All thirty-two are **generated** by `main.py` from live pipeline objects --
 edit `src/report.py`, not the Markdown.
 
 ## How much of this data is real
@@ -675,13 +676,14 @@ python main.py --steps 28           # foreign dividend withholding tax
 python main.py --steps 29           # sequence-of-returns risk, isolated
 python main.py --steps 30           # dividend imputation and the tax wedge
 python main.py --steps 31           # the plan and the portfolio, solved together
+python main.py --steps 32           # what a year of retirement is worth
 python main.py --config other.yaml  # a different parameterisation
 ```
 
 ## Layout
 
 ```
-├── docs/                 # generated analysis documents (31 files)
+├── docs/                 # generated analysis documents (32 files)
 ├── data/
 │   ├── raw/              # primary source files, unmodified
 │   ├── processed/        # standardised real return panels (.csv and .npz)
