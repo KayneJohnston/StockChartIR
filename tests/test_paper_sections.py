@@ -373,3 +373,30 @@ class TestWithholdingSectionIsWiredIn:
         assert "break_even_differential_bp" in source
         for literal in ("114", "115", "29.2", "112"):
             assert f'"{literal}"' not in source
+
+
+class TestCompactStrategyLabels:
+    """The one table wide enough that the configured labels wrap mid-word."""
+
+    def test_every_strategy_that_table_prints_has_a_compact_form(self) -> None:
+        """The invariant is about the franking table's own columns.
+
+        A strategy that appears there without a compact form falls back to the
+        configured label and wraps mid-word, which is the defect this map
+        exists to fix. Strategies that never reach that table need no entry.
+        """
+        import yaml
+
+        cfg = yaml.safe_load(open("config.yaml", encoding="utf-8"))
+        printed = ([str(cfg["franking"]["challenger"])]
+                   + [str(r) for r in cfg["franking"]["rivals"]])
+        for key in printed:
+            assert key in content.COMPACT_STRATEGY, key
+
+    def test_the_compact_forms_fit_a_column_header(self) -> None:
+        for key, label in content.COMPACT_STRATEGY.items():
+            # Eleven characters wrapped mid-word in the rendered table.
+            assert len(label) <= 10, (key, label)
+
+    def test_an_unknown_key_falls_back_rather_than_failing(self) -> None:
+        assert content._compact_strategy("solved_schedule") == "solved schedule"

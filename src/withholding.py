@@ -44,9 +44,10 @@ instead of a constant one. ``q`` is the share of a year's ending value that
 arrived as a taxable dividend, and it is the only new quantity this section
 needs.
 
-**What this does not model.** Dividend imputation, which in Australia and New
-Zealand refunds corporate tax to *domestic* shareholders and would widen the
-gap further in the home market's favour; the second layer of withholding a
+**What this does not model.** Dividend imputation, which refunds corporate tax
+to *domestic* shareholders and widens the gap further in the home market's
+favour -- Section #franking prices it, and closing both blades reverses the
+comparison this section reaches; the second layer of withholding a
 country's investor suffers by holding a US-domiciled fund of foreign stocks
 rather than the stocks themselves; reclaim procedures, which recover part of
 the tax at a cost in paperwork most retail investors do not pay; and the tax

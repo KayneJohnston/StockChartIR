@@ -1,0 +1,5 @@
+label,company_tax,fund_tax,franked_share,credit,credit_pct
+"no imputation, no fund tax",0.3,0.0,0.0,0.0,0.0
+"a taxed fund, nothing franked",0.3,0.15,0.0,-0.15000000000000002,-15.000000000000002
+an Australian fund still accumulating,0.3,0.15,1.0,0.2142857142857142,21.42857142857142
+an Australian fund paying a pension,0.3,0.0,1.0,0.4285714285714286,42.85714285714286

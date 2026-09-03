@@ -155,6 +155,17 @@ def _wrap(text: str, width: int) -> str:
     return "\n".join(parts) or str(text)
 
 
+#: Tick-length forms of the wedge positions in Section #franking. The names in
+#: ``src/franking.ANCHORS`` are written for a table column, where a line is as
+#: wide as the page; on a category axis each gets about a bar's width.
+POSITION_LABEL: Dict[str, str] = {
+    "neither tax": "neither\ntax",
+    "withholding only": "withholding\nonly",
+    "a taxed fund, nothing franked": "taxed fund,\nunfranked",
+    "an Australian fund still accumulating": "accumulating\nfund",
+    "an Australian fund paying a pension": "pension-phase\nfund",
+}
+
 #: Display names for the panel's return series, so no axis prints a bare
 #: column key at a reader.
 SERIES_LABEL: Dict[str, str] = {
@@ -248,8 +259,18 @@ def _flat(text: Any, width: int = 26) -> str:
 
 
 def _abbr(text: Any) -> str:
-    """The shortest readable form of a series name."""
+    """The shortest readable form of a series name, wrapped for a tick."""
     return SERIES_ABBR.get(str(text), _flat(text, 10))
+
+
+def _legend(text: Any) -> str:
+    """The same name on one line, for a legend entry.
+
+    A legend sits inside the axes and lays its own text out, so it needs the
+    unwrapped form. Flattening :func:`_abbr` instead would join a label broken
+    mid-word back together with a space in the middle of it.
+    """
+    return _flat(text, 200).replace("\n", " ")
 
 
 #: Roughly how many characters of a 9 pt title fit in an inch of axes.
@@ -3081,7 +3102,7 @@ def plot_withholding(curve: pd.DataFrame, crossings: pd.DataFrame,
             ax.plot(block["rate_pct"].to_numpy(dtype=float),
                     block[col].to_numpy(dtype=float), marker=_marker(i),
                     color=_colour(i), linewidth=1.6, markersize=3.2,
-                    label=_abbr(key).replace("\n", " "))
+                    label=_legend(key))
         for _, r in anchors.iterrows():
             ax.axvline(float(r["rate_pct"]), color="0.75", linewidth=0.8,
                        linestyle=":", zorder=0)
@@ -3102,7 +3123,7 @@ def plot_withholding(curve: pd.DataFrame, crossings: pd.DataFrame,
                 continue
             y = block[col].to_numpy(dtype=float)
             ax.plot(x, y, marker=_marker(i), color=_colour(i), linewidth=1.6,
-                    markersize=3.2, label=_abbr(rival).replace("\n", " "))
+                    markersize=3.2, label=_legend(rival))
         ax.axhline(0.0, color="black", linewidth=1.1)
         for _, r in crossings.iterrows():
             if bool(r["reached_on_grid"]):
@@ -3146,6 +3167,124 @@ def plot_withholding(curve: pd.DataFrame, crossings: pd.DataFrame,
                   handlelength=1.2, columnspacing=0.8, frameon=True,
                   framealpha=0.92, edgecolor="none", title="rate",
                   title_fontsize=5.0)
+
+        fig.tight_layout()
+    return _save(fig, directory, name)
+
+
+def plot_franking(curve: pd.DataFrame, crossings: pd.DataFrame,
+                  anchors: pd.DataFrame, era: pd.DataFrame,
+                  optima: pd.DataFrame, comparison: pd.DataFrame,
+                  wedge_optimal: pd.DataFrame,
+                  challenger: str, rivals: Sequence[str],
+                  swept_rate: float,
+                  directory: str | Path,
+                  name: str = "fig56_franking") -> Path:
+    """What a credit on home dividends does to the case for foreign equity."""
+    with plt.rc_context(STYLE):
+        fig, axes = _grid(4, 3.0)
+
+        # -- 1. the lead, and where the credit runs it out -----------------
+        ax = axes[0]
+        block = curve.sort_values("credit_pct")
+        x = block["credit_pct"].to_numpy(dtype=float)
+        for i, rival in enumerate(rivals):
+            col = f"lead_over_{rival}_pct"
+            if col not in block.columns:
+                continue
+            ax.plot(x, block[col].to_numpy(dtype=float), marker=_marker(i),
+                    color=_colour(i), linewidth=1.6, markersize=3.2,
+                    label=_legend(rival))
+        ax.axhline(0.0, color="black", linewidth=1.1)
+        ax.axvline(0.0, color="0.6", linewidth=0.9)
+        for _, r in crossings.iterrows():
+            if bool(r["reached_on_grid"]):
+                ax.axvline(float(r["crossing_pct"]), color="0.5",
+                           linewidth=0.9, linestyle="--", zorder=0)
+        for _, r in anchors.iterrows():
+            if float(r["credit"]) > 0:
+                ax.axvline(float(r["credit_pct"]), color="0.78",
+                           linewidth=0.8, linestyle=":", zorder=0)
+        ax.set_xlabel("Imputation credit on home dividends (% of the dividend)")
+        ax.set_ylabel("All-international's lead (%)")
+        _title(ax, "Where the credit runs the lead out")
+        ax.legend(fontsize=5.5, loc="upper right", labelspacing=0.3,
+                  handlelength=1.4, frameon=True, framealpha=0.92,
+                  edgecolor="none")
+
+        # -- 2. the credit's worth by era, against the withholding drag ----
+        ax = axes[1]
+        eras = era[era["era"] != "whole panel"]
+        if len(eras):
+            ax.bar(range(len(eras)), eras["credit_bp"].to_numpy(dtype=float),
+                   color=_colour(2), width=0.62)
+            whole = era[era["era"] == "whole panel"]
+            if len(whole):
+                ax.axhline(float(whole["credit_bp"].iloc[0]), color="0.4",
+                           linewidth=1.0, linestyle=":")
+            ax.set_xticks(np.arange(len(eras)))
+            _strategy_ticks(ax, list(eras["era"]), fontsize=6.0)
+        ax.axhline(0.0, color="black", linewidth=0.9)
+        ax.set_ylabel("Worth of the credit (bp a year)")
+        _title(ax, "The same credit is worth less as yields fall")
+
+        # -- 3. the wedge: each rival's lead over the challenger -----------
+        #
+        # Levels would compress a one-per-cent reversal into indistinguishable
+        # bars and truncating the axis to fix that would exaggerate it. The
+        # difference is the quantity in question, so it is what is drawn: a
+        # bar above the line is a rival beating all-international.
+        ax = axes[2]
+        keys = [k for k in rivals if f"cec_{k}" in comparison.columns]
+        base = (comparison[f"cec_{challenger}"].to_numpy(dtype=float)
+                if f"cec_{challenger}" in comparison.columns else None)
+        idx = np.arange(len(comparison))
+        width = 0.8 / max(len(keys), 1)
+        if base is not None:
+            for i, key in enumerate(keys):
+                lead = (comparison[f"cec_{key}"].to_numpy(dtype=float) / base
+                        - 1.0) * 100.0
+                ax.bar(idx + (i - (len(keys) - 1) / 2.0) * width, lead,
+                       width=width, color=_colour(i + 1), label=_legend(key))
+        ax.axhline(0.0, color="black", linewidth=1.1)
+        ax.set_xticks(idx)
+        _strategy_ticks(ax, [POSITION_LABEL.get(str(v), _wrap(str(v), 14))
+                             for v in comparison["position"]], fontsize=5.0)
+        ax.set_ylabel(f"Lead over {_legend(challenger)} (%)")
+        _title(ax, "Both blades of the scissors, together")
+        ax.legend(fontsize=5.0, ncol=1, loc="lower left", labelspacing=0.25,
+                  handlelength=1.1, columnspacing=0.8, frameon=True,
+                  framealpha=0.92, edgecolor="none")
+
+        # -- 4. what to hold at each credit --------------------------------
+        ax = axes[3]
+        if len(optima):
+            block = optima.sort_values("credit")
+            ax.plot(block["credit"].to_numpy(dtype=float) * 100.0,
+                    block["optimal_domestic_share"].to_numpy(dtype=float)
+                    * 100.0, marker=_marker(0), color=_colour(0),
+                    linewidth=1.7, markersize=4.0, drawstyle="steps-mid",
+                    label="swept credit")
+        # Only the positions drawn on the same panel as the curve. A position
+        # at a different withholding rate has a different optimum for a reason
+        # this axis cannot show, and plotting it here would read as a
+        # contradiction rather than as a second experiment.
+        named = (wedge_optimal[np.isclose(wedge_optimal["rate"], swept_rate)]
+                 if {"credit", "rate"} <= set(wedge_optimal.columns)
+                 else wedge_optimal.iloc[:0])
+        if len(named):
+            ax.scatter(named["credit"].to_numpy(dtype=float) * 100.0,
+                       named["optimal_domestic_share"].to_numpy(dtype=float)
+                       * 100.0, s=40, facecolors="none", edgecolors="black",
+                       linewidths=1.1, zorder=5,
+                       label="a position an investor holds")
+        ax.axvline(0.0, color="0.6", linewidth=0.9)
+        ax.set_xlabel("Imputation credit on home dividends (%)")
+        ax.set_ylabel("Optimal domestic share of equity (%)")
+        _title(ax, "The optimum walks home as the credit rises")
+        ax.legend(fontsize=5.5, loc="upper left", labelspacing=0.3,
+                  handlelength=1.4, frameon=True, framealpha=0.92,
+                  edgecolor="none")
 
         fig.tight_layout()
     return _save(fig, directory, name)

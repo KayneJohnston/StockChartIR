@@ -8668,14 +8668,16 @@ same paths.
   international sleeve — the same order as that break-even, reached by
   statute rather than by fund selection.
 * {"The ranking changes somewhere inside the statutory range, so the headline is conditional on the investor's tax position." if found.get("crossing_within_statutory") else "The ranking does not change inside the statutory range."}
-* **What is not modelled**: dividend imputation, which in Australia and New
-  Zealand refunds corporate tax to *domestic* shareholders; the second layer
-  of withholding suffered by holding a US-domiciled fund of foreign stocks
-  rather than the stocks themselves; reclaim procedures, which recover part
-  of the tax at a paperwork cost most retail investors do not pay; and the
-  investor's own income tax on the dividend afterwards. Every one of those
-  runs against the international sleeve, so the rates here are a floor on the
-  real burden rather than an estimate of it.
+* **What is not modelled here**: dividend imputation, which refunds
+  corporate tax to *domestic* shareholders and widens the home market's
+  advantage further -- `docs/30` takes it up, and closing both blades changes
+  the answer this document reaches; the second layer of withholding suffered
+  by holding a US-domiciled fund of foreign stocks rather than the stocks
+  themselves; reclaim procedures, which recover part of the tax at a
+  paperwork cost most retail investors do not pay; and the investor's own
+  income tax on the dividend afterwards. Every one of those runs against the
+  international sleeve, so the rates here are a floor on the real burden
+  rather than an estimate of it.
 
 ## 6. Figures
 
@@ -8971,5 +8973,298 @@ python main.py --steps 29
 Runtime {float(notes['elapsed_seconds']):.0f}s at {int(notes['n_paths']):,}
 paths x {n_reps} orderings, γ = {gamma:g}. Tables in
 `{cfg['run']['table_dir']}/sequence_*.csv`.
+"""
+    return _write(path, [intro, body])
+
+
+def write_doc_30(
+    path: str | Path,
+    cfg: Mapping[str, Any],
+    frames: Mapping[str, pd.DataFrame],
+    figures: Sequence[str],
+    notes: Mapping[str, Any],
+) -> Path:
+    """Dividend imputation, and the wedge it closes with withholding."""
+    curve = frames["curve"]
+    crossed = frames["crossings"]
+    credits = frames["credits"]
+    franked = frames["franked"]
+    era = frames["era"]
+    drag = frames["drag"]
+    optima = frames["optimal"]
+    comparison = frames["comparison"]
+    found = notes["verdict"]
+    gamma = float(notes["gamma"])
+    tau = float(notes["withholding_rate"])
+    headline = float(notes["headline_credit"])
+    fund_tax = float(notes["fund_tax"])
+    challenger = str(notes["challenger"])
+    rivals = [str(r) for r in notes["rivals"]]
+
+    credit_tbl = md_table(_compact(
+        credits, ["label", "company_tax", "fund_tax", "franked_share",
+                  "credit_pct"],
+        {"label": "Who holds it", "company_tax": "Company rate",
+         "fund_tax": "Fund's own rate", "franked_share": "Franked",
+         "credit_pct": "Credit (% of the dividend)"}), floatfmt="{:.4f}")
+
+    from . import franking as frk
+
+    break_even = frk.break_even_franked_share(
+        float(notes["fund_company_tax"]), fund_tax)
+    franked_tbl = md_table(_compact(
+        franked, ["franked_share", "credit_pct"],
+        {"franked_share": "Share of dividends franked",
+         "credit_pct": "Credit (% of the dividend)"}), floatfmt="{:.4f}")
+
+    era_tbl = md_table(_compact(
+        era, ["era", "mean_dividend_share", "credit_bp"],
+        {"era": "Era", "mean_dividend_share": "Mean dividend share",
+         "credit_bp": "Worth of the credit (bp a year)"}), floatfmt="{:.4f}")
+
+    cross_tbl = md_table(_compact(
+        crossed, ["rival", "crossing_pct", "equivalent_credit_bp",
+                  "reached_on_grid", "lead_at_zero_pct"],
+        {"rival": "Rival", "crossing_pct": "Credit at which it overtakes (%)",
+         "equivalent_credit_bp": "in basis points a year",
+         "reached_on_grid": "Reached on the grid",
+         "lead_at_zero_pct": "Lead at the bottom of the grid (%)"}),
+        floatfmt="{:.3f}")
+
+    wedge = comparison.copy()
+    wedge["credit_pct"] = wedge["credit"] * 100.0
+    wedge["rate_pct"] = wedge["rate"] * 100.0
+    wedge_cols = (["position", "credit_pct", "rate_pct"]
+                  + [f"cec_{k}" for k in [challenger] + rivals] + ["winner"])
+    wedge_tbl = md_table(_compact(
+        wedge, wedge_cols,
+        {"position": "Where the investor stands",
+         "credit_pct": "Credit at home (%)",
+         "rate_pct": "Withholding abroad (%)", "winner": "Best",
+         **{f"cec_{k}": k for k in [challenger] + rivals}}),
+        floatfmt="{:.4f}")
+
+    opt_tbl = md_table(_compact(
+        optima, ["credit", "optimal_domestic_share", "cec_at_optimum",
+                 "margin_over_runner_up_pct"],
+        {"credit": "Credit", "optimal_domestic_share": "Optimal domestic share",
+         "cec_at_optimum": "CEC at the optimum",
+         "margin_over_runner_up_pct": "Margin over the runner-up (%)"}),
+        floatfmt="{:.4f}") if len(optima) else ""
+
+    whole = era[era["era"] == "whole panel"]
+    worth_bp = float(whole["credit_bp"].iloc[0]) if len(whole) else float("nan")
+    whole_drag = drag[drag["era"] == "whole panel"]
+    drag_bp = (float(whole_drag["drag_bp"].iloc[0]) if len(whole_drag)
+               else float("nan"))
+    wedge_bp = worth_bp + drag_bp
+
+    if found.get("wedge_overturns_the_headline"):
+        verdict_line = (
+            f"**The wedge overturns the headline; neither blade does it "
+            f"alone.** With withholding abroad and no credit at home "
+            f"`{found.get('wedge_winner_at_baseline', '?')}` still wins, "
+            f"which is Section #withholding's finding restated. Add the "
+            f"credit and `{found.get('wedge_winner_at_the_end', '?')}` wins "
+            f"instead. The tax code did what a {tau:.0%} withholding rate on "
+            f"its own could not.")
+    else:
+        verdict_line = (
+            f"**The wedge does not overturn the headline.** "
+            f"`{found.get('wedge_winner_at_baseline', '?')}` wins at every "
+            f"position tested, credit and withholding together, so the "
+            f"international case survives the largest tax asymmetry this "
+            f"panel's law can produce.")
+
+    if found.get("crossing_within_accumulation"):
+        reach = (
+            f"The crossing sits inside the range an Australian fund actually "
+            f"occupies. `{found['first_rival']}` overtakes at a credit of "
+            f"{found['first_crossing_pct']:.1f}%, and a fully franked "
+            f"dividend is worth {found['accumulation_credit']:.1%} inside a "
+            f"fund still accumulating and {found['pension_credit']:.1%} "
+            f"inside one paying a pension. Both clear it.")
+    elif found.get("crossing_within_pension_phase"):
+        reach = (
+            f"The crossing is reached, but only by the larger of the two "
+            f"Australian positions. `{found['first_rival']}` overtakes at "
+            f"{found['first_crossing_pct']:.1f}%, which a pension-phase fund "
+            f"clears at {found['pension_credit']:.1%} and an accumulating one "
+            f"does not at {found['accumulation_credit']:.1%}.")
+    elif found.get("any_rival_overtakes"):
+        reach = (
+            f"A rival does overtake, at {found['first_crossing_pct']:.1f}%, "
+            f"but that is beyond anything this tax code produces: the largest "
+            f"credit on offer is {found['pension_credit']:.1%}.")
+    else:
+        reach = (
+            f"No rival overtakes anywhere on the grid, which runs to "
+            f"{found['highest_credit_pct']:.0f}% -- more than twice the "
+            f"largest credit a real system delivers.")
+
+    if found.get("optimum_ever_moves"):
+        walk = (
+            f"The optimal domestic share walks home as the credit rises: "
+            f"{found['optimal_domestic_at_bottom']:.0%} at "
+            f"{found.get('lowest_credit_pct', float('nan')):.0f}%, where a "
+            f"taxed fund holding unfranked stock is losing rather than "
+            f"gaining; {found['optimal_domestic_at_zero']:.0%} with no credit "
+            f"at all, which is this paper's own baseline; and "
+            f"{found['optimal_domestic_at_top']:.0%} at the top of the grid. "
+            f"The smallest margin over a runner-up anywhere on that path is "
+            f"{found.get('smallest_optimum_margin_pct', float('nan')):.2f}%, "
+            f"which is what to check before reading any single row of it as "
+            f"an identification.")
+    else:
+        walk = (
+            f"The optimal domestic share does not move at all across the "
+            f"grid, holding at {found['optimal_domestic_at_zero']:.0%}.")
+
+    figure_list = "\n".join(f"* `{f}`" for f in figures)
+    intro = _header(
+        "30 - Dividend Imputation, and the Other Blade of the Scissors",
+        "One tax falls only on the foreign leg. One credit falls only on the "
+        "home leg. Section #withholding measured one of them.")
+
+    swept_note = (f"on top of {tau:.0%} withholding abroad"
+                  if bool(notes["swept_with_withholding"]) else
+                  "in isolation, with no withholding abroad")
+
+    body = f"""
+## 1. Why this section exists
+
+`docs/28` prices the tax that falls on the international leg and finds it
+large enough to matter -- at the treaty rate this document also uses,
+{drag_bp:.0f} basis points a year on the foreign sleeve. That document closes
+by listing what it does not model, and the first item on the list is this
+one.
+
+**Dividend imputation runs the other way.** A company pays corporate tax and
+distributes what is left. Under a classical system the shareholder is then
+taxed again. Under an imputation system the corporate tax counts as tax the
+*shareholder* already paid: the dividend arrives with a credit attached, and a
+shareholder taxed below the corporate rate can be refunded the difference in
+cash. Australia has run such a system since 1987 and has made the credit fully
+refundable since 2000. A superannuation fund in pension phase pays no tax at
+all and therefore collects the whole credit as a cheque.
+
+The credit is available to residents only, which makes it the exact mirror of
+withholding: one falls only abroad, one lands only at home, and both are
+levied on dividends rather than on assets. That symmetry is what lets the two
+be quoted in the same units and added together.
+
+## 2. What a credit is worth
+
+Let `q` be the dividend's share of the gross return -- the quantity `docs/28`
+already builds -- and let `t_c` be the corporate rate imputed, `t_f` the rate
+the holder's own fund pays, and `phi` the franked fraction. Then a dollar of
+cash dividend is worth `1 + c` where
+
+    c = (1 - t_f) * (1 + phi * t_c / (1 - t_c)) - 1
+
+and the after-credit return is `(1 + r) * (1 + c q)`: `docs/28`'s expression
+with `-tau` replaced by `+c`.
+
+{credit_tbl}
+
+Nothing in that table is asserted. Each row is three structural numbers and
+the credit they imply, and the row worth pausing on is `a taxed fund, nothing
+franked`: it comes back *negative*. A fund paying {fund_tax:.0%} on a dividend
+carrying no credit is worse off than this paper's untaxed baseline. The
+formula is not built to produce a credit; it produces whichever sign the
+parameters imply, and the sign is the first check that it is the tax code
+being modelled rather than a thumb on the scale.
+
+Partial franking scales it, and no franking level is observable in this
+project's data, so it is swept rather than assumed. The table below holds the
+fund rate at {fund_tax:.0%} -- a fund still accumulating -- so the credit has
+that tax to make back before it is worth anything at all:
+
+{franked_tbl}
+
+Solving for where it does gives {break_even:.1%} of dividends franked. Below
+that level a fund holding its own market is behind this paper's untaxed
+baseline rather than ahead of it, and the fully franked figure quoted
+everywhere else here is an upper bound on what any real market delivers.
+
+## 3. What it is worth in basis points
+
+A credit rate is not comparable with a fee until it has been converted into
+one. At the headline credit of {headline:.2%} -- fully franked, pension phase
+-- the home leg gains {worth_bp:.0f} basis points a year across the panel.
+
+{era_tbl}
+
+The same tax code delivers less as time passes, for the same reason the
+withholding drag falls in `docs/28`: both are levied on dividends, and
+dividend yields in this panel have fallen by roughly a third.
+
+Put the two blades side by side and the wedge is {wedge_bp:.0f} basis points a
+year -- {worth_bp:.0f} added to the home leg and {drag_bp:.0f} taken from the
+foreign one. That is the quantity the rest of this document is about, and it
+is larger than either half.
+
+## 4. Where the credit runs the lead out
+
+The curve below is swept {swept_note}. Nobody occupies the isolated position:
+an investor collecting franking credits is also paying withholding, and
+pricing one without the other would answer a question no one is asking.
+
+{cross_tbl}
+
+{reach}
+
+## 5. Both blades, closed
+
+Neither section on its own describes anybody. The table below scores the
+handful of positions an investor can actually stand in, each on identical
+paths.
+
+{wedge_tbl}
+
+{verdict_line}
+
+## 6. What to hold, rather than who wins
+
+{opt_tbl}
+
+{walk}
+
+## 7. What this changes
+
+* A fully franked dividend is worth {headline:.1%} of itself to a
+  pension-phase fund, or {worth_bp:.0f} basis points a year on the home leg --
+  against the {tau:.0%} withholding rate's drag on the foreign one.
+* {verdict_line.replace('**', '')}
+* **Whose law this is.** The credit is applied to whichever market an
+  investor holds as their own, which models a world where every country
+  operates imputation rather than the one that exists. That is the same
+  convention `docs/25` uses when it pays Australia's Age Pension to an
+  investor drawing sixteen countries' returns, and it is deliberate: the
+  question is what the mechanism is worth, not what a population-weighted
+  average of sixteen tax codes comes to. Several of this panel's countries
+  ran an imputation system at some point in the twentieth century and
+  abolished it; Australia did not. That is a fact from the tax literature,
+  not from this project's data, and no result here rests on the count.
+* **What is not modelled**: the personal tax a classical system would levy on
+  the dividend, which runs against the home leg and would shrink the wedge;
+  any franking level other than the swept grid; and the years before 1987,
+  during which Australia's own investors had no credit at all. The last is
+  the largest omission, and it runs the same way as the first.
+
+## 8. Figures
+
+{figure_list}
+
+## 9. Reproduction
+
+```bash
+python main.py --steps 30
+```
+
+Runtime {float(notes['elapsed_seconds']):.0f}s at {int(notes['n_paths']):,}
+paths, γ = {gamma:g}, dividend observations on
+{float(notes['coverage']):.1%} of country-years. Tables in
+`{cfg['run']['table_dir']}/franking_*.csv`.
 """
     return _write(path, [intro, body])

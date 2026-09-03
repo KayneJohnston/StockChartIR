@@ -28,6 +28,7 @@ from src import bootstrap as bs
 from src import cohorts as coh
 from src import data_loader as dl
 from src import fees as fee
+from src import franking as fk
 from src import glidepath as gp
 from src import hedging as hg
 from src import housing as hsg
@@ -3469,6 +3470,146 @@ def step29_sequence(cfg: Dict[str, Any],
     return state
 
 
+def step30_franking(cfg: Dict[str, Any],
+                    state: Dict[str, Any]) -> Dict[str, Any]:
+    """Credit the home market's dividends and close both blades of the tax."""
+    fk_cfg = cfg.get("franking", {})
+    if not fk_cfg.get("enabled", False):
+        LOGGER.info("franking study disabled; skipping step 30")
+        return state
+    LOGGER.info("=== STEP 30: dividend imputation on the home market ===")
+    started = time.perf_counter()
+
+    panel = state.get("panel") or dl.build_panel(cfg)
+    jst = dl.load_jst(cfg)
+    spec = state.get("spec") or lc.spec_from_config(cfg)
+    fixed = dict(state.get("strategies") or lc.build_strategies(cfg, spec))
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    column = f"cec_crra_gamma{gamma:g}"
+    n_paths = int(fk_cfg.get("n_paths", cfg["bootstrap"]["n_paths"]))
+    grid = [float(c) for c in fk_cfg.get("credit_grid", fk.DEFAULT_CREDITS)]
+    challenger = str(fk_cfg.get("challenger", "international_equity"))
+    rivals = [str(r) for r in fk_cfg.get("rivals", ())]
+    tau = float(fk_cfg.get("withholding_rate", 0.15))
+    with_tax = bool(fk_cfg.get("sweep_with_withholding", True))
+
+    # The home market's own dividend share, not the sleeve's: the credit is a
+    # resident's, so it is levied on the leg the investor lives in.
+    domestic = wh.dividend_share(jst, panel.countries, panel.years)
+    sleeve = wh.sleeve_dividend_share(domestic)
+    coverage = float(np.isfinite(domestic).mean())
+    LOGGER.info("home dividend share of gross return: mean %.4f across %.1f%% "
+                "of country-years", float(np.nanmean(domestic)),
+                coverage * 100.0)
+    if coverage < 0.5:
+        raise RuntimeError(
+            "fewer than half the panel's country-years carry a dividend "
+            "observation; a credit computed on them would be a statement "
+            "about the covered cells rather than about the panel")
+
+    credits = fk.anchor_credits()
+    headline = fk.credit_rate(float(fk_cfg.get("headline_company_tax", 0.30)),
+                              float(fk_cfg.get("headline_fund_tax", 0.0)),
+                              float(fk_cfg.get("headline_franked_share", 1.0)))
+    era = fk.realised_credit(headline, domestic, panel.years)
+    # The other blade, in the same units, so the doc can weigh the two without
+    # restating a number Section #withholding derived.
+    drag = wh.realised_drag(tau, sleeve, panel.years)
+    # The partial-franking table is drawn at the accumulating fund's own rate,
+    # read off the anchor rather than repeated here, so the table, the
+    # document and the paper cannot quote three different numbers.
+    acc_company, acc_fund, _ = fk.anchor_parameters(fk.ACCUMULATING)
+    franked = fk.franking_grid(
+        acc_company, acc_fund,
+        [float(x) for x in fk_cfg.get("franked_grid",
+                                      fk.DEFAULT_FRANKED_SHARES)])
+    LOGGER.info("a fully franked dividend in a pension-phase fund is worth "
+                "%+.2f%% of itself, or %+.0f bp a year on the home leg",
+                headline * 100.0,
+                float(era.loc[era["era"] == "whole panel", "credit_bp"].iloc[0]))
+
+    dom_strats, dom_param = inf.domestic_share_strategies(
+        spec, [float(x) for x in fk_cfg.get("domestic_grid",
+                                            inf.DEFAULT_DOMESTIC_GRID)])
+    strategies = {**fixed, **dom_strats}
+
+    def summarise(built: dl.Panel, paths: int) -> pd.DataFrame:
+        return _run_variant(cfg, built, spec, strategies, paths)
+
+    frame = fk.sweep(panel, summarise, n_paths, domestic, grid,
+                     tau if with_tax else 0.0, sleeve if with_tax else None)
+    frame["n_paths"] = n_paths
+    curve = fk.gap_curve(frame[frame["strategy"].isin(fixed)], challenger,
+                         rivals)
+    crossed = fk.crossings(curve, rivals, domestic)
+    anchors = fk.anchor_table(curve, rivals, domestic)
+    optima = fk.optimum_by_credit(
+        frame[frame["strategy"].isin(dom_param)], dom_param, column)
+
+    # The wedge: the handful of positions an investor can actually occupy,
+    # rather than a curve through positions nobody holds.
+    positions = fk.wedge_positions(rate=tau)
+    wedge = fk.wedge_sweep(panel, summarise, n_paths, domestic, sleeve,
+                           positions)
+    wedge["n_paths"] = n_paths
+    comparison = fk.wedge_comparison(
+        wedge[wedge["strategy"].isin(fixed)], column,
+        [challenger] + rivals)
+    wedge_opt = fk.wedge_optimum(
+        wedge[wedge["strategy"].isin(dom_param)], dom_param, column)
+
+    findings = fk.verdict(curve, crossed, optima, credits, comparison,
+                          challenger)
+    LOGGER.info("franking verdict: %d of %d rivals overtake; first at %.1f%%; "
+                "optimal domestic share %.0f%% -> %.0f%%",
+                findings["n_rivals_overtaking"], len(rivals),
+                findings["first_crossing_pct"],
+                findings.get("optimal_domestic_at_zero", float("nan")) * 100,
+                findings.get("optimal_domestic_at_top", float("nan")) * 100)
+    LOGGER.info("the wedge: %s at the baseline, %s at the far end (%s)",
+                findings.get("wedge_winner_at_baseline", "?"),
+                findings.get("wedge_winner_at_the_end", "?"),
+                "overturned" if findings.get("wedge_overturns_the_headline")
+                else "held")
+
+    tables = cfg["run"]["table_dir"]
+    for block, name in ((frame, "franking_sweep"),
+                        (curve, "franking_curve"),
+                        (crossed, "franking_crossings"),
+                        (anchors, "franking_anchors"),
+                        (credits, "franking_credits"),
+                        (franked, "franking_by_franked_share"),
+                        (era, "franking_era"),
+                        (drag, "franking_withholding_drag"),
+                        (optima, "franking_optimal"),
+                        (wedge, "franking_wedge"),
+                        (comparison, "franking_wedge_comparison"),
+                        (wedge_opt, "franking_wedge_optimal")):
+        _save_table(block, tables, name)
+
+    figures = [str(plots.plot_franking(
+        curve, crossed, anchors, era, optima, comparison, wedge_opt,
+        challenger, rivals, tau, cfg["run"]["figure_dir"]))]
+
+    elapsed = time.perf_counter() - started
+    rp.write_doc_30(
+        Path("docs") / "30_franking_credits.md", cfg,
+        {"curve": curve, "crossings": crossed, "anchors": anchors,
+         "credits": credits, "franked": franked, "era": era,
+         "drag": drag, "optimal": optima, "comparison": comparison,
+         "wedge_optimal": wedge_opt},
+        figures,
+        {"elapsed_seconds": elapsed, "gamma": gamma, "n_paths": n_paths,
+         "headline_credit": headline, "withholding_rate": tau,
+         "fund_tax": acc_fund, "fund_company_tax": acc_company,
+         "swept_with_withholding": with_tax, "challenger": challenger,
+         "rivals": rivals, "mean_share": float(np.nanmean(domestic)),
+         "coverage": coverage, "verdict": findings})
+    LOGGER.info("docs/30 written (%.0fs)", elapsed)
+    state["franking_curve"] = curve
+    return state
+
+
 STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
          4: step4_report, 5: step5_sensitivity, 6: step6_spending,
          7: step7_glide_path, 8: step8_hedging, 9: step9_retirement_timing,
@@ -3481,11 +3622,12 @@ STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
          22: step22_out_of_sample, 23: step23_human_capital,
          24: step24_mortality, 25: step25_pension,
          26: step26_turnover, 27: step27_inflation,
-         28: step28_withholding, 29: step29_sequence}
+         28: step28_withholding, 29: step29_sequence,
+         30: step30_franking}
 
 
 def run(config_path: str = "config.yaml",
-        steps: Sequence[int] = tuple(range(1, 30)),
+        steps: Sequence[int] = tuple(range(1, 31)),
         quick: bool = False) -> Dict[str, Any]:
     """Execute the pipeline and return the accumulated state."""
     cfg = dl.load_config(config_path)
@@ -3515,8 +3657,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--steps", nargs="+", type=int,
-                        default=list(range(1, 30)),
-                        choices=list(range(1, 30)))
+                        default=list(range(1, 31)),
+                        choices=list(range(1, 31)))
     parser.add_argument("--quick", action="store_true",
                         help="small N for smoke tests")
     parser.add_argument("--verbose", action="store_true")

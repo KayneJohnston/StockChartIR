@@ -126,8 +126,9 @@ is the read-through; the table below is the build.
 | [`docs/27_inflation_state.md`](docs/27_inflation_state.md) | Recent inflation as a state variable: what one, three and five years of it predict about forward real returns by asset class, and whether it moves the optimal portfolio -- read once at the birth date and again at the retirement date, which is where it turns out to matter |
 | [`docs/28_withholding_tax.md`](docs/28_withholding_tax.md) | Foreign dividend withholding tax -- the cost differential between holding your own market and everyone else's that is not a fee, is not negotiable and is not a choice -- swept to the rate at which it undoes the headline |
 | [`docs/29_sequence_risk.md`](docs/29_sequence_risk.md) | Sequence-of-returns risk, isolated by keeping each lifetime's returns and shuffling their order: how much of the outcome is the ordering, which phase it lands in, and why that turns out to be a property of the withdrawal rule |
+| [`docs/30_franking_credits.md`](docs/30_franking_credits.md) | Dividend imputation -- the credit that lands only on the home leg, exactly mirroring the withholding tax that falls only on the foreign one -- and what the two of them together do to the case for going abroad |
 
-All twenty-nine are **generated** by `main.py` from live pipeline objects --
+All thirty are **generated** by `main.py` from live pipeline objects --
 edit `src/report.py`, not the Markdown.
 
 ## How much of this data is real
@@ -671,13 +672,14 @@ python main.py --steps 12 26        # what the solved schedule costs to trade
 python main.py --steps 27           # recent inflation as a state variable
 python main.py --steps 28           # foreign dividend withholding tax
 python main.py --steps 29           # sequence-of-returns risk, isolated
+python main.py --steps 30           # dividend imputation and the tax wedge
 python main.py --config other.yaml  # a different parameterisation
 ```
 
 ## Layout
 
 ```
-├── docs/                 # generated analysis documents (29 files)
+├── docs/                 # generated analysis documents (30 files)
 ├── data/
 │   ├── raw/              # primary source files, unmodified
 │   ├── processed/        # standardised real return panels (.csv and .npz)

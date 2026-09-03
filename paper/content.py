@@ -593,6 +593,7 @@ SECTION_ORDER: Tuple[str, ...] = (
     "inflation",
     "fees",
     "withholding",
+    "franking",
     "human_capital",
     "mortality",
     "pension",
@@ -642,8 +643,8 @@ EXTENSION_SECTIONS: Tuple[str, ...] = SECTION_ORDER[
 #: abstract announcing "four" and then describing five.
 EXTENSION_GROUPS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("robustness", ("cohorts", "panel", "sleeve", "hedging", "valuation",
-                    "inflation", "fees", "withholding", "human_capital",
-                    "mortality", "pension")),
+                    "inflation", "fees", "withholding", "franking",
+                    "human_capital", "mortality", "pension")),
     ("portfolio", ("glide", "allocation", "leverage", "turnover",
                    "out_of_sample")),
     ("menu", ("housing", "mortgage")),
@@ -686,6 +687,25 @@ def _pretty_strategy(key: str) -> str:
     """
     from src import plots
     return plots.STRATEGY_LABEL.get(key, key.replace("_", " "))
+
+
+#: Column-header forms of the strategy names, for the one table wide enough
+#: that the configured labels wrap mid-word. Section #franking scores four
+#: strategies against three descriptive columns, which is two columns more
+#: than the page has room for at full width.
+COMPACT_STRATEGY: Dict[str, str] = {
+    "international_equity": "All intl.",
+    "balanced_all_equity": "50/50",
+    "domestic_equity": "All dom.",
+    "target_date_fund": "Glide path",
+    "sixty_forty": "60/40",
+    "bills_only": "Bills",
+}
+
+
+def _compact_strategy(key: str) -> str:
+    """A strategy name short enough for a column header."""
+    return COMPACT_STRATEGY.get(key, _pretty_strategy(key))
 
 
 def section_number(key: str) -> int:
@@ -8649,9 +8669,10 @@ def section_withholding(ctx: Any) -> List[Flowable]:
          "the practical form of this section's answer."
          if found.get("optimum_moves_home") else
          "The optimal domestic share does not move with the rate."),
-        "<b>What is not modelled</b>: dividend imputation, which in Australia "
-        "and New Zealand refunds corporate tax to <i>domestic</i> "
-        "shareholders and would widen the home market's advantage further; "
+        "<b>What is not modelled here</b>: dividend imputation, which refunds "
+        "corporate tax to <i>domestic</i> shareholders and widens the home "
+        "market's advantage further — Section #franking takes it up, and it "
+        "changes the answer this section reaches; "
         "the second layer of withholding an investor suffers by holding a "
         "US-domiciled fund of foreign stocks rather than the stocks "
         "themselves; reclaim procedures, which recover part of the tax at a "
@@ -8659,6 +8680,263 @@ def section_withholding(ctx: Any) -> List[Flowable]:
         "own income tax on the dividend afterwards. Every one of those runs "
         "the same way, against the international sleeve, so the rates here "
         "are a floor on the real burden rather than an estimate of it.",
+    ]))
+    return out
+
+
+def section_franking(ctx: Any) -> List[Flowable]:
+    f = ctx.f
+    curve = f.table("franking_curve")
+    crossed = f.table("franking_crossings")
+    credits = f.table("franking_credits")
+    granked = f.table("franking_by_franked_share")
+    era = f.table("franking_era")
+    drag = f.table("franking_withholding_drag")
+    optima = f.table("franking_optimal")
+    comparison = f.table("franking_wedge_comparison")
+
+    from src import franking as frk
+    cfg = f.cfg
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    fcfg = cfg["franking"]
+    challenger = str(fcfg.get("challenger", "international_equity"))
+    rivals = [str(r) for r in fcfg.get("rivals", ())]
+    tau = float(fcfg.get("withholding_rate", 0.15))
+    acc_company, fund_tax, _ = frk.anchor_parameters(frk.ACCUMULATING)
+    found = frk.verdict(curve, crossed, optima, credits, comparison,
+                        challenger)
+    headline = frk.credit_rate(float(fcfg.get("headline_company_tax", 0.30)),
+                               float(fcfg.get("headline_fund_tax", 0.0)),
+                               float(fcfg.get("headline_franked_share", 1.0)))
+
+    def _whole(frame: pd.DataFrame, column: str) -> float:
+        block = frame[frame["era"] == "whole panel"]
+        return float(block[column].iloc[0]) if len(block) else float("nan")
+
+    worth_bp = _whole(era, "credit_bp")
+    drag_bp = _whole(drag, "drag_bp")
+
+    out: List[Flowable] = [
+        ctx.h1("#franking. Dividend Imputation, and the Other Blade")]
+    out.append(ctx.p(
+        f"Section #withholding prices the tax that falls on the international "
+        f"leg and finds it large enough to matter — {drag_bp:.0f} basis "
+        f"points a year at the treaty rate. It closes by listing what it does "
+        f"not model, and the first item on that list is the one this section "
+        f"takes up, because it runs the other way and lands on the other leg."))
+    out.append(ctx.p(
+        f"Under a classical tax system a company pays corporate tax and its "
+        f"shareholder is then taxed again on what is distributed. Under an "
+        f"<i>imputation</i> system the corporate tax counts as tax the "
+        f"shareholder already paid: the dividend arrives with a credit "
+        f"attached, and a shareholder taxed below the corporate rate can be "
+        f"refunded the difference in cash. Australia has run such a system "
+        f"since 1987 and has made the credit fully refundable since 2000, so "
+        f"a superannuation fund in pension phase — which pays no tax at all — "
+        f"collects the whole credit as a cheque."))
+    out.append(ctx.note(
+        "The credit is available to residents only, which makes it the exact "
+        "mirror of withholding: one falls only abroad, one lands only at "
+        "home, and both are levied on dividends rather than on assets. That "
+        "symmetry is what allows the two to be quoted in the same units and "
+        "then added. Adding a credit on top of a pre-tax return is not "
+        "double-counting the same relief: an equity total return is already "
+        "net of corporate tax, so the baseline here is an investor who keeps "
+        "the cash dividend and pays no <i>personal</i> tax on it, and "
+        "imputation refunds the <i>corporate</i> tax on top of that."))
+
+    out.append(ctx.h2("#franking.1 What a credit is worth"))
+    out.append(ctx.p(
+        f"Write <i>q</i> for the dividend's share of the gross return — the "
+        f"quantity Section #withholding already builds — and let <i>t</i>c be "
+        f"the corporate rate imputed, <i>t</i>f the rate the holder's own fund "
+        f"pays, and φ the franked fraction. A franked dollar of dividend "
+        f"grosses up to 1/(1 − <i>t</i>c), is taxed at <i>t</i>f and returns "
+        f"(1 − <i>t</i>f)/(1 − <i>t</i>c); an unfranked one simply returns "
+        f"(1 − <i>t</i>f). So a dollar of cash dividend is worth 1 + <i>c</i> "
+        f"with <i>c</i> = (1 − <i>t</i>f)(1 + φ <i>t</i>c/(1 − <i>t</i>c)) − 1, "
+        f"and the after-credit return is (1 + <i>r</i>)(1 + <i>c q</i>) — "
+        f"Section #withholding's expression with −τ replaced by +<i>c</i>."))
+    out.extend(ctx.table(
+        [["Who holds it", "Company rate", "Fund's own rate", "Franked",
+          "Credit (% of the dividend)"]]
+        + [[str(r["label"]), f"{float(r['company_tax']):.0%}",
+            f"{float(r['fund_tax']):.0%}", f"{float(r['franked_share']):.0%}",
+            f"{float(r['credit_pct']):+.2f}"]
+           for _, r in credits.iterrows()],
+        "The credit implied by each holder's position, γ = "
+        f"{gamma:g}.",
+        note="Nothing in the last column is written down; each is the three "
+             "numbers beside it put through the formula above. The row worth "
+             "pausing on is the taxed fund holding unfranked stock, which "
+             "comes back <i>negative</i>: a fund paying "
+             f"{fund_tax:.0%} on a dividend carrying no credit is worse off "
+             "than the untaxed baseline this paper otherwise assumes. The "
+             "formula is not built to produce a credit, and the sign is the "
+             "first check that it is a tax code being modelled."))
+    if len(granked):
+        break_even = frk.break_even_franked_share(acc_company, fund_tax)
+        out.append(ctx.p(
+            f"Partial franking scales it, and no market's franking level is "
+            f"observable in this project's data, so it is swept rather than "
+            f"assumed. Inside a fund taxed at {fund_tax:.0%} the credit has "
+            f"that tax to make back before it is worth anything at all, and "
+            f"solving for where it does gives {break_even:.1%} of dividends "
+            f"franked. Below that a fund holding its own market is behind "
+            f"this paper's untaxed baseline rather than ahead of it; the "
+            f"{float(granked['credit_pct'].iloc[-1]):+.1f}% in the paragraph "
+            f"above is what full franking delivers, and it is an upper bound "
+            f"on what any real market does."))
+
+    out.append(ctx.h2("#franking.2 What it is worth in basis points"))
+    out.append(ctx.p(
+        f"A credit rate means nothing beside a fee until it has been put in "
+        f"the same units. At the headline credit of {headline:.1%} — fully "
+        f"franked, pension phase — the home leg gains {worth_bp:.0f} basis "
+        f"points a year across the panel, against the {drag_bp:.0f} the "
+        f"foreign leg is losing to withholding at {tau:.0%}. The wedge "
+        f"between the two legs is therefore {worth_bp + drag_bp:.0f} basis "
+        f"points, which is larger than either half and larger than the fee "
+        f"differential Section #fees identifies as the break-even."))
+    if len(era):
+        out.extend(ctx.table(
+            [["Era", "Mean dividend share", "Worth of the credit (bp a year)"]]
+            + [[str(r["era"]), f"{float(r['mean_dividend_share']):.4f}",
+                f"{float(r['credit_bp']):+.0f}"]
+               for _, r in era.iterrows()],
+            f"The credit at {headline:.1%}, by era.",
+            note="The same tax code delivers less as time passes, for the "
+                 "same reason the withholding drag falls in Section "
+                 "#withholding: both are levied on dividends, and this "
+                 "panel's dividend yields have fallen by roughly a third."))
+
+    out.append(ctx.h2("#franking.3 Both blades, closed"))
+    out.append(ctx.p(
+        "Neither section on its own describes anybody. An investor collecting "
+        "franking credits is also paying withholding, simultaneously, and the "
+        "two push the same way. The table below scores the handful of "
+        "positions someone can actually stand in, each on identical paths."))
+    if len(comparison):
+        keys = [k for k in [challenger] + rivals
+                if f"cec_{k}" in comparison.columns]
+        out.extend(ctx.table(
+            [["Where the investor stands", "Credit", "WHT"]
+             + [_compact_strategy(k) for k in keys] + ["Best"]]
+            + [[str(r["position"]), f"{float(r['credit']):+.1%}",
+                f"{float(r['rate']):.0%}"]
+               + [f"{float(r[f'cec_{k}']):.4f}" for k in keys]
+               + [_compact_strategy(str(r["winner"]))]
+               for _, r in comparison.iterrows()],
+            f"Certainty-equivalent consumption at each position, γ = "
+            f"{gamma:g}.",
+            note="WHT is the withholding rate the foreign leg pays. The "
+                 "first row is this paper's own baseline and the second "
+                 "isolates withholding, so the table reads as a "
+                 "decomposition rather than as a list of scenarios."))
+    out.append(ctx.p(
+        (f"<b>The wedge overturns the headline, and neither blade does it "
+         f"alone.</b> With withholding abroad and no credit at home "
+         f"<i>{_pretty_strategy(found.get('wedge_winner_at_baseline', ''))}</i> "
+         f"still wins, which is Section #withholding's finding restated. Add "
+         f"the credit and "
+         f"<i>{_pretty_strategy(found.get('wedge_winner_at_the_end', ''))}</i> "
+         f"wins instead. Nothing about the returns changed between those "
+         f"rows; what changed is which leg the tax code is standing on."
+         if found.get("wedge_overturns_the_headline") else
+         f"<b>The wedge does not overturn the headline.</b> "
+         f"<i>{_pretty_strategy(found.get('wedge_winner_at_baseline', ''))}</i> "
+         f"wins at every position tested, credit and withholding together, so "
+         f"the international case survives the largest tax asymmetry this "
+         f"panel's law can produce.")))
+    if len(crossed):
+        out.append(ctx.p(
+            (f"The swept curve locates the reversal exactly. "
+             f"<i>{_pretty_strategy(found['first_rival'])}</i> overtakes at a "
+             f"credit of {found['first_crossing_pct']:.1f}% of the dividend, "
+             f"and a fully franked dividend is worth "
+             f"{found['accumulation_credit']:.1%} inside a fund still "
+             f"accumulating and {found['pension_credit']:.1%} inside one "
+             f"paying a pension. Both clear it, which is why the reversal is "
+             f"not a statement about an extreme parameter."
+             if found.get("crossing_within_accumulation") else
+             f"The swept curve locates the reversal at "
+             f"{found['first_crossing_pct']:.1f}%, which only the "
+             f"pension-phase position reaches at "
+             f"{found['pension_credit']:.1%}."
+             if found.get("crossing_within_pension_phase") else
+             f"No rival overtakes anywhere on the swept grid, which runs to "
+             f"{found['highest_credit_pct']:.0f}% — more than twice the "
+             f"largest credit this tax code delivers.")))
+
+    out.append(ctx.h2("#franking.4 What to hold, rather than who wins"))
+    if len(optima):
+        out.extend(ctx.table(
+            [["Credit", "Optimal domestic share", "CEC at the optimum",
+              "Margin over the runner-up (%)"]]
+            + [[f"{float(r['credit']):+.1%}",
+                f"{float(r['optimal_domestic_share']):.0%}",
+                f"{float(r['cec_at_optimum']):.4f}",
+                f"{float(r['margin_over_runner_up_pct']):.2f}"]
+               for _, r in optima.iterrows()],
+            f"The certainty-equivalent-maximising domestic share at each "
+            f"credit, swept on top of {tau:.0%} withholding abroad.",
+            note="The margin column is what stops a flat maximum being read "
+                 "as an identification."))
+    out.append(ctx.p(
+        (f"<b>The optimum walks home as the credit rises</b>, from "
+         f"{found['optimal_domestic_at_zero']:.0%} with no credit at all — "
+         f"this paper's own baseline — to "
+         f"{found['optimal_domestic_at_top']:.0%} at the top of the grid. "
+         f"That is the practical form of the answer: not which of two "
+         f"portfolios wins, but how much of the home market a given tax "
+         f"position justifies."
+         if found.get("optimum_ever_moves") else
+         f"The optimal domestic share does not move with the credit, holding "
+         f"at {found['optimal_domestic_at_zero']:.0%} throughout.")))
+
+    out.extend(ctx.figure(
+        "fig56_franking",
+        "Top left: all-international's lead against the credit, with the "
+        "crossing and the real anchors marked. Top right: what the credit is "
+        "worth by era. Bottom left: each rival's lead over all-international "
+        "at every position an investor can occupy — a bar above the line is a "
+        "reversal. Bottom right: the optimal domestic share as the credit "
+        "rises."))
+
+    out.append(ctx.h2("#franking.5 What this changes"))
+    out.extend(ctx.bullets([
+        f"<b>The tax code moves the answer, and only when both halves of it "
+        f"are modelled.</b> Withholding alone leaves "
+        f"<i>{_pretty_strategy(challenger)}</i> ahead. The credit at home "
+        f"turns a {drag_bp:.0f} basis-point drag on one leg into a "
+        f"{worth_bp + drag_bp:.0f} basis-point wedge between the two, and "
+        f"that is enough.",
+        (f"<b>It is not a case for going home.</b> "
+         f"<i>{_pretty_strategy(found.get('wedge_winner_at_the_end', ''))}</i> "
+         f"wins at the largest credit tested, not "
+         f"<i>{_pretty_strategy('domestic_equity')}</i>. The correction to "
+         f"this paper's headline is a smaller foreign allocation, not none."
+         if found.get("wedge_overturns_the_headline")
+         and found.get("wedge_winner_at_the_end") != "domestic_equity" else
+         "The credit does not produce a case for holding the home market "
+         "alone at any level tested."),
+        "<b>Whose law this is.</b> The credit is applied to whichever market "
+        "an investor holds as their own, which models a world where every "
+        "country operates imputation rather than the one that exists. That "
+        "is the same convention Section #pension uses when it pays "
+        "Australia's Age Pension to an investor drawing sixteen countries' "
+        "returns: the question is what the mechanism is worth, not what a "
+        "population-weighted average of sixteen tax codes comes to. Several "
+        "of this panel's countries ran an imputation system during the "
+        "twentieth century and abolished it; Australia did not. That is a "
+        "fact from the tax literature rather than from this project's data, "
+        "and no number above rests on it.",
+        "<b>What is not modelled</b>: the personal tax a classical system "
+        "would then levy on the dividend, which runs against the home leg "
+        "and would narrow the wedge; any franking level other than the swept "
+        "grid; and the years before 1987, when Australia's own investors had "
+        "no credit at all. The last is the largest of the three and runs the "
+        "same way as the first.",
     ]))
     return out
 
@@ -8973,6 +9251,7 @@ def story(ctx: Any) -> List[Flowable]:
     parts += section_inflation(ctx)
     parts += section_fees(ctx)
     parts += section_withholding(ctx)
+    parts += section_franking(ctx)
     parts += section_human_capital(ctx)
     parts += section_mortality(ctx)
     parts += section_pension(ctx)

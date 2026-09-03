@@ -871,6 +871,38 @@ withholding:
   domestic_grid: [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
 
 # ---------------------------------------------------------------------
+# Step 30 - the other blade of the scissors: dividend imputation
+# ---------------------------------------------------------------------
+franking:
+  enabled: true
+  n_paths: 100000
+  challenger: international_equity
+  rivals: [balanced_all_equity, target_date_fund, domestic_equity]
+  # The credit as a fraction of the cash dividend. Negative is a real
+  # position, not a guard rail: a fund taxed at 15% on an unfranked dividend
+  # is worse off than the untaxed baseline this paper otherwise assumes.
+  # 21.43% and 42.86% are the fully-franked values at a 30% company rate for
+  # a fund taxed at 15% and at nothing respectively; they are recomputed from
+  # the structural parameters below rather than trusted from this list.
+  credit_grid: [-0.15, 0.0, 0.05, 0.10, 0.15, 0.2143, 0.25, 0.30, 0.35,
+                0.4286, 0.50, 0.60]
+  # The withholding rate the foreign leg pays while the credit is swept, and
+  # in the wedge table. The typical treaty rate, as in step 28.
+  withholding_rate: 0.15
+  # Whether the swept curve is run on top of that rate or in isolation. On,
+  # because nobody occupies the isolated position: an investor who collects
+  # franking credits also pays withholding.
+  sweep_with_withholding: true
+  # The credit whose era table and prose the doc quotes: a pension-phase
+  # Australian fund, the largest of the anchors.
+  headline_company_tax: 0.30
+  headline_fund_tax: 0.0
+  headline_franked_share: 1.0
+  # The franked shares tabulated, since no franking level is observable here.
+  franked_grid: [0.0, 0.25, 0.5, 0.75, 1.0]
+  domestic_grid: [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+
+# ---------------------------------------------------------------------
 # Step 25 - a pension system that is not the American one
 # ---------------------------------------------------------------------
 pension:
