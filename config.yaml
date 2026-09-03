@@ -917,6 +917,57 @@ franking:
   domestic_grid: [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
 
 # ---------------------------------------------------------------------
+# Step 31 - the retirement plan, solved with the portfolio
+# ---------------------------------------------------------------------
+# docs/06 concludes that the spending rule and the asset allocation are
+# "close to separable" and can be chosen independently. That holds for the
+# *ranking* of six candidate portfolios and fails for the *location* of the
+# optimum, which is what this step measures -- and then removes the
+# assumption entirely by solving both together.
+plan:
+  enabled: true
+  # Search paths. The comparison is paired -- every plan sees the same
+  # lifetimes -- so precision on the difference is what matters, and the
+  # winner is re-scored at the full count afterwards.
+  n_paths: 20000
+  score_paths: 100000
+
+  # --- part 1: the allocation grid crossed with the rule ---------------
+  # From fully insulated to fully pass-through, which is the mechanism's
+  # order rather than the ranking's.
+  sweep_rules: [constant_real, vanguard_dynamic, guyton_klinger,
+                endowment, constant_percent, life_expectancy]
+  equity_grid: [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+  domestic_grid: [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+  equity_domestic_share: 0.5
+  fixed_income_bond_share: 0.7
+  # The portfolio held through the working years when only the retirement
+  # phase is being swept.
+  accumulation_strategy: balanced_all_equity
+
+  # --- part 2: the joint search ----------------------------------------
+  rules: [constant_real, vanguard_dynamic, guyton_klinger,
+          endowment, constant_percent, life_expectancy]
+  # Wide enough on both sides that a corner would be visible. Every rated
+  # rule turns out to have an interior optimum, which is the check that the
+  # objective disciplines spending rather than rewarding whatever spends
+  # fastest.
+  rate_grid: [0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.10, 0.12, 0.15]
+  # The main arm holds the retirement date fixed. Labour is costless in this
+  # model, so an age left free runs to the ceiling -- which is a fact about
+  # the model, reported separately below rather than mixed into the answer.
+  retire_ages: [63]
+  age_diagnostic: [58, 60, 63, 66, 68, 70]
+  # What the ablation measures the gains against.
+  baseline_rule: constant_real
+  baseline_rate: 0.04
+  baseline_strategy: balanced_all_equity
+  free_form_sweeps: 2
+  domestic_band_years: 5
+  max_rounds: 4
+
+
+# ---------------------------------------------------------------------
 # Step 25 - a pension system that is not the American one
 # ---------------------------------------------------------------------
 pension:

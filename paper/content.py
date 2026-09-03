@@ -614,6 +614,7 @@ SECTION_ORDER: Tuple[str, ...] = (
     "retirement",
     "sequence",
     "spending",
+    "plan",
     # Closing.
     "discussion",
     "limitations",
@@ -649,7 +650,7 @@ EXTENSION_GROUPS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
                    "out_of_sample")),
     ("menu", ("housing", "mortgage")),
     ("plan", ("saving", "accumulation", "retirement", "sequence",
-              "spending")),
+              "spending", "plan")),
 )
 
 
@@ -2710,8 +2711,9 @@ def section_glide(ctx: Any) -> List[Flowable]:
     comparison = f.table("glide_comparison")
     restarts = f.table("glide_restarts")
     deviation = f.table("glide_deviation_profile")
-    anchor = f.table("glide_retirement_anchor_summary")
+    anchor_summary = f.table("glide_retirement_anchor_summary")
     gamma = f.baseline_gamma
+    retire_age = int(f.cfg["lifecycle"]["age_retire"])
     block = comparison[comparison["risk_aversion"] == gamma] \
         .sort_values("cec", ascending=False)
     dev = deviation[deviation["risk_aversion"] == gamma]
@@ -2783,32 +2785,93 @@ def section_glide(ctx: Any) -> List[Flowable]:
         "at each risk aversion. The solved advantage over a fixed all-equity "
         "portfolio is small; the advantage over the glide path is not."))
 
-    out.append(ctx.h2("#glide.2 Anchoring the glide to the retirement date"))
+    out.append(ctx.h2("#glide.2 The dip belongs to the withdrawal rule"))
     out.append(ctx.p(
-        "A natural objection is that the search is unconstrained and real "
-        "target-date funds are anchored to a retirement date. We therefore "
-        "also solve the schedule subject to an anchor: the equity share at "
-        "retirement is fixed at a series of levels and the rest of the "
-        "schedule is re-optimised around it."))
-    out.extend(ctx.table(
-        rows_from(anchor, list(anchor.columns)[:5],
-                  [c.replace("_", " ").title() for c in list(anchor.columns)[:5]]),
-        "Solved schedules under an anchored equity share at retirement",
-        note="Each row fixes the equity share at the retirement date and "
-             "re-solves the remaining ages. The cost of the anchor is the "
-             "certainty-equivalent gap to the unconstrained solution.",
-        font_size=7.2))
+        "The solved schedule is not quite flat: under the baseline 4% rule it "
+        "dips at the retirement date and recovers afterwards. That is worth "
+        "explaining rather than smoothing away, because the obvious reading "
+        "-- that the model has rediscovered the glide path after all -- is "
+        "the wrong one."))
+    out.append(ctx.p(
+        f"A 4% rule sets the whole of retirement spending as a fixed fraction "
+        f"of wealth on <i>one date</i>. Wealth at {retire_age} is therefore "
+        f"not another point on the wealth path; it is the single number that "
+        f"fixes consumption for the next thirty years. De-risking briefly "
+        f"around a date like that is rational for the same reason nobody "
+        f"holds their house deposit in equities the month before completion. "
+        f"If that is the explanation, the dip should vanish under a rule that "
+        f"anchors on no single date -- so the schedule is re-solved under two "
+        f"that do not."))
+    if len(anchor_summary):
+        out.extend(ctx.table(
+            [["Withdrawal rule", "Equity at retirement", "Equity elsewhere",
+              "Dip (pp)", "Domestic share, working", "Domestic, retired",
+              "Solved CEC"]]
+            + [[str(r["rule"]),
+                f"{float(r['min_equity_share_at_retirement']):.0%}",
+                f"{float(r['mean_equity_share_elsewhere']):.1%}",
+                f"{float(r['dip_size_pp']):+.1f}",
+                f"{float(r['mean_domestic_working']):.1%}",
+                f"{float(r['mean_domestic_retired']):.1%}",
+                f"{float(r['solved_cec']):.4f}"]
+               for _, r in anchor_summary.iterrows()],
+            "The free-form schedule re-solved under each withdrawal rule, "
+            f"γ = {float(f.cfg['glide_path']['anchor_check']['risk_aversion']):g}.",
+            note="Each row is a complete re-solve: equity share per year and "
+                 "domestic share per band, optimised against that rule. The "
+                 "certainty equivalents are not comparable across rows, "
+                 "because the rules spend different amounts; the shapes are.",
+            font_size=7.2))
+    dipped = anchor_summary[anchor_summary["dip_size_pp"] > 1.0] \
+        if len(anchor_summary) else anchor_summary
+    flat = anchor_summary[anchor_summary["dip_size_pp"] <= 1.0] \
+        if len(anchor_summary) else anchor_summary
+    out.append(ctx.p(
+        (f"<b>The dip is a property of the withdrawal rule, not of the "
+         f"investment problem.</b> It appears only under the rule that "
+         f"anchors on wealth at a single date, at "
+         f"{float(dipped['dip_size_pp'].iloc[0]):.0f} percentage points. "
+         f"Under the {'other ' if len(flat) > 1 else ''}"
+         f"{'rules' if len(flat) > 1 else 'rule'} that condition on the "
+         f"portfolio as it stands -- a percentage of the balance, and a "
+         f"life-expectancy divisor -- the schedule is flat at 100% equity "
+         f"from twenty-five to death and the dip does not appear at all."
+         if len(dipped) == 1 and len(flat) else
+         f"The dip appears under {len(dipped)} of the "
+         f"{len(anchor_summary)} rules solved, so it is not cleanly "
+         f"attributable to the anchoring property alone.")))
+    out.append(ctx.p(
+        "That is a practical result, and it is not the one glide-path "
+        "marketing describes: <b>if your withdrawal policy anchors on your "
+        "balance at one date, de-risk briefly around that date; if it does "
+        "not, do not de-risk at all.</b> A conventional target-date fund does "
+        "neither — it de-risks slowly across decades and then stays "
+        "de-risked."))
+    if len(anchor_summary):
+        out.append(ctx.p(
+            f"The home/abroad split moves with the rule too, and in the "
+            f"direction the ruin mechanism of Section #plan explains. The "
+            f"working years take "
+            f"{anchor_summary['mean_domestic_working'].min():.0%}–"
+            f"{anchor_summary['mean_domestic_working'].max():.0%} domestic "
+            f"and the retired years "
+            f"{anchor_summary['mean_domestic_retired'].min():.0%}–"
+            f"{anchor_summary['mean_domestic_retired'].max():.0%}. Both the "
+            f"level and the phase gap are small next to the equity decision, "
+            f"which is why the search gives the split coarser bands."))
     out.extend(ctx.figure(
         "fig22_retirement_anchor",
-        "The cost of anchoring the glide path at retirement. Forcing a "
-        "conservative allocation at the retirement date is expensive, and the "
-        "cost rises steeply as the anchor becomes more conservative."))
+        "The solved equity schedule under each withdrawal rule. The dip at "
+        "the retirement date appears only under the rule that fixes spending "
+        "from wealth on that one date; the rules that read the portfolio as "
+        "it stands solve flat."))
     out.append(ctx.p(
         "The conclusion of this section is stronger than the one the "
         "benchmark comparison supports. It is not merely that the target-date "
         "glide path is worse than an all-equity portfolio on this panel; it is "
         "that when the schedule is allowed to be anything, the optimiser does "
-        "not choose a glide path at all."))
+        "not choose a glide path at all — and the one age-related feature it "
+        "does choose belongs to the spending rule rather than to the market."))
     return out
 
 
@@ -6757,6 +6820,218 @@ def section_sleeve(ctx: Any) -> List[Flowable]:
     return out
 
 
+def section_plan(ctx: Any) -> List[Flowable]:
+    f = ctx.f
+    ablation = f.table("plan_ablation")
+    rounds = f.table("plan_alternation")
+    mech = f.table("plan_mechanism_retirement_domestic")
+    opt = f.table("plan_optimum_retirement_domestic")
+    age = f.table("plan_retirement_age")
+
+    cfg = f.cfg
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    rate_max = max(float(r) for r in cfg["plan"]["rate_grid"])
+    by = ablation.set_index("freedom") if len(ablation) else ablation
+    interaction = (float(by.loc["both", "gain_over_neither_pct"]
+                         - by.loc["allocation only", "gain_over_neither_pct"]
+                         - by.loc["plan only", "gain_over_neither_pct"])
+                   if len(ablation) else float("nan"))
+    shares = opt["optimal_domestic_share"].astype(float) if len(opt) \
+        else pd.Series(dtype=float)
+    coupled = bool(np.isfinite(interaction) and abs(interaction) >= 0.05)
+
+    out: List[Flowable] = [
+        ctx.h1("#plan. The Plan and the Portfolio, Solved Together")]
+    out.append(ctx.p(
+        "Section #glide solves the allocation schedule with the withdrawal "
+        "rule pinned to a 4% rule. Section #spending ranks withdrawal rules "
+        "with the allocation pinned to a 50/50 portfolio. Each then checks "
+        "that its answer survives the thing it held fixed, and concludes that "
+        "it does — the spending rule and the asset allocation are close to "
+        "separable, and can be chosen independently."))
+    out.append(ctx.p(
+        "That claim deserves a harder test than either section gave it, "
+        "because both tested it on a <i>ranking of six candidate "
+        "portfolios</i>. A ranking of six candidates cannot resolve a grid "
+        "step, and the location of an optimum is not rank information. This "
+        "section tests it on the optimum, and then removes the assumption "
+        "altogether by solving both decisions at once."))
+    out.append(ctx.note(
+        f"Each rule is run at its own best rate: a percentage-of-portfolio "
+        f"rule at 4% is not the same policy as a fixed real rule at 4%, and "
+        f"comparing them there compares spending levels rather than rule "
+        f"shapes. Every rated rule turns out to have an <i>interior</i> "
+        f"optimum on a grid running to {rate_max:.0%}, which is the check "
+        f"that the objective disciplines spending rather than rewarding "
+        f"whatever spends fastest — if the certainty equivalent simply rose "
+        f"with the withdrawal rate, nothing in this section would mean "
+        f"anything."))
+
+    out.append(ctx.h2("#plan.1 The ranking separates; the optimum does not"))
+    if len(opt):
+        out.extend(ctx.table(
+            [["Withdrawal rule", "Optimal domestic share",
+              "CEC at the optimum", "Margin over runner-up (%)"]]
+            + [[str(r["rule"]).replace("_", " "),
+                f"{float(r['optimal_domestic_share']):.0%}",
+                f"{float(r['cec_at_optimum']):.4f}",
+                f"{float(r['margin_over_runner_up_pct']):.2f}"]
+               for _, r in opt.iterrows()],
+            f"The domestic share held from the retirement date, solved under "
+            f"each withdrawal rule, γ = {gamma:g}.",
+            note="Certainty equivalents are not comparable across rows — the "
+                 "rules spend different amounts — but the argmaxes are."))
+    if len(shares) and shares.nunique() > 1:
+        out.append(ctx.p(
+            f"<b>The optimum moves with the withdrawal rule.</b> It runs from "
+            f"{shares.min():.0%} to {shares.max():.0%} domestic across the "
+            f"{len(opt)} rules, a spread of "
+            f"{(shares.max() - shares.min()) * 100:.0f} percentage points on "
+            f"a decision Section #spending treats as independent of the rule. "
+            f"Nothing in that section is wrong: it was reporting rankings, "
+            f"and the rankings hold. It is the resolution that was the "
+            f"problem."))
+    else:
+        out.append(ctx.p(
+            "The optimum does not move with the rule on this grid, so the "
+            "separability of Section #spending holds at this resolution too."))
+    if len(mech):
+        risky = mech[mech["ruin_is_possible"]]
+        safe = mech[~mech["ruin_is_possible"]]
+        agreed = risky[risky["agree"]]
+        floor = float(mech["cec_optimal_domestic_share"].min())
+        out.extend(ctx.table(
+            [["Withdrawal rule", "Ruin observed", "Maximises CEC at",
+              "Minimises ruin at", "Agree", "Lowest ruin reachable"]]
+            + [[str(r["rule"]).replace("_", " "),
+                "yes" if bool(r["ruin_is_possible"]) else "no",
+                f"{float(r['cec_optimal_domestic_share']):.0%}",
+                (f"{float(r['ruin_optimal_domestic_share']):.0%}"
+                 if bool(r["ruin_is_possible"]) else "—"),
+                "yes" if bool(r["agree"]) else "no",
+                f"{float(r['min_ruin']):.2%}"]
+               for _, r in mech.iterrows()],
+            "Why the optimum moves: the two objectives the allocation can "
+            "serve, and which rules let it choose between them.",
+            note="Whether ruin is reachable is read off the simulated paths "
+                 "rather than off the rule's description. Where it is not, "
+                 "the ruin column is flat at zero and its argmin would be an "
+                 "artefact of the grid order, so it is left undefined."))
+        out.append(ctx.p(
+            f"<b>The mechanism is the one Section #sequence identified.</b> "
+            f"Under a rule that fixes real spending from wealth on the "
+            f"retirement date, retirement-phase returns cannot reach "
+            f"consumption until the money runs out — so the allocation's only "
+            f"remaining job is keeping the portfolio alive, and it is chosen "
+            f"to minimise ruin. Ruin is reachable under {len(risky)} of the "
+            f"{len(mech)} rules; {len(agreed)} of those put the "
+            f"certainty-equivalent maximum and the ruin minimum at the same "
+            f"share. The {len(safe)} rules that cannot run out have no ruin "
+            f"to minimise, and every one of them sits at {floor:.0%} — the "
+            f"return-maximising corner. Same market, same investor, "
+            f"different objective."))
+
+    out.append(ctx.h2("#plan.2 Solving both at once"))
+    out.append(ctx.p(
+        "The search alternates: pick the best plan for the current schedule, "
+        "re-solve the free-form schedule for that plan, repeat. It stops when "
+        "a round returns the plan it started with — the fixed point, where "
+        "neither decision would change given the other."))
+    if len(ablation):
+        out.extend(ctx.table(
+            [["What was free to move", "Plan chosen", "CEC", "Gain (%)"]]
+            + [[str(r["freedom"]), str(r["plan"]),
+                f"{float(r['cec']):.4f}",
+                f"{float(r['gain_over_neither_pct']):+.2f}"]
+               for _, r in ablation.iterrows()],
+            f"What each degree of freedom is worth, against a 4%-rule "
+            f"investor holding 50/50, γ = {gamma:g}.",
+            note="The interaction is the joint gain less the two one-sided "
+                 "gains. It is zero exactly when the two decisions can be "
+                 "chosen independently."))
+    out.append(ctx.p(
+        (f"<b>Solving them together is worth more than solving them "
+         f"apart.</b> The interaction is {interaction:+.2f}% of "
+         f"certainty-equivalent consumption — the joint search beats the sum "
+         f"of the two one-sided searches, because the allocation that suits a "
+         f"rule which cannot run out is not the allocation that suits one "
+         f"which can. An adviser who picks the portfolio first and the "
+         f"withdrawal policy afterwards leaves that on the table."
+         if coupled else
+         f"<b>The two decisions do separate at the level of the total.</b> "
+         f"The interaction is {interaction:+.3f}%, so choosing them apart "
+         f"costs almost nothing — even though, as #plan.1 shows, the "
+         f"optimum's location does move.")))
+    if len(rounds):
+        out.append(ctx.p(
+            f"The alternation reached its fixed point in {len(rounds)} "
+            f"round{'s' if len(rounds) != 1 else ''}, which is itself "
+            f"informative: the plan chosen for a flat starting schedule "
+            f"survived being re-chosen for the solved one."))
+
+    out.append(ctx.h2("#plan.3 The one decision this model cannot price"))
+    out.append(ctx.p(
+        "Retirement age is the third leg of a retirement plan and it is left "
+        "out of the search above deliberately. Scored on its own, the "
+        "certainty equivalent rises monotonically with the retirement date "
+        "and the optimiser takes the oldest age on the grid."))
+    if len(age):
+        best = age.loc[age.groupby("retire_age")["cec"].idxmax()] \
+            .sort_values("retire_age")
+        out.extend(ctx.table(
+            [["Retirement age", "CEC at the joint optimum's rule"]]
+            + [[str(int(r["retire_age"])), f"{float(r['cec']):.4f}"]
+               for _, r in best.iterrows()],
+            "The retirement date, scored against the solved schedule."))
+    out.append(ctx.p(
+        "That is not a finding about retirement; it is the model's costless "
+        "labour showing through. Nothing here charges the investor for the "
+        "years they spend working, so another one is free and the search "
+        "takes every one it is offered — which is why Section #retirement "
+        "requires a matched comparison and why the date is held fixed above. "
+        "Reporting the corner is the point: a joint optimisation is the "
+        "cleanest way to find out which decisions a model can rank and which "
+        "it merely appears to."))
+
+    out.extend(ctx.figure(
+        "fig58_plan",
+        "Top left: the retirement-phase domestic curve under each withdrawal "
+        "rule, each drawn against its own best so the shapes can be compared "
+        "— the argmax moves. The window stops at 50% because every optimum "
+        "lies below 30% and the curves decline monotonically beyond it; each "
+        "is still normalised against its best over the whole grid. Top "
+        "right: the share that maximises the "
+        "certainty equivalent beside the share that minimises ruin, which is "
+        "the mechanism. Bottom left: what each degree of freedom is worth "
+        "alone and together. Bottom right: the retirement date, running to "
+        "the ceiling because labour is free."))
+
+    out.append(ctx.h2("#plan.4 What this changes"))
+    out.extend(ctx.bullets([
+        "<b>Separability is a claim about rankings, not about optima.</b> "
+        "Section #spending's conclusion survives as stated and fails as "
+        "usually read. Both halves matter: an adviser choosing between six "
+        "model portfolios can pick the rule first, and one solving for an "
+        "allocation cannot.",
+        "<b>The withdrawal rule decides what the portfolio is for.</b> A rule "
+        "that can run out makes the allocation a ruin problem; a rule that "
+        "cannot makes it a return problem. That is the same mechanism "
+        "Section #sequence finds in the variance decomposition, arriving "
+        "here as a difference in the argmax.",
+        (f"<b>The two decisions are worth more together than apart</b>, by "
+         f"{interaction:+.2f}% of certainty-equivalent consumption."
+         if coupled else
+         "<b>The interaction is small</b>, so the sequential approach costs "
+         "little in total even though it lands in the wrong place."),
+        "<b>What is not modelled</b>: the plan is chosen once, at the start, "
+        "and never revised. A real retiree re-reads their balance every year "
+        "and may change rule as well as rate, so the gains here are a lower "
+        "bound on what a genuinely adaptive plan would earn. And there is no "
+        "disutility of labour, which is why #plan.3 exists.",
+    ]))
+    return out
+
+
 # ---------------------------------------------------------------------------
 # 19. Discussion
 # ---------------------------------------------------------------------------
@@ -9443,6 +9718,7 @@ def story(ctx: Any) -> List[Flowable]:
     parts += section_retirement(ctx)
     parts += section_sequence(ctx)
     parts += section_spending(ctx)
+    parts += section_plan(ctx)
     parts += section_discussion(ctx)
     parts += section_limitations(ctx)
     parts += section_conclusion(ctx)

@@ -1,0 +1,5 @@
+freedom,plan,cec,mean_equity,mean_domestic,gain_over_neither_pct,interaction_pct
+neither,"constant_real at 4.0%, retire at 63",1.0407132123416385,1.0,0.5,0.0,
+allocation only,"constant_real at 4.0%, retire at 63",1.1129215123045322,0.9941176470588234,0.11764705882352941,6.938347578044346,
+plan only,"constant_percent at 7.0%, retire at 63",1.192885147691537,1.0,0.5,14.621889445172576,
+both,"constant_percent at 7.0%, retire at 63",1.310019280799396,1.0,0.08088235294117646,25.877068270499826,4.316831247282904

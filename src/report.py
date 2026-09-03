@@ -2119,6 +2119,17 @@ The test is to re-solve under spending rules that carry no such anchor:
 
 {md_table(anchor.pivot_table(index="age", columns="rule", values="equity_share").sort_index().iloc[::4].reset_index(), floatfmt="{:.2f}") if len(anchor) else "_not run_"}
 
+The home/abroad split is solved alongside the equity share, and it moves with
+the rule as well -- less, and in a way the coarse bands can only resolve
+roughly, but in a consistent direction. The working years take
+{anchor_summary["mean_domestic_working"].min():.0%}-{anchor_summary["mean_domestic_working"].max():.0%}
+domestic and the retired years
+{anchor_summary["mean_domestic_retired"].min():.0%}-{anchor_summary["mean_domestic_retired"].max():.0%},
+so every rule solved here wants more of the home market after the wage stops
+than before it. Next to the equity decision this is a small effect, which is
+why the search gives the split five-year bands rather than a free parameter
+per age.
+
 Under a percent-of-portfolio rule and under a life-expectancy rule -- neither
 of which conditions on wealth at any single date -- the dip disappears and the
 schedule is flat at 100% throughout. The feature is a property of the 4% rule,
@@ -9439,5 +9450,307 @@ Runtime {float(notes['elapsed_seconds']):.0f}s at {int(notes['n_paths']):,}
 paths, γ = {gamma:g}, dividend observations on
 {float(notes['coverage']):.1%} of country-years. Tables in
 `{cfg['run']['table_dir']}/franking_*.csv`.
+"""
+    return _write(path, [intro, body])
+
+
+def write_doc_31(
+    path: str | Path,
+    cfg: Mapping[str, Any],
+    frames: Mapping[str, pd.DataFrame],
+    figures: Sequence[str],
+    notes: Mapping[str, Any],
+) -> Path:
+    """The plan and the portfolio, crossed and then solved together."""
+    crossed = frames["crossed"]
+    rates = frames["rates"]
+    table = frames["ablation"]
+    rounds = frames["alternation"]
+    schedule = frames["schedule"]
+    age = frames.get("age", pd.DataFrame())
+    found = notes["verdict"]
+    sep = notes["separability"]
+    gamma = float(notes["gamma"])
+    best_rate = notes["best_rate"]
+    incumbent = str(notes["incumbent"])
+
+    rate_tbl = md_table(pd.DataFrame.from_records([
+        {"Rule": k, "Best rate": ("n/a -- set by the horizon" if v is None
+                                  else f"{v:.1%}")}
+        for k, v in best_rate.items()]), floatfmt="{:.4f}")
+
+    def _opt(key: str, axis: str, label: str) -> str:
+        frame = frames.get(f"optimum_{key}", pd.DataFrame())
+        if not len(frame):
+            return ""
+        return md_table(_compact(
+            frame, ["rule", f"optimal_{axis}", "cec_at_optimum",
+                    "margin_over_runner_up_pct"],
+            {"rule": "Withdrawal rule", f"optimal_{axis}": label,
+             "cec_at_optimum": "CEC at the optimum",
+             "margin_over_runner_up_pct": "Margin over the runner-up (%)"}),
+            floatfmt="{:.4f}")
+
+    def _mech(key: str, axis: str) -> str:
+        frame = frames.get(f"mechanism_{key}", pd.DataFrame())
+        if not len(frame):
+            return ""
+        shown = frame.copy()
+        shown["ruin_is_possible"] = np.where(shown["ruin_is_possible"],
+                                             "yes", "no")
+        return md_table(_compact(
+            shown, ["rule", "ruin_is_possible", f"cec_optimal_{axis}",
+                    f"ruin_optimal_{axis}", "agree", "min_ruin"],
+            {"rule": "Withdrawal rule", "ruin_is_possible": "Ruin observed",
+             f"cec_optimal_{axis}": "Share that maximises CEC",
+             f"ruin_optimal_{axis}": "Share that minimises ruin",
+             "agree": "Agree", "min_ruin": "Lowest ruin reachable"}),
+            floatfmt="{:.4f}")
+
+    ablation_tbl = md_table(_compact(
+        table, ["freedom", "plan", "cec", "gain_over_neither_pct",
+                "mean_equity", "mean_domestic"],
+        {"freedom": "What was free to move", "plan": "Plan chosen",
+         "cec": "CEC", "gain_over_neither_pct": "Gain (%)",
+         "mean_equity": "Mean equity", "mean_domestic": "Mean domestic"}),
+        floatfmt="{:.4f}")
+
+    rounds_tbl = md_table(_compact(
+        rounds, ["round", "plan", "cec_at_incoming_schedule",
+                 "cec_after_resolving", "mean_equity", "mean_domestic",
+                 "plan_unchanged"],
+        {"round": "Round", "plan": "Best plan for the current schedule",
+         "cec_at_incoming_schedule": "CEC before re-solving",
+         "cec_after_resolving": "CEC after re-solving",
+         "mean_equity": "Mean equity", "mean_domestic": "Mean domestic",
+         "plan_unchanged": "Fixed point"}), floatfmt="{:.4f}")
+
+    dom = sep.get("retirement_domestic", {})
+    if dom.get("ranking_separable_but_optimum_is_not"):
+        separability_line = (
+            f"**The ranking separates and the optimum does not.** Every rule "
+            f"orders the {dom['rules']} portfolios identically -- one "
+            f"ranking across all of them, exactly as `docs/06` reports -- "
+            f"while the *location* of the maximum moves over "
+            f"{dom['optimum_spread_pp']:.0f} percentage points, from "
+            f"{dom['optimum_low']:.0%} to {dom['optimum_high']:.0%} domestic. "
+            f"A ranking of six candidates cannot resolve a grid step, which "
+            f"is why the coarser test missed it.")
+    elif dom.get("optimum_moves_with_the_rule"):
+        separability_line = (
+            f"The optimum moves with the rule, from {dom['optimum_low']:.0%} "
+            f"to {dom['optimum_high']:.0%} domestic, and the rankings differ "
+            f"too ({dom['distinct_rankings']} distinct orderings), so the two "
+            f"decisions do not separate at either resolution.")
+    else:
+        separability_line = (
+            "The optimum does not move with the rule on this grid, so "
+            "`docs/06`'s separability holds at this resolution as well.")
+
+    mech = frames.get("mechanism_retirement_domestic", pd.DataFrame())
+    if len(mech):
+        # Whether ruin is reachable is read off the paths, not asserted: a
+        # smoothed percentage rule spends a fraction of a *lagged* balance and
+        # can overshoot, so the textbook split is not quite the observed one.
+        risky = mech[mech["ruin_is_possible"]]
+        safe = mech[~mech["ruin_is_possible"]]
+        agreed = risky[risky["agree"]]
+        tilted = mech[mech[f"cec_optimal_domestic_share"]
+                      > mech[f"cec_optimal_domestic_share"].min()]
+        mismatch = mech[~mech["prior_matches_observed"]]
+        mechanism_line = (
+            f"And the reason is visible in the columns beside it. Ruin is "
+            f"reachable under {len(risky)} of the {len(mech)} rules and not "
+            f"under the other {len(safe)}, which spend a fraction of whatever "
+            f"is left so that zero is never reached -- their ruin column is "
+            f"flat at zero and its argmin is reported as undefined rather "
+            f"than as a number the grid order happened to pick. Of the "
+            f"{len(risky)} rules that can run out, "
+            f"{len(agreed)} put the certainty-equivalent maximum and the "
+            f"ruin minimum at the *same* share: what the retiree buys with "
+            f"the extra home-market weight there is survival, not return. "
+            f"And every rule that tilts home is one of them "
+            f"-- the rules that cannot run out all sit at "
+            f"{mech[f'cec_optimal_domestic_share'].min():.0%}."
+            if len(risky) and len(safe) else
+            f"The grid contains {len(risky)} rules under which ruin is "
+            f"reachable and {len(safe)} under which it is not.")
+        if len(mismatch):
+            mechanism_line += (
+                f" One rule does not behave as its arithmetic suggests: "
+                f"`{', '.join(mismatch['rule'])}` was expected "
+                f"{'to run out' if bool(mismatch['can_deplete'].iloc[0]) else 'not to'} "
+                f"and the paths say otherwise, which is why the split above "
+                f"is taken from the simulation rather than from the rule's "
+                f"description.")
+    else:
+        mechanism_line = ""
+
+    if found.get("decisions_separate"):
+        joint_line = (
+            f"**Solving them together buys almost nothing.** The interaction "
+            f"is {found['interaction_pct']:+.3f}% of certainty-equivalent "
+            f"consumption -- the joint gain less the two one-sided gains -- "
+            f"so the plan and the portfolio can be chosen apart after all, at "
+            f"least at the level of the total. The optimum's *location* still "
+            f"moves, which is the distinction section 2 draws.")
+    else:
+        joint_line = (
+            f"**Solving them together is worth more than solving them "
+            f"apart.** The interaction is {found['interaction_pct']:+.3f}% of "
+            f"certainty-equivalent consumption: the joint search beats the "
+            f"sum of the two one-sided searches, so the decisions are "
+            f"genuinely coupled.")
+
+    if found.get("plan_beats_allocation"):
+        which_line = (
+            f"The plan is worth more than the portfolio. Freeing the "
+            f"withdrawal rule and its rate alone gains "
+            f"{found['gain_plan_pct']:+.2f}%; freeing the whole allocation "
+            f"schedule alone gains {found['gain_allocation_pct']:+.2f}%. That "
+            f"is the same ordering `docs/10` finds for the savings rate: the "
+            f"decisions that move a lifetime are rarely the ones about "
+            f"markets.")
+    else:
+        which_line = (
+            f"The portfolio is worth more than the plan here: "
+            f"{found['gain_allocation_pct']:+.2f}% against "
+            f"{found['gain_plan_pct']:+.2f}%.")
+
+    age_found = sep.get("age", {})
+    if age_found.get("corners_at_ceiling"):
+        age_line = (
+            f"**And one degree of freedom this model cannot price at all.** "
+            f"Left free, the retirement date runs to the oldest age on the "
+            f"grid, {age_found['best_age']}, "
+            f"{'monotonically' if age_found.get('monotone_in_age') else ''} "
+            f"lifting the certainty equivalent from "
+            f"{age_found['cec_at_floor']:.4f} to "
+            f"{age_found['cec_at_ceiling']:.4f}. That is not a finding about "
+            f"retirement; it is the model's costless labour showing through. "
+            f"Nothing here charges the investor for the years they spend "
+            f"working, so another one is free money and the optimiser takes "
+            f"every one it is offered. The date is therefore held fixed in "
+            f"the search above, and the corner is reported rather than "
+            f"hidden: a joint optimisation is the cleanest way to find out "
+            f"which decisions a model can rank and which it merely appears "
+            f"to.")
+    elif age_found.get("measured"):
+        age_line = (
+            f"Left free, the retirement date settles at "
+            f"{age_found['best_age']} rather than at either end of the grid, "
+            f"which is more than this model's costless labour would lead one "
+            f"to expect.")
+    else:
+        age_line = ""
+
+    figure_list = "\n".join(f"* `{f}`" for f in figures)
+    intro = _header(
+        "31 - The Plan and the Portfolio, Solved Together",
+        "Every other document fixes one of these two decisions and solves "
+        "the other. This one stops doing that.")
+
+    body = f"""
+## 1. The assumption being removed
+
+`docs/07` solves the allocation schedule with the withdrawal rule pinned to a
+4% rule. `docs/06` ranks withdrawal rules with the allocation pinned to a
+50/50 portfolio. Each then checks that its answer survives the thing it held
+fixed, and `docs/06` states the conclusion outright: *"the spending rule and
+the asset allocation are close to separable ... they can be chosen
+independently"*.
+
+That is a strong claim and it deserves a stronger test than either section
+gave it, because both tested it on a **ranking of six candidate portfolios**.
+A ranking cannot resolve a grid step, and the location of an optimum is not
+rank information.
+
+Each rule is run at its own best rate. A percentage-of-portfolio rule at 4% is
+not the same policy as a fixed real rule at 4%, and comparing them there would
+be comparing spending levels rather than rule shapes:
+
+{rate_tbl}
+
+Every rated rule has an **interior** optimum on a grid running to
+{max(float(r) for r in cfg["plan"]["rate_grid"]):.0%}. That is the check that
+the objective disciplines spending rather than rewarding whatever spends
+fastest -- if the certainty equivalent simply rose with the withdrawal rate,
+nothing below would mean anything.
+
+## 2. Where separability holds, and where it fails
+
+The domestic share held from the retirement date, solved under each rule:
+
+{_opt("retirement_domestic", "domestic_share", "Optimal domestic share")}
+
+{separability_line}
+
+{mechanism_line}
+
+{_mech("retirement_domestic", "domestic_share")}
+
+The same question asked of the equity share, and of the whole lifetime rather
+than the retired years alone:
+
+{_opt("retirement_equity", "equity_share", "Optimal equity share")}
+
+{_opt("lifetime_domestic", "domestic_share", "Optimal domestic share")}
+
+## 3. Solving both at once
+
+The search alternates: pick the best plan for the current schedule, re-solve
+the schedule for that plan, repeat. It stops when a round returns the plan it
+started with -- the fixed point, where neither decision would change given the
+other. How many rounds that takes is itself the answer to whether they
+interact.
+
+{rounds_tbl}
+
+The joint optimum is **{found['plan']}**, holding
+{found['mean_equity_working']:.0%} equity through the working years and
+{found['mean_equity_retired']:.0%} after, with
+{found['mean_domestic_working']:.0%} of it at home before retirement and
+{found['mean_domestic_retired']:.0%} after.
+
+## 4. What each decision is worth
+
+{ablation_tbl}
+
+{joint_line}
+
+{which_line}
+
+## 5. The date this model cannot price
+
+{age_line}
+
+## 6. What this changes
+
+* `docs/06`'s separability claim survives as a statement about **rankings**
+  and fails as a statement about **optima**. Both are worth knowing and they
+  are not the same claim.
+* The mechanism is the one `docs/29` identifies: a rule that fixes real
+  spending from wealth on the retirement date converts return risk into
+  failure risk, so the allocation that serves it is the one that minimises
+  ruin rather than the one that maximises return.
+* **What is not modelled**: the plan is chosen once, at the start, and never
+  revised. A real retiree re-reads their balance every year and can change
+  rule as well as rate; nothing here gives them that option, so the gains
+  above are a lower bound on what a genuinely adaptive plan would earn. Nor
+  is there any disutility of labour, which is why section 5 exists.
+
+## 7. Figures
+
+{figure_list}
+
+## 8. Reproduction
+
+```bash
+python main.py --steps 31
+```
+
+Runtime {float(notes['elapsed_seconds']):.0f}s at {int(notes['n_paths']):,}
+search paths, γ = {gamma:g}. Tables in
+`{cfg['run']['table_dir']}/plan_*.csv`.
 """
     return _write(path, [intro, body])

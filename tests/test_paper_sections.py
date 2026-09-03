@@ -400,3 +400,44 @@ class TestCompactStrategyLabels:
 
     def test_an_unknown_key_falls_back_rather_than_failing(self) -> None:
         assert content._compact_strategy("solved_schedule") == "solved schedule"
+
+
+class TestGlideAnchorDescribesItsOwnTable:
+    """The subsection whose prose drifted away from its table once already.
+
+    It printed the spending-rule re-solve under a heading, a caption and a
+    note that all described an anchored-equity-level sweep the pipeline no
+    longer runs -- so the paper contained the result and reported it as
+    something else. These pin the prose to the columns it is standing on.
+    """
+
+    @staticmethod
+    def _source() -> str:
+        import inspect
+        src = inspect.getsource(content.section_glide)
+        return src[src.index("#glide.2"):]
+
+    def test_it_names_the_columns_the_table_carries(self) -> None:
+        needed = ("rule", "min_equity_share_at_retirement",
+                  "mean_equity_share_elsewhere", "dip_size_pp",
+                  "mean_domestic_working", "mean_domestic_retired",
+                  "solved_cec")
+        src = self._source()
+        for column in needed:
+            assert column in src, column
+
+    def test_it_does_not_describe_an_anchored_level_sweep(self) -> None:
+        """No such sweep exists: `anchor_check` in config.yaml lists rules."""
+        import yaml
+
+        cfg = yaml.safe_load(open("config.yaml", encoding="utf-8"))
+        entries = cfg["glide_path"]["anchor_check"]["rules"]
+        assert all("key" in e for e in entries), entries
+        src = self._source().lower()
+        for phrase in ("fixed at a series of levels",
+                       "anchored equity share",
+                       "cost of the anchor"):
+            assert phrase not in src, phrase
+
+    def test_the_heading_names_the_finding(self) -> None:
+        assert "withdrawal rule" in self._source().split("\n")[0].lower()

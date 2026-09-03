@@ -1,0 +1,7 @@
+rule,can_deplete,ruin_is_possible,prior_matches_observed,cec_optimal_domestic_share,ruin_optimal_domestic_share,agree,min_ruin,max_ruin,cec_at_optimum
+constant_real,True,True,True,0.1,0.2,False,0.0823,0.25025,1.114463039338393
+vanguard_dynamic,True,True,True,0.1,0.2,False,0.10195,0.2959,1.2110618824571877
+guyton_klinger,True,True,True,0.1,0.2,False,0.03425,0.1776,1.2887525858239226
+endowment,True,True,True,0.1,0.4,False,0.00175,0.03475,1.2993426936267753
+constant_percent,False,False,True,0.1,,False,0.0,0.0,1.3170827491876245
+life_expectancy,False,False,True,0.1,,False,0.0,0.0,1.2790898234285875

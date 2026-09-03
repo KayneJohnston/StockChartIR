@@ -3065,6 +3065,121 @@ def plot_sequence(frame: pd.DataFrame, ranking: pd.DataFrame,
     return _save(fig, directory, name)
 
 
+def plot_plan(crossed: pd.DataFrame, optima: Mapping[str, pd.DataFrame],
+              mechanism: Mapping[str, pd.DataFrame], ablation: pd.DataFrame,
+              schedule: pd.DataFrame, age_curve: pd.DataFrame,
+              parameter: Mapping[str, float],
+              ret_dom_param: Mapping[str, float], spec: Any,
+              directory: str | Path,
+              name: str = "fig58_plan") -> Path:
+    """The plan and the portfolio, crossed and then solved together."""
+    with plt.rc_context(STYLE):
+        fig, axes = _grid(4, 3.0)
+
+        # -- 1. the retirement-phase domestic curve, rule by rule ----------
+        #
+        # Levels differ by more between rules than within one, because the
+        # rules spend different amounts; each curve is therefore drawn
+        # against its own best so the *shapes* can be compared, which is the
+        # question. The argmax moving between curves is the finding.
+        ax = axes[0]
+        block = crossed[crossed["strategy"].isin(ret_dom_param)]
+        # Every optimum sits below 30%. Drawn to 100% they are one
+        # indistinguishable cluster above a long monotone decline, so the
+        # window is the region the argmaxes live in -- each curve is still
+        # normalised against its own best over the *whole* grid, so the
+        # heights are not flattered by the crop.
+        window = 0.5
+        for i, rule in enumerate(dict.fromkeys(block["rule"])):
+            sub = block[block["rule"] == rule].copy()
+            sub["share"] = [float(ret_dom_param[k]) for k in sub["strategy"]]
+            sub = sub.sort_values("share")
+            y = (sub["cec"].to_numpy(dtype=float) / sub["cec"].max() - 1.0) * 100
+            keep = sub["share"].to_numpy(dtype=float) <= window
+            ax.plot(sub["share"].to_numpy(dtype=float)[keep] * 100.0, y[keep],
+                    marker=_marker(i), color=_colour(i), linewidth=1.5,
+                    markersize=3.0, label=_wrap(str(rule).replace("_", " "), 18))
+        ax.axhline(0.0, color="black", linewidth=0.9)
+        # The optima all sit below 30%, and drawn to 100% they are a single
+        # indistinguishable cluster against a long monotone decline. The
+        # window is the region the argmaxes live in; every curve falls away
+        # steadily beyond it.
+        ax.set_xlabel("Domestic share held from retirement (%)")
+        ax.set_ylabel("Against that rule's own best (%)")
+        _title(ax, "The optimum moves with the withdrawal rule")
+        ax.legend(fontsize=5.0, loc="lower left", labelspacing=0.25,
+                  handlelength=1.2, frameon=True, framealpha=0.92,
+                  edgecolor="none")
+
+        # -- 2. the mechanism: CEC argmax against the ruin argmax ----------
+        ax = axes[1]
+        mech = mechanism.get("retirement_domestic", pd.DataFrame())
+        if len(mech):
+            idx = np.arange(len(mech))
+            ax.barh(idx - 0.19,
+                    mech["cec_optimal_domestic_share"].to_numpy(dtype=float)
+                    * 100.0, height=0.36, color=_colour(0),
+                    label="maximises certainty equivalent")
+            ax.barh(idx + 0.19,
+                    mech["ruin_optimal_domestic_share"].to_numpy(dtype=float)
+                    * 100.0, height=0.36, color=_colour(2),
+                    label="minimises ruin")
+            ax.set_yticks(idx)
+            ax.set_yticklabels(
+                [_wrap(str(r).replace("_", " "), 16) for r in mech["rule"]],
+                fontsize=5.0)
+            for j, possible in enumerate(mech["ruin_is_possible"]):
+                if not bool(possible):
+                    ax.text(1.0, j + 0.19, "  ruin impossible", fontsize=4.6,
+                            va="center", color="0.35")
+            ax.legend(fontsize=5.0, loc="upper center", ncol=2,
+                      labelspacing=0.25, handlelength=1.2, columnspacing=0.8,
+                      frameon=True, framealpha=0.92, edgecolor="none",
+                      bbox_to_anchor=(0.5, -0.16))
+        ax.set_xlabel("Domestic share held from retirement (%)")
+        _title(ax, "Where the tilt home comes from")
+
+        # -- 3. what each degree of freedom is worth -----------------------
+        ax = axes[2]
+        if len(ablation):
+            idx = np.arange(len(ablation))
+            gains = ablation["gain_over_neither_pct"].to_numpy(dtype=float)
+            ax.bar(idx, gains, width=0.62,
+                   color=[_colour(0) if g >= 0 else _colour(2) for g in gains])
+            ax.axhline(0.0, color="black", linewidth=0.9)
+            ax.set_xticks(idx)
+            _strategy_ticks(ax, [_wrap(str(v), 12)
+                                 for v in ablation["freedom"]], fontsize=5.5)
+            interaction = ablation["interaction_pct"].dropna()
+            if len(interaction):
+                ax.annotate(f"interaction {float(interaction.iloc[0]):+.2f}%",
+                            xy=(idx[-1], gains[-1]), xytext=(0, 6),
+                            textcoords="offset points", ha="center",
+                            fontsize=5.5)
+        ax.set_ylabel("Gain in certainty equivalent (%)")
+        _title(ax, "What each decision is worth, alone and together")
+
+        # -- 4. the retirement date this model cannot price ----------------
+        ax = axes[3]
+        if len(age_curve):
+            best = age_curve.loc[
+                age_curve.groupby("retire_age")["cec"].idxmax()
+            ].sort_values("retire_age")
+            ax.plot(best["retire_age"].to_numpy(dtype=float),
+                    best["cec"].to_numpy(dtype=float), marker=_marker(0),
+                    color=_colour(0), linewidth=1.7, markersize=4.0)
+            ax.axvline(float(spec.age_retire), color="0.5", linewidth=1.0,
+                       linestyle="--")
+            ax.text(float(spec.age_retire) + 0.3, float(best["cec"].min()),
+                    "baseline", fontsize=5.5, color="0.35")
+        ax.set_xlabel("Retirement age")
+        ax.set_ylabel("Certainty equivalent consumption")
+        _title(ax, "Costless labour: the date runs to the ceiling")
+
+        fig.tight_layout()
+    return _save(fig, directory, name)
+
+
 def plot_withholding(curve: pd.DataFrame, crossings: pd.DataFrame,
                      anchors: pd.DataFrame, drag: pd.DataFrame,
                      optima: pd.DataFrame, sweep: pd.DataFrame,

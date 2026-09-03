@@ -31,6 +31,7 @@ is roughly an order of magnitude faster than looping.
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import logging
 from typing import Any, Dict, List, Mapping, Sequence, Tuple
@@ -108,6 +109,20 @@ class BatchEvaluator:
         self._beta = float(util["discount_factor"])
         self._bequest_weight = float(util["bequest_weight"])
         self._include_bequest = bool(util["bequest_enabled"])
+
+    def with_rule(self, rule: spg.SpendingRule) -> "BatchEvaluator":
+        """A view of this evaluator that withdraws under a different rule.
+
+        The expensive state -- the ``(H, N, A)`` return stack and the
+        inflation panel -- depends on the paths and the horizon, not on the
+        withdrawal policy, so a search that crosses allocations with spending
+        rules should not pay to rebuild it once per rule. The copy is shallow
+        and deliberately so: the arrays are shared, and nothing in the
+        recursion writes to them.
+        """
+        clone = copy.copy(self)
+        clone.rule = rule
+        return clone
 
     # -- core recursion -----------------------------------------------------
     def simulate(self, weights: np.ndarray, consumption_from: int = 0

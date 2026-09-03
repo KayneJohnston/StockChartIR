@@ -41,6 +41,7 @@ from src import mortgage as mgg
 from src import observed as obs
 from src import oos
 from src import pension as pn
+from src import plan as pl
 from src import panel_robustness as pr
 from src import plots
 from src import provenance as pvn
@@ -991,12 +992,20 @@ def step7_glide_path(cfg: Dict[str, Any], state: Dict[str, Any]
             frame["rule"] = label
             anchor_rows.append(frame)
             window = (spec.ages >= spec.age_retire - 1) &                 (spec.ages <= spec.age_retire + 2)
+            working = spec.ages < spec.age_retire
             anchor_summary_rows.append({
                 "rule": label,
                 "min_equity_share_at_retirement": float(eq[window].min()),
                 "mean_equity_share_elsewhere": float(eq[~window].mean()),
                 "dip_size_pp": float((eq[~window].mean() - eq[window].min())
                                      * 100.0),
+                # The home/abroad split is solved alongside the equity share
+                # and was being thrown away. It moves with the rule too, and
+                # by phase, which is the question Section #glide is silent on
+                # if only the equity column is reported.
+                "mean_domestic_working": float(dom[working].mean()),
+                "mean_domestic_retired": float(dom[~working].mean()),
+                "mean_domestic_overall": float(dom.mean()),
                 "solved_cec": cec,
             })
     anchor = pd.concat(anchor_rows, ignore_index=True) if anchor_rows         else pd.DataFrame()
@@ -3731,6 +3740,180 @@ def step30_franking(cfg: Dict[str, Any],
     return state
 
 
+def step31_plan(cfg: Dict[str, Any],
+                state: Dict[str, Any]) -> Dict[str, Any]:
+    """Cross the allocation with the withdrawal rule, then solve both."""
+    plan_cfg = cfg.get("plan", {})
+    if not plan_cfg.get("enabled", False):
+        LOGGER.info("plan study disabled; skipping step 31")
+        return state
+    LOGGER.info("=== STEP 31: the plan, solved with the portfolio ===")
+    started = time.perf_counter()
+
+    panel = state.get("panel") or dl.build_panel(cfg)
+    spec = state.get("spec") or lc.spec_from_config(cfg)
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    n_paths = int(plan_cfg.get("n_paths", 20000))
+    chunk_size = int(cfg["bootstrap"]["chunk_size"])
+    equity_grid = [float(x) for x in plan_cfg["equity_grid"]]
+    domestic_grid = [float(x) for x in plan_cfg["domestic_grid"]]
+    rate_grid = [float(x) for x in plan_cfg["rate_grid"]]
+    rules = [str(r) for r in plan_cfg["rules"]]
+    ages = [int(a) for a in plan_cfg.get("retire_ages", [spec.age_retire])]
+    bond_share = float(plan_cfg.get("fixed_income_bond_share", 0.7))
+
+    # ---- part 1: the allocation grid, re-scored under each rule ---------
+    # Each rule is run at its own best rate rather than at a common one: a
+    # percentage rule at 4% is not the same policy as a fixed real rule at
+    # 4%, and comparing them there would compare spending levels rather than
+    # rule shapes. The rate is chosen at the incumbent allocation, which part
+    # 2 then removes as an assumption by solving both at once.
+    for chunk in bs.from_config(panel, cfg).chunks(n_paths, n_paths):
+        search_paths = chunk
+    bench = pl.PlanBench(search_paths, spec, cfg,
+                         income_seed=int(cfg["run"]["seed"]))
+    flat_eq = np.full(spec.horizon, 1.0)
+    flat_dom = np.full(spec.horizon, 0.1)
+    rated = pl.score_plans(bench, pl.plan_grid(rules, rate_grid, [spec.age_retire]),
+                           flat_eq, flat_dom, gamma, bond_share)
+    best_rate = {}
+    for rule in rules:
+        block = rated[rated["rule"] == rule]
+        row = block.loc[block["cec"].idxmax()]
+        best_rate[rule] = None if pd.isna(row["rate"]) else float(row["rate"])
+    LOGGER.info("each rule at its own best rate: %s",
+                {k: (f"{v:.1%}" if v is not None else "n/a")
+                 for k, v in best_rate.items()})
+    sweep_plans = [pl.Plan(r, best_rate[r], spec.age_retire)
+                   for r in [str(x) for x in plan_cfg["sweep_rules"]]]
+
+    eq_strats, eq_param = inf.equity_share_strategies(
+        spec, equity_grid, float(plan_cfg.get("equity_domestic_share", 0.5)),
+        bond_share)
+    dom_strats, dom_param = inf.domestic_share_strategies(spec, domestic_grid)
+    incumbent = str(plan_cfg.get("accumulation_strategy",
+                                 "balanced_all_equity"))
+    fixed = state.get("strategies") or lc.build_strategies(cfg, spec)
+    accumulation = fixed[incumbent].weights
+    ret_eq, ret_eq_param = inf.after_retirement(spec, accumulation, eq_strats,
+                                                "reteq")
+    ret_dom, ret_dom_param = inf.after_retirement(spec, accumulation,
+                                                  dom_strats, "retdom")
+    strategies = {**eq_strats, **dom_strats, **ret_eq, **ret_dom}
+    crossed = pl.sweep_by_rule(lambda: bs.from_config(panel, cfg), strategies,
+                               spec, cfg, n_paths, chunk_size, sweep_plans,
+                               int(cfg["run"]["seed"]))
+
+    optima: Dict[str, pd.DataFrame] = {}
+    mechanism: Dict[str, pd.DataFrame] = {}
+    findings: Dict[str, Any] = {}
+    for name, param in (("lifetime_equity", eq_param),
+                        ("lifetime_domestic", dom_param),
+                        ("retirement_equity", ret_eq_param),
+                        ("retirement_domestic", ret_dom_param)):
+        axis = "equity_share" if name.endswith("equity") else "domestic_share"
+        block = crossed[crossed["strategy"].isin(param)]
+        optima[name] = pl.optimum_by_rule(block, param, axis)
+        mechanism[name] = pl.ruin_minimum_by_rule(block, param, axis)
+        findings[name] = pl.separability(optima[name], block, param, axis)
+        LOGGER.info("%s optimum by rule: %s -> %s (%d distinct rankings)",
+                    name, f"{findings[name].get('optimum_low', float('nan')):.0%}",
+                    f"{findings[name].get('optimum_high', float('nan')):.0%}",
+                    findings[name].get("distinct_rankings", 0))
+
+    # ---- part 2: solve the plan and the portfolio together --------------
+    plans = pl.plan_grid(rules, rate_grid, ages)
+    baseline = pl.Plan(str(plan_cfg.get("baseline_rule", "constant_real")),
+                       float(plan_cfg.get("baseline_rate", 0.04)),
+                       int(ages[0]))
+    base_weights = fixed[str(plan_cfg.get("baseline_strategy",
+                                          incumbent))].weights
+    base_eq = base_weights[:, :2].sum(axis=1)
+    base_dom = np.divide(base_weights[:, 0], np.maximum(base_eq, 1e-12))
+    LOGGER.info("searching %d plans x the free-form schedule", len(plans))
+    joint = pl.alternate(
+        bench, plans, gamma, equity_grid, domestic_grid,
+        float(base_eq.mean()), float(base_dom.mean()), bond_share,
+        int(plan_cfg.get("domestic_band_years", 5)),
+        int(plan_cfg.get("free_form_sweeps", 2)),
+        int(plan_cfg.get("max_rounds", 4)))
+    table = pl.ablation(bench, plans, baseline, gamma, equity_grid,
+                        domestic_grid, base_eq, base_dom, joint, bond_share,
+                        int(plan_cfg.get("domestic_band_years", 5)),
+                        int(plan_cfg.get("free_form_sweeps", 2)))
+    found = pl.verdict(joint, table, plans, baseline, spec)
+    LOGGER.info("joint optimum: %s, CEC=%.6f (allocation alone %+.2f%%, "
+                "plan alone %+.2f%%, both %+.2f%%, interaction %+.3f%%)",
+                found["plan"], found["cec"], found["gain_allocation_pct"],
+                found["gain_plan_pct"], found["gain_joint_pct"],
+                found["interaction_pct"])
+
+    schedule = gp.schedule_frame(joint["equity"], joint["domestic"], spec,
+                                 gamma, "joint")
+    schedule["rule"] = found["rule"]
+
+    # ---- the retirement date, which this model cannot price -------------
+    diag_ages = [int(a) for a in plan_cfg.get("age_diagnostic", [])]
+    age_curve = pd.DataFrame()
+    if diag_ages:
+        age_curve = pl.score_plans(
+            bench, pl.plan_grid([found["rule"]], rate_grid, diag_ages),
+            joint["equity"], joint["domestic"], gamma, bond_share)
+        by_age = age_curve.loc[age_curve.groupby("retire_age")["cec"].idxmax()]
+        by_age = by_age.sort_values("retire_age")
+        findings["age"] = {
+            "measured": True,
+            "ages": [int(a) for a in by_age["retire_age"]],
+            "best_age": int(by_age.loc[by_age["cec"].idxmax(), "retire_age"]),
+            "monotone_in_age": bool(
+                (np.diff(by_age["cec"].to_numpy(dtype=float)) > 0).all()),
+            "corners_at_ceiling": bool(
+                int(by_age.loc[by_age["cec"].idxmax(), "retire_age"])
+                == max(diag_ages)),
+            "cec_at_floor": float(by_age["cec"].iloc[0]),
+            "cec_at_ceiling": float(by_age["cec"].iloc[-1]),
+        }
+        LOGGER.info("retirement date left free: best age %d of %s (%s)",
+                    findings["age"]["best_age"], diag_ages,
+                    "corners" if findings["age"]["corners_at_ceiling"]
+                    else "interior")
+
+    tables = cfg["run"]["table_dir"]
+    _save_table(crossed, tables, "plan_allocation_by_rule")
+    _save_table(rated, tables, "plan_rate_sweep")
+    _save_table(table, tables, "plan_ablation")
+    _save_table(joint["rounds"], tables, "plan_alternation")
+    _save_table(schedule, tables, "plan_joint_schedule")
+    for name, frame in optima.items():
+        _save_table(frame, tables, f"plan_optimum_{name}")
+    for name, frame in mechanism.items():
+        _save_table(frame, tables, f"plan_mechanism_{name}")
+    if len(age_curve):
+        _save_table(age_curve, tables, "plan_retirement_age")
+
+    figures = [str(plots.plot_plan(
+        crossed, optima, mechanism, table, schedule, age_curve,
+        {**eq_param, **dom_param, **ret_eq_param, **ret_dom_param},
+        ret_dom_param, spec, cfg["run"]["figure_dir"]))]
+
+    elapsed = time.perf_counter() - started
+    rp.write_doc_31(
+        Path("docs") / "31_plan_and_portfolio.md", cfg,
+        {"crossed": crossed, "rates": rated, "ablation": table,
+         "alternation": joint["rounds"], "schedule": schedule,
+         "age": age_curve, **{f"optimum_{k}": v for k, v in optima.items()},
+         **{f"mechanism_{k}": v for k, v in mechanism.items()}},
+        figures,
+        {"elapsed_seconds": elapsed, "gamma": gamma, "n_paths": n_paths,
+         "best_rate": best_rate, "baseline": baseline.label(),
+         "verdict": found, "separability": findings,
+         "incumbent": incumbent},
+    )
+    LOGGER.info("docs/31 written (%.0fs)", elapsed)
+    state["plan_ablation"] = table
+    return state
+
+
 STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
          4: step4_report, 5: step5_sensitivity, 6: step6_spending,
          7: step7_glide_path, 8: step8_hedging, 9: step9_retirement_timing,
@@ -3744,11 +3927,11 @@ STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
          24: step24_mortality, 25: step25_pension,
          26: step26_turnover, 27: step27_inflation,
          28: step28_withholding, 29: step29_sequence,
-         30: step30_franking}
+         30: step30_franking, 31: step31_plan}
 
 
 def run(config_path: str = "config.yaml",
-        steps: Sequence[int] = tuple(range(1, 31)),
+        steps: Sequence[int] = tuple(range(1, 32)),
         quick: bool = False) -> Dict[str, Any]:
     """Execute the pipeline and return the accumulated state."""
     cfg = dl.load_config(config_path)
@@ -3778,8 +3961,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--steps", nargs="+", type=int,
-                        default=list(range(1, 31)),
-                        choices=list(range(1, 31)))
+                        default=list(range(1, 32)),
+                        choices=list(range(1, 32)))
     parser.add_argument("--quick", action="store_true",
                         help="small N for smoke tests")
     parser.add_argument("--verbose", action="store_true")
