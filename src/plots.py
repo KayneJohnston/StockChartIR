@@ -3061,6 +3061,93 @@ def plot_withholding(curve: pd.DataFrame, crossings: pd.DataFrame,
     return _save(fig, directory, name)
 
 
+def plot_inflation_timing(birth: pd.DataFrame, retirement: pd.DataFrame,
+                          ret_eq: pd.DataFrame, ret_dom: pd.DataFrame,
+                          ret_sweep: pd.DataFrame,
+                          eq_param: Mapping[str, float],
+                          dom_param: Mapping[str, float], column: str,
+                          strategy: str, directory: str | Path,
+                          name: str = "fig54_inflation_timing") -> Path:
+    """The same state variable read at two dates, and the retiree's choice."""
+    with plt.rc_context(STYLE):
+        fig, axes = _grid(3, 3.0)
+
+        # -- 1. the level, conditioned at each date ------------------------
+        ax = axes[0]
+        for i, (label, frame) in enumerate((("at age 25", birth),
+                                            ("at retirement", retirement))):
+            block = frame[frame["strategy"] == strategy]
+            if not len(block):
+                continue
+            idx = np.arange(len(block)) + (i - 0.5) * 0.36
+            ax.bar(idx, block[column].to_numpy(dtype=float), width=0.34,
+                   color=_colour(i), label=label)
+        block = birth[birth["strategy"] == strategy]
+        if len(block):
+            ax.set_xticks(np.arange(len(block)))
+            _strategy_ticks(ax, [_wrap(str(b), 12) for b in block["bucket"]],
+                            fontsize=5.5)
+        ax.set_ylabel("Certainty equivalent consumption")
+        _title(ax, "When the state variable is read decides whether it matters")
+        ax.legend(fontsize=5.5, loc="lower left", labelspacing=0.3,
+                  handlelength=1.2, frameon=True, framealpha=0.92,
+                  edgecolor="none")
+
+        # -- 2. what a retiree should hold: how much equity ----------------
+        ax = axes[1]
+        buckets = list(dict.fromkeys(ret_sweep["bucket"])) if len(ret_sweep) \
+            else []
+        for i, bucket in enumerate(buckets):
+            sub = ret_sweep[(ret_sweep["bucket"] == bucket)
+                            & (ret_sweep["strategy"].isin(eq_param))].copy()
+            if not len(sub):
+                continue
+            sub["share"] = [eq_param[k] for k in sub["strategy"]]
+            sub = sub.sort_values("share")
+            ax.plot(sub["share"].to_numpy(dtype=float) * 100.0,
+                    sub[column].to_numpy(dtype=float), marker=_marker(i),
+                    color=_colour(i), linewidth=1.5, markersize=3.0,
+                    label=_wrap(str(bucket), 16))
+        if len(ret_eq):
+            ax.scatter(
+                ret_eq["optimal_equity_share"].to_numpy(dtype=float) * 100.0,
+                ret_eq["cec_at_optimum"].to_numpy(dtype=float), s=40,
+                facecolors="none", edgecolors="black", linewidths=1.1,
+                zorder=5)
+        ax.set_xlabel("Equity share held from retirement (%)")
+        ax.set_ylabel("Certainty equivalent consumption")
+        _title(ax, "What a retiree should hold, given what they see")
+        ax.legend(fontsize=5.5, loc="lower right", labelspacing=0.3,
+                  handlelength=1.4, frameon=True, framealpha=0.92,
+                  edgecolor="none")
+
+        # -- 3. and how much of it at home ---------------------------------
+        ax = axes[2]
+        for i, bucket in enumerate(buckets):
+            sub = ret_sweep[(ret_sweep["bucket"] == bucket)
+                            & (ret_sweep["strategy"].isin(dom_param))].copy()
+            if not len(sub):
+                continue
+            sub["share"] = [dom_param[k] for k in sub["strategy"]]
+            sub = sub.sort_values("share")
+            ax.plot(sub["share"].to_numpy(dtype=float) * 100.0,
+                    sub[column].to_numpy(dtype=float), marker=_marker(i),
+                    color=_colour(i), linewidth=1.5, markersize=3.0,
+                    label=_wrap(str(bucket), 16))
+        if len(ret_dom):
+            ax.scatter(
+                ret_dom["optimal_domestic_share"].to_numpy(dtype=float) * 100.0,
+                ret_dom["cec_at_optimum"].to_numpy(dtype=float), s=40,
+                facecolors="none", edgecolors="black", linewidths=1.1,
+                zorder=5)
+        ax.set_xlabel("Domestic share of retirement equity (%)")
+        ax.set_ylabel("Certainty equivalent consumption")
+        _title(ax, "And how much of it at home")
+
+        fig.tight_layout()
+    return _save(fig, directory, name)
+
+
 def plot_inflation_state(grid: pd.DataFrame, ordering: pd.DataFrame,
                          advantage: pd.DataFrame, eq_optima: pd.DataFrame,
                          dom_optima: pd.DataFrame, sweep: pd.DataFrame,

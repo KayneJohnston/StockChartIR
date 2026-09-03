@@ -222,6 +222,18 @@ def front_matter(ctx: Any) -> List[Flowable]:
     inf_holds = bool(inf_found.get("ranking_survives", False))
     inf_moves = bool(inf_eq.get("moves") or inf_dom.get("moves"))
     inf_long = sorted(int(h) for h in inf_pred["horizon_years"].unique())[-1]
+    _inf_acc = str(f.cfg["inflation_state"].get("accumulation_strategy",
+                                                "balanced_all_equity"))
+    _inf_col = f"cec_crra_gamma{float(f.cfg['utility']['baseline_risk_aversion']):g}"
+    inf_timing = _ifl.timing_comparison(
+        _ifl.level_spread(f.table("inflation_buckets"), _inf_acc, _inf_col,
+                          inf_labels),
+        _ifl.level_spread(f.table("inflation_retirement_buckets"), _inf_acc,
+                          _inf_col, inf_labels))
+    inf_retire_pct = float(inf_timing.get("retirement_spread_pct", float("nan")))
+    inf_birth_pct = float(inf_timing.get("birth_spread_pct", float("nan")))
+    inf_ratio = float(inf_timing.get("ratio", float("nan")))
+    inf_timing_bites = bool(inf_timing.get("retirement_matters_much_more"))
     _inf_bond_long = inf_pred[(inf_pred["asset"] == "bond")
                               & (inf_pred["window_years"] == inf_window)
                               & (inf_pred["horizon_years"] == inf_long)]
@@ -363,6 +375,18 @@ def front_matter(ctx: Any) -> List[Flowable]:
            "home-bias shares move across the inflation terciles"
            if inf_holds and not inf_moves else
            "and the terciles do move the answer")
+        + (f". Reading that state variable at the retirement date instead of "
+           f"the birth date turns the null into a result: retiring into the "
+           f"high-inflation third is worth {inf_retire_pct:+.2f}% of "
+           f"certainty-equivalent retirement consumption against "
+           f"{inf_birth_pct:+.2f}% for the same lifetimes bucketed by the "
+           f"inflation they began at, {inf_ratio:.0f} times larger and of "
+           f"the opposite sign — the lifetime null was a statement about the "
+           f"horizon rather than about inflation"
+           if inf_timing_bites else
+           f". Reading it at the retirement date rather than the birth date "
+           f"moves the level {inf_retire_pct:+.2f}% against "
+           f"{inf_birth_pct:+.2f}%")
         + f". Correlating labour income with the home market — "
         f"the textbook reason to hold less of it, and assumed away everywhere "
         f"else — moves the lead {hc_change:+.2f} points across a correlation "
@@ -3218,6 +3242,20 @@ def section_inflation(ctx: Any) -> List[Flowable]:
     dom_shift = ifl.optimum_shift(dom_optima, "domestic_share", labels)
     found = ifl.verdict(advantage, predictive, window, horizon, eq_shift,
                         dom_shift, persist)
+    # The same state variable read at the retirement date instead.
+    buckets = f.table("inflation_buckets")
+    retire_buckets = f.table("inflation_retirement_buckets")
+    retire_adv = f.table("inflation_retirement_advantage")
+    ret_eq_optima = f.table("inflation_retirement_equity")
+    ret_dom_optima = f.table("inflation_retirement_domestic")
+    ret_eq_shift = ifl.optimum_shift(ret_eq_optima, "equity_share", labels)
+    ret_dom_shift = ifl.optimum_shift(ret_dom_optima, "domestic_share", labels)
+    cec_col = f"cec_crra_gamma{gamma:g}"
+    accumulation = str(icfg.get("accumulation_strategy",
+                                "balanced_all_equity"))
+    timing = ifl.timing_comparison(
+        ifl.level_spread(buckets, accumulation, cec_col, labels),
+        ifl.level_spread(retire_buckets, accumulation, cec_col, labels))
     horizons = sorted(int(h) for h in predictive["horizon_years"].unique())
     longest = horizons[-1] if horizons else horizon
 
@@ -3532,6 +3570,125 @@ def section_inflation(ctx: Any) -> List[Flowable]:
                  "resolution and should not be read as a result: the "
                  "certainty-equivalent surface is nearly flat near its "
                  "maximum, which the margin columns above make visible."))))
+
+    out.append(ctx.h2("#inflation.6 The same question asked of the retiree"))
+    out.append(ctx.p(
+        "Everything above conditions a lifetime on the inflation its investor "
+        "saw at twenty-five. That is the implementable version of the "
+        "question — it is what a saver can act on — and it produces a null, "
+        "for a reason this section has already given: the damage is "
+        "short-horizon, and a sixty-eight-year window averages it away."))
+    out.append(ctx.p(
+        f"But the utility window in this paper is <i>retirement consumption "
+        f"alone</i>, and a retiree drawing down over "
+        f"{int(cfg['lifecycle']['age_death']) - int(cfg['lifecycle']['age_retire'])} "
+        f"years cannot wait a shock out. So the state variable is read a "
+        f"second time, at the retirement date rather than the birth date. A "
+        f"twenty-five-year-old cannot know what it will say — this is not an "
+        f"instruction to them — but a "
+        f"{int(cfg['lifecycle']['age_retire'])}-year-old standing there "
+        f"observes it exactly as reliably, and is bucketed against tercile "
+        f"boundaries built from history before <i>their</i> retirement rather "
+        f"than before their birth."))
+    if len(retire_adv):
+        out.extend(ctx.table(
+            [["Inflation at retirement", "Lifetimes",
+              "All-equity over target-date (%)", "P(ruin), all-equity",
+              "P(ruin), target-date"]]
+            + [[str(r["bucket"]), f"{int(r['n_paths']):,}",
+                f"{float(r['advantage_pct']):+.2f}",
+                f"{float(r['challenger_ruin']):.1%}",
+                f"{float(r['incumbent_ruin']):.1%}"]
+               for _, r in retire_adv.iterrows()],
+            f"The headline comparison inside each retirement-date inflation "
+            f"tercile, γ = {gamma:g}."))
+    if timing.get("measured"):
+        out.append(ctx.p(
+            (f"<b>When the state variable is read decides whether it matters "
+             f"at all.</b> Retiring into the high-inflation third rather than "
+             f"the low one is worth {timing['retirement_spread_pct']:+.2f}% "
+             f"of certainty-equivalent retirement consumption. Conditioning "
+             f"the same lifetimes on the inflation they <i>began</i> at is "
+             f"worth {timing['birth_spread_pct']:+.2f}% — "
+             f"{timing['ratio']:.1f} times smaller"
+             + (", and of the opposite sign. " if not timing["same_sign"]
+                else ". ")
+             + "The null above was a statement about the horizon, not about "
+               "inflation. This is the same panel, the same state variable "
+               "and the same terciles; only the date it is read at has "
+               "changed."
+             if timing["retirement_matters_much_more"] else
+             f"Reading the state variable at retirement rather than at birth "
+             f"moves the level {timing['retirement_spread_pct']:+.2f}% "
+             f"against {timing['birth_spread_pct']:+.2f}%, a factor of "
+             f"{timing['ratio']:.1f}. The date it is read at does not change "
+             f"the conclusion much.")))
+
+    out.append(ctx.h2("#inflation.7 What a retiree should hold"))
+    out.append(ctx.p(
+        "Sweeping a lifetime allocation answers a question no retiree can act "
+        "on: they cannot go back and hold something else from twenty-five. "
+        "What they can choose is what to hold from the day they stop working, "
+        "with whatever accumulation they arrived with. The portfolios swept "
+        "here are therefore identical to the baseline through the working "
+        "years and differ only afterwards, so the maximum in each bucket is "
+        "an instruction a retiree could actually follow."))
+    if len(ret_eq_optima):
+        out.extend(ctx.table(
+            [["Inflation at retirement", "Optimal equity share", "CEC there",
+              "Over holding no equity (%)", "Over the next grid point (%)"]]
+            + [[str(r["bucket"]), f"{float(r['optimal_equity_share']):.0%}",
+                f"{float(r['cec_at_optimum']):.4f}",
+                f"{float(r['margin_over_low_end_pct']):+.2f}"
+                if "margin_over_low_end_pct" in ret_eq_optima.columns else "—",
+                f"{float(r['margin_over_runner_up_pct']):.3f}"]
+               for _, r in ret_eq_optima.iterrows()],
+            "How much equity to hold from retirement, by the inflation "
+            "observed at that date."))
+    if len(ret_dom_optima):
+        out.extend(ctx.table(
+            [["Inflation at retirement", "Optimal domestic share", "CEC there",
+              "Over all-international (%)", "Over the next grid point (%)"]]
+            + [[str(r["bucket"]), f"{float(r['optimal_domestic_share']):.0%}",
+                f"{float(r['cec_at_optimum']):.4f}",
+                f"{float(r['margin_over_low_end_pct']):+.2f}"
+                if "margin_over_low_end_pct" in ret_dom_optima.columns else "—",
+                f"{float(r['margin_over_runner_up_pct']):.3f}"]
+               for _, r in ret_dom_optima.iterrows()],
+            "And how much of that equity at home."))
+    out.append(ctx.p(
+        (f"<b>The retiree's optimum moves with the regime.</b> The equity "
+         f"share runs from "
+         f"{ret_eq_shift.get('optimal_equity_share_low', float('nan')):.0%} "
+         f"in the calm third to "
+         f"{ret_eq_shift.get('optimal_equity_share_high', float('nan')):.0%} "
+         f"in the hot one, and the domestic share from "
+         f"{ret_dom_shift.get('optimal_domestic_share_low', float('nan')):.0%} "
+         f"to "
+         f"{ret_dom_shift.get('optimal_domestic_share_high', float('nan')):.0%}. "
+         + ("Both shifts clear the grid's resolution."
+            if ret_eq_shift.get("identified") and ret_dom_shift.get("identified")
+            else "At least one of them sits inside the grid's resolution and "
+                 "should be read against the margin columns rather than as a "
+                 "clean identification.")
+         if ret_eq_shift.get("moves") or ret_dom_shift.get("moves") else
+         f"<b>The retiree's optimum does not move.</b> "
+         f"{ret_eq_shift.get('optimal_equity_share_low', float('nan')):.0%} "
+         f"equity and "
+         f"{ret_dom_shift.get('optimal_domestic_share_low', float('nan')):.0%} "
+         f"domestic in every regime. Inflation at retirement changes what a "
+         f"retiree gets — and it changes it a great deal — without changing "
+         f"what they should hold against it. That is the same shape of answer "
+         f"Section #valuation reached, arrived at through a variable that "
+         f"does move the level.")))
+
+    out.extend(ctx.figure(
+        "fig54_inflation_timing",
+        "Left: the same portfolio's certainty equivalent by inflation "
+        "tercile, with the tercile assigned at age 25 and again at "
+        "retirement. Middle and right: what a retiree should hold from the "
+        "day they stop working, given the inflation they observe then, with "
+        "the maximum circled."))
 
     out.extend(ctx.figure(
         "fig52_inflation_state",

@@ -339,6 +339,28 @@ locate = vln.locate
 MIN_HISTORY = vln.MIN_HISTORY
 
 
+def path_inflation_at(paths: Any, trailing: np.ndarray,
+                      offset: int = 0) -> Tuple[np.ndarray, np.ndarray]:
+    """The trailing inflation each lifetime faced at one age, and the year.
+
+    ``offset`` is years since the lifetime began: ``0`` is the morning the
+    investor started saving, ``spec.n_working`` the morning they retired. Both
+    are observable *at that moment* -- the trailing rate uses only years
+    already finished -- so conditioning on either involves no look-ahead for
+    somebody standing there. What differs is who can act on it, which is the
+    whole point of asking the question twice.
+    """
+    offset = int(offset)
+    calendar = np.asarray(paths.calendar_index)
+    country = np.asarray(paths.domestic_country)
+    if not 0 <= offset < calendar.shape[1]:
+        raise ValueError(
+            f"offset {offset} is outside the simulated horizon "
+            f"{calendar.shape[1]}")
+    year = calendar[:, offset]
+    return trailing[year, country[:, offset]], year
+
+
 def path_starting_inflation(paths: Any, trailing: np.ndarray) -> np.ndarray:
     """The trailing inflation each simulated lifetime began at.
 
@@ -347,9 +369,7 @@ def path_starting_inflation(paths: Any, trailing: np.ndarray) -> np.ndarray:
     country-year -- what the investor would have read in the paper the morning
     they started saving.
     """
-    first_year = np.asarray(paths.calendar_index)[:, 0]
-    first_country = np.asarray(paths.domestic_country)[:, 0]
-    return trailing[first_year, first_country]
+    return path_inflation_at(paths, trailing, 0)[0]
 
 
 def source_comparison(domestic: np.ndarray, starting_domestic: np.ndarray,
@@ -610,3 +630,97 @@ def verdict(advantage: pd.DataFrame, grid: pd.DataFrame, window: int,
     found.update({f"equity_{k}": v for k, v in equity.items()})
     found.update({f"domestic_{k}": v for k, v in domestic.items()})
     return found
+
+
+# ---------------------------------------------------------------------------
+# The retiree's problem
+# ---------------------------------------------------------------------------
+def after_retirement(spec: Any, accumulation: np.ndarray,
+                     swept: Mapping[str, Any],
+                     prefix: str = "ret") -> Tuple[Dict[str, Any],
+                                                   Dict[str, float]]:
+    """Portfolios identical until retirement and swept afterwards.
+
+    Sweeping a *lifetime* allocation answers a question no retiree can act on:
+    they cannot go back and hold something else from twenty-five. What they can
+    choose is what to hold from the day they stop working, with whatever
+    accumulation they arrived with. These strategies are that choice --
+    ``accumulation`` weights for the working years, the swept weights after --
+    so the argmax in each bucket is an instruction a retiree could follow.
+
+    ``swept`` is any mapping of key to strategy, so the same equity-share and
+    domestic-share grids used for the lifetime question serve here unchanged.
+    """
+    from . import lifecycle as lc
+
+    base = np.asarray(accumulation, dtype=float)
+    if base.shape[0] != spec.horizon:
+        raise ValueError(
+            f"accumulation weights cover {base.shape[0]} years, not the "
+            f"lifecycle's {spec.horizon}")
+    out: Dict[str, Any] = {}
+    parameter: Dict[str, float] = {}
+    for key, strat in swept.items():
+        weights = np.vstack([base[:spec.n_working],
+                             np.asarray(strat.weights)[spec.n_working:]])
+        name = f"{prefix}_{key}"
+        out[name] = lc.Strategy(key=name,
+                                label=f"{strat.label}, from retirement",
+                                weights=weights)
+        parameter[name] = float(key.rsplit("_", 1)[-1]) / 100.0
+    return out, parameter
+
+
+def level_spread(frame: pd.DataFrame, strategy: str, column: str,
+                 labels: Sequence[str] = BUCKET_LABELS) -> Dict[str, Any]:
+    """How much the *level* of retirement consumption moves across buckets.
+
+    Distinct from the ranking question and, for a retiree, the more pressing
+    one: not "does inflation change what I should hold" but "how much worse
+    off am I for retiring into it". Reported for one strategy so the number is
+    a consumption difference rather than a mixture of portfolio effects.
+    """
+    block = frame[frame["strategy"] == strategy].set_index("bucket")
+    present = [str(x) for x in labels if str(x) in block.index]
+    if len(present) < 2:
+        return {"measured": False}
+    values = {name: float(block.loc[name, column]) for name in present}
+    low, high = values[present[0]], values[present[-1]]
+    best, worst = max(values.values()), min(values.values())
+    return {
+        "measured": True,
+        "strategy": strategy,
+        "low_bucket": present[0], "high_bucket": present[-1],
+        "cec_low": low, "cec_high": high,
+        "high_over_low_pct": (high / low - 1.0) * 100.0 if low else float("nan"),
+        "spread_pct": (best / worst - 1.0) * 100.0 if worst else float("nan"),
+        "high_inflation_is_worse": bool(high < low),
+    }
+
+
+def timing_comparison(birth: Mapping[str, Any], retirement: Mapping[str, Any],
+                      ) -> Dict[str, Any]:
+    """Birth-date conditioning against retirement-date conditioning.
+
+    The point of running both. A sixty-eight-year lifetime averages a
+    short-horizon shock away; a thirty-year decumulation cannot. If the level
+    spread is materially wider when the state variable is read at retirement,
+    the null in the lifetime version was about the horizon rather than about
+    inflation.
+    """
+    if not (birth.get("measured") and retirement.get("measured")):
+        return {"measured": False}
+    a = abs(float(birth["high_over_low_pct"]))
+    b = abs(float(retirement["high_over_low_pct"]))
+    return {
+        "measured": True,
+        "birth_spread_pct": float(birth["high_over_low_pct"]),
+        "retirement_spread_pct": float(retirement["high_over_low_pct"]),
+        "ratio": b / a if a > 1e-9 else float("inf"),
+        "retirement_matters_more": bool(b > a),
+        # A doubling is the threshold at which the horizon story stops being
+        # a quibble and starts being the finding.
+        "retirement_matters_much_more": bool(b > 2.0 * a),
+        "same_sign": bool((float(birth["high_over_low_pct"]) > 0)
+                          == (float(retirement["high_over_low_pct"]) > 0)),
+    }

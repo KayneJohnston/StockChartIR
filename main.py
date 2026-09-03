@@ -3071,12 +3071,24 @@ def step27_inflation(cfg: Dict[str, Any],
     starts: List[np.ndarray] = []
     world_starts: List[np.ndarray] = []
     start_years: List[np.ndarray] = []
+    # The same state variable read at a second date. A twenty-five-year-old
+    # cannot know what inflation will be doing when they retire, so this is
+    # not an instruction to them -- but a retiree standing there does observe
+    # it, and the paper's utility window is their consumption alone.
+    retire_states: List[np.ndarray] = []
+    retire_years: List[np.ndarray] = []
     for chunk in sampler.chunks(n_paths, chunk_size):
         starts.append(inf.path_starting_inflation(chunk, trailing))
         world_starts.append(inf.path_starting_inflation(chunk, world))
         start_years.append(inf.path_start_cells(chunk)[0])
+        at_retirement, year_at = inf.path_inflation_at(chunk, trailing,
+                                                       spec.n_working)
+        retire_states.append(at_retirement)
+        retire_years.append(year_at)
     starting = np.concatenate(starts)
     start_year = np.concatenate(start_years)
+    retire_state = np.concatenate(retire_states)
+    retire_year = np.concatenate(retire_years)
 
     # Boundaries from history that had already happened, exactly as in step
     # 15: the trailing rate is look-ahead-free but a pooled tercile boundary
@@ -3143,11 +3155,64 @@ def step27_inflation(cfg: Dict[str, Any],
                 dom_shift.get("optimal_domestic_share_low", float("nan")) * 100,
                 dom_shift.get("optimal_domestic_share_high", float("nan")) * 100)
 
+    # ---- the same question asked of the retiree ------------------------
+    # Boundaries from history before *retirement* rather than before birth,
+    # which is what a sixty-three-year-old could have known.
+    retire_index, retire_meta = inf.expanding_bucket_paths(
+        retire_state, retire_year, cuts, labels)
+    LOGGER.info("retirement-date buckets: %s (%.1f%% classified)",
+                dict(zip(labels, retire_meta["counts"])),
+                retire_meta["classified_pct"])
+    retire_buckets = inf.by_bucket(results, retire_index, labels, cfg, spec)
+    retire_advantage = inf.advantage_by_bucket(
+        retire_buckets, "balanced_all_equity", "target_date_fund", column)
+
+    # What a retiree can actually choose: the accumulation is already done,
+    # so only the weights from retirement onward are swept.
+    incumbent = str(inf_cfg.get("accumulation_strategy", "balanced_all_equity"))
+    fixed = state.get("strategies") or lc.build_strategies(cfg, spec)
+    accumulation = fixed[incumbent].weights
+    ret_eq, ret_eq_param = inf.after_retirement(spec, accumulation, eq_strats,
+                                                "reteq")
+    ret_dom, ret_dom_param = inf.after_retirement(spec, accumulation,
+                                                  dom_strats, "retdom")
+    retire_swept = {**ret_eq, **ret_dom}
+    LOGGER.info("scoring %d retirement-phase portfolios", len(retire_swept))
+    retire_results = lc.run_chunked(bs.from_config(panel, cfg), retire_swept,
+                                    spec, n_paths, chunk_size,
+                                    income_seed=int(cfg["run"]["seed"]))
+    retire_sweep = inf.by_bucket(retire_results, retire_index, labels, cfg,
+                                 spec)
+    ret_eq_optima = inf.optimum_by_bucket(retire_sweep, ret_eq_param, column,
+                                          "equity_share")
+    ret_dom_optima = inf.optimum_by_bucket(retire_sweep, ret_dom_param, column,
+                                           "domestic_share")
+    ret_eq_shift = inf.optimum_shift(ret_eq_optima, "equity_share", labels)
+    ret_dom_shift = inf.optimum_shift(ret_dom_optima, "domestic_share", labels)
+
+    # The comparison the whole extension exists for.
+    birth_level = inf.level_spread(buckets, incumbent, column, labels)
+    retire_level = inf.level_spread(retire_buckets, incumbent, column, labels)
+    timing = inf.timing_comparison(birth_level, retire_level)
+    LOGGER.info("level spread: %.2f%% conditioning at birth, %.2f%% at "
+                "retirement (%.1fx)", timing.get("birth_spread_pct", float("nan")),
+                timing.get("retirement_spread_pct", float("nan")),
+                timing.get("ratio", float("nan")))
+    LOGGER.info("retiree's optimum: equity %.0f%% -> %.0f%%, domestic "
+                "%.0f%% -> %.0f%% from calm to hot",
+                ret_eq_shift.get("optimal_equity_share_low", float("nan")) * 100,
+                ret_eq_shift.get("optimal_equity_share_high", float("nan")) * 100,
+                ret_dom_shift.get("optimal_domestic_share_low", float("nan")) * 100,
+                ret_dom_shift.get("optimal_domestic_share_high", float("nan")) * 100)
+
     position = inf.current_position(
         trailing, panel.years, panel.countries,
         str(inf_cfg.get("reference_country", "USA")))
     findings = inf.verdict(advantage, grid, window, horizon, eq_shift,
                            dom_shift, persist)
+    findings.update({f"timing_{k}": v for k, v in timing.items()})
+    findings.update({f"reteq_{k}": v for k, v in ret_eq_shift.items()})
+    findings.update({f"retdom_{k}": v for k, v in ret_dom_shift.items()})
 
     tables = cfg["run"]["table_dir"]
     for frame, name in ((grid, "inflation_predictive"),
@@ -3158,25 +3223,43 @@ def step27_inflation(cfg: Dict[str, Any],
                         (source, "inflation_source_check"),
                         (sweep_buckets, "inflation_sweep"),
                         (eq_optima, "inflation_optimal_equity"),
-                        (dom_optima, "inflation_optimal_domestic")):
+                        (dom_optima, "inflation_optimal_domestic"),
+                        (retire_buckets, "inflation_retirement_buckets"),
+                        (retire_advantage, "inflation_retirement_advantage"),
+                        (retire_sweep, "inflation_retirement_sweep"),
+                        (ret_eq_optima, "inflation_retirement_equity"),
+                        (ret_dom_optima, "inflation_retirement_domestic")):
         _save_table(frame, tables, name)
 
-    figures = [str(plots.plot_inflation_state(
-        grid, ordering, advantage, eq_optima, dom_optima, sweep_buckets,
-        eq_param, dom_param, column, cfg["run"]["figure_dir"]))]
+    figures = [
+        str(plots.plot_inflation_state(
+            grid, ordering, advantage, eq_optima, dom_optima, sweep_buckets,
+            eq_param, dom_param, column, cfg["run"]["figure_dir"])),
+        str(plots.plot_inflation_timing(
+            buckets, retire_buckets, ret_eq_optima, ret_dom_optima,
+            retire_sweep, ret_eq_param, ret_dom_param, column, incumbent,
+            cfg["run"]["figure_dir"])),
+    ]
 
     elapsed = time.perf_counter() - started
     rp.write_doc_27(
         Path("docs") / "27_inflation_state.md", cfg,
         {"predictive": grid, "ordering": ordering, "windows": choice,
          "buckets": buckets, "advantage": advantage, "source": source,
-         "optimal_equity": eq_optima, "optimal_domestic": dom_optima},
+         "optimal_equity": eq_optima, "optimal_domestic": dom_optima,
+         "retirement_advantage": retire_advantage,
+         "retirement_equity": ret_eq_optima,
+         "retirement_domestic": ret_dom_optima},
         figures,
         {"elapsed_seconds": elapsed, "gamma": gamma, "n_paths": n_paths,
          "window": window, "horizon": horizon, "labels": labels,
          "bucket_meta": meta, "leak": leak, "source_notes": source_notes,
          "persistence": persist, "position": position,
          "equity_shift": eq_shift, "domestic_shift": dom_shift,
+         "retirement_meta": retire_meta, "birth_level": birth_level,
+         "retirement_level": retire_level, "timing": timing,
+         "retirement_equity_shift": ret_eq_shift,
+         "retirement_domestic_shift": ret_dom_shift,
          "verdict": findings})
     LOGGER.info("docs/27 written (%.0fs)", elapsed)
     state["inflation_advantage"] = advantage

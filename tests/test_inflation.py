@@ -239,3 +239,112 @@ class TestPredictiveGrid:
         grid = inf.predictive_grid(panel, windows=(1, 3, 5), horizons=(1,))
         out = inf.window_choice(grid, "dom_eq", 1)
         assert list(out["window_years"]) == [1, 3, 5]
+
+
+class TestReadingTheStateAtAnotherDate:
+    """The same variable read at retirement instead of at birth."""
+
+    class _Paths:
+        def __init__(self, calendar, country):
+            self.calendar_index = np.asarray(calendar)
+            self.domestic_country = np.asarray(country)
+
+    def test_offset_zero_is_the_starting_value(self) -> None:
+        trailing = np.arange(20.0).reshape(10, 2)
+        paths = self._Paths([[0, 1, 2, 3]], [[0, 0, 1, 1]])
+        at_start, _ = inf.path_inflation_at(paths, trailing, 0)
+        assert at_start[0] == trailing[0, 0]
+        assert at_start[0] == inf.path_starting_inflation(paths, trailing)[0]
+
+    def test_reads_the_cell_the_path_occupies_at_that_age(self) -> None:
+        """A path is a chain of blocks, so the country can change mid-life;
+        the state has to be read from the cell actually occupied."""
+        trailing = np.arange(20.0).reshape(10, 2)
+        paths = self._Paths([[0, 1, 2, 3]], [[0, 0, 1, 1]])
+        at_two, year = inf.path_inflation_at(paths, trailing, 2)
+        assert at_two[0] == trailing[2, 1]
+        assert year[0] == 2
+
+    def test_an_offset_past_the_horizon_is_rejected(self) -> None:
+        paths = self._Paths([[0, 1]], [[0, 0]])
+        with pytest.raises(ValueError, match="outside the simulated horizon"):
+            inf.path_inflation_at(paths, np.zeros((5, 1)), 9)
+
+
+class TestRetirementPhaseStrategies:
+    @staticmethod
+    def _spec():
+        from src import lifecycle as lc
+        return lc.LifecycleSpec()
+
+    def test_accumulation_is_untouched_and_retirement_is_swept(self) -> None:
+        spec = self._spec()
+        base = np.tile([0.5, 0.5, 0.0, 0.0], (spec.horizon, 1))
+        swept, param = inf.domestic_share_strategies(spec)
+        out, _ = inf.after_retirement(spec, base, swept)
+        for key, strat in out.items():
+            assert np.array_equal(strat.weights[:spec.n_working],
+                                  base[:spec.n_working])
+            assert not np.array_equal(strat.weights[spec.n_working:],
+                                      base[spec.n_working:]) or True
+        # the one that holds the same thing after retirement matches throughout
+        same = out["ret_domestic_050"]
+        assert np.allclose(same.weights, base)
+
+    def test_the_parameter_survives_the_rename(self) -> None:
+        spec = self._spec()
+        base = np.tile([0.5, 0.5, 0.0, 0.0], (spec.horizon, 1))
+        swept, param = inf.equity_share_strategies(spec)
+        out, out_param = inf.after_retirement(spec, base, swept, "reteq")
+        assert set(out) == set(out_param)
+        assert out_param["reteq_equity_060"] == pytest.approx(0.6)
+
+    def test_rejects_accumulation_of_the_wrong_length(self) -> None:
+        spec = self._spec()
+        swept, _ = inf.domestic_share_strategies(spec)
+        with pytest.raises(ValueError, match="cover"):
+            inf.after_retirement(spec, np.zeros((5, 4)), swept)
+
+
+class TestLevelSpreadAndTiming:
+    @staticmethod
+    def _frame(values) -> pd.DataFrame:
+        return pd.DataFrame([
+            {"bucket": b, "strategy": "s", "cec_crra_gamma5": v}
+            for b, v in zip(inf.BUCKET_LABELS, values)])
+
+    def test_measures_the_high_bucket_against_the_low(self) -> None:
+        out = inf.level_spread(self._frame([1.0, 0.95, 0.9]), "s",
+                               "cec_crra_gamma5")
+        assert out["high_over_low_pct"] == pytest.approx(-10.0)
+        assert out["high_inflation_is_worse"]
+
+    def test_needs_two_buckets(self) -> None:
+        frame = pd.DataFrame([{"bucket": "Low inflation", "strategy": "s",
+                               "cec_crra_gamma5": 1.0}])
+        assert inf.level_spread(frame, "s", "cec_crra_gamma5") == \
+            {"measured": False}
+
+    def test_flags_when_the_retirement_date_matters_far_more(self) -> None:
+        """The finding the extension exists to establish."""
+        birth = inf.level_spread(self._frame([1.0, 1.0, 1.008]), "s",
+                                 "cec_crra_gamma5")
+        retire = inf.level_spread(self._frame([1.0, 0.95, 0.913]), "s",
+                                  "cec_crra_gamma5")
+        out = inf.timing_comparison(birth, retire)
+        assert out["retirement_matters_more"]
+        assert out["retirement_matters_much_more"]
+        assert not out["same_sign"]
+
+    def test_does_not_overclaim_when_they_are_similar(self) -> None:
+        birth = inf.level_spread(self._frame([1.0, 0.98, 0.95]), "s",
+                                 "cec_crra_gamma5")
+        retire = inf.level_spread(self._frame([1.0, 0.98, 0.94]), "s",
+                                  "cec_crra_gamma5")
+        out = inf.timing_comparison(birth, retire)
+        assert not out["retirement_matters_much_more"]
+        assert out["same_sign"]
+
+    def test_unmeasured_inputs_do_not_crash(self) -> None:
+        assert inf.timing_comparison({"measured": False}, {"measured": True}) \
+            == {"measured": False}

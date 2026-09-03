@@ -8249,6 +8249,96 @@ def write_doc_27(
             f"wants a little of the home market back, and `docs/12` -- which "
             f"solves the whole simplex with no grid at all -- agrees.")
 
+    retire_adv = frames.get("retirement_advantage", pd.DataFrame())
+    ret_eq = frames.get("retirement_equity", pd.DataFrame())
+    ret_dom = frames.get("retirement_domestic", pd.DataFrame())
+    timing = notes.get("timing", {})
+    ret_eq_shift = notes.get("retirement_equity_shift", {})
+    ret_dom_shift = notes.get("retirement_domestic_shift", {})
+
+    retire_adv_tbl = md_table(_compact(
+        retire_adv, ["bucket", "n_paths", "advantage_pct", "challenger_ruin",
+                     "incumbent_ruin"],
+        {"bucket": "Inflation at retirement", "n_paths": "Lifetimes",
+         "advantage_pct": "All-equity over target-date (%)",
+         "challenger_ruin": "P(ruin), all-equity",
+         "incumbent_ruin": "P(ruin), target-date"}), floatfmt="{:.3f}") \
+        if len(retire_adv) else ""
+
+    ret_eq_tbl = md_table(_compact(
+        ret_eq, ["bucket", "optimal_equity_share", "cec_at_optimum",
+                 "margin_over_low_end_pct", "margin_over_runner_up_pct"],
+        {"bucket": "Inflation at retirement",
+         "optimal_equity_share": "Optimal equity share from retirement",
+         "cec_at_optimum": "CEC there",
+         "margin_over_low_end_pct": "Over holding no equity (%)",
+         "margin_over_runner_up_pct": "Over the next grid point (%)"}),
+        floatfmt="{:.3f}") if len(ret_eq) else ""
+
+    ret_dom_tbl = md_table(_compact(
+        ret_dom, ["bucket", "optimal_domestic_share", "cec_at_optimum",
+                  "margin_over_low_end_pct", "margin_over_runner_up_pct"],
+        {"bucket": "Inflation at retirement",
+         "optimal_domestic_share": "Optimal domestic share from retirement",
+         "cec_at_optimum": "CEC there",
+         "margin_over_low_end_pct": "Over all-international (%)",
+         "margin_over_runner_up_pct": "Over the next grid point (%)"}),
+        floatfmt="{:.3f}") if len(ret_dom) else ""
+
+    if timing.get("measured"):
+        if timing["retirement_matters_much_more"]:
+            timing_line = (
+                f"**When the state variable is read decides whether it "
+                f"matters at all.** Retiring into the high-inflation third "
+                f"rather than the low one is worth "
+                f"{timing['retirement_spread_pct']:+.2f}% of "
+                f"certainty-equivalent retirement consumption. Conditioning "
+                f"the same lifetimes on the inflation they *began* at is "
+                f"worth {timing['birth_spread_pct']:+.2f}% -- "
+                f"{timing['ratio']:.1f} times smaller"
+                + (", and of the opposite sign" if not timing["same_sign"]
+                   else "")
+                + ". The null above was a statement about the horizon, not "
+                  "about inflation. A sixty-eight-year lifetime averages a "
+                  "short-horizon shock away; a thirty-year decumulation "
+                  "cannot.")
+        else:
+            timing_line = (
+                f"Reading the state variable at retirement rather than at "
+                f"birth moves the level "
+                f"{timing['retirement_spread_pct']:+.2f}% against "
+                f"{timing['birth_spread_pct']:+.2f}%, a factor of "
+                f"{timing['ratio']:.1f}. The date the variable is read does "
+                f"not change the conclusion much.")
+    else:
+        timing_line = ""
+
+    if ret_eq_shift.get("moves") or ret_dom_shift.get("moves"):
+        retire_opt_line = (
+            f"**The retiree's optimum moves with the regime.** The equity "
+            f"share runs "
+            f"{ret_eq_shift.get('optimal_equity_share_low', float('nan')):.0%} "
+            f"to "
+            f"{ret_eq_shift.get('optimal_equity_share_high', float('nan')):.0%} "
+            f"from the calm third to the hot one, and the domestic share "
+            f"{ret_dom_shift.get('optimal_domestic_share_low', float('nan')):.0%} "
+            f"to "
+            f"{ret_dom_shift.get('optimal_domestic_share_high', float('nan')):.0%}. "
+            + ("Both shifts clear the grid's resolution."
+               if ret_eq_shift.get("identified") and
+               ret_dom_shift.get("identified")
+               else "At least one of those sits inside the grid's resolution "
+                    "and should be read against the margin columns rather "
+                    "than as a clean identification."))
+    else:
+        retire_opt_line = (
+            f"**The retiree's optimum does not move**: "
+            f"{ret_eq_shift.get('optimal_equity_share_low', float('nan')):.0%} "
+            f"equity and "
+            f"{ret_dom_shift.get('optimal_domestic_share_low', float('nan')):.0%} "
+            f"domestic in every regime. Inflation at retirement changes what "
+            f"a retiree gets, not what they should hold.")
+
     figure_list = "\n".join(f"* `{f}`" for f in figures)
     intro = _header(
         "27 - Recent Inflation as a State Variable",
@@ -8341,7 +8431,40 @@ and how much of that equity at home.
 
 {domestic_line}
 
-## 5. What this changes
+## 5. The same question asked of the retiree
+
+Everything above conditions a lifetime on the inflation its investor saw at
+twenty-five. That is the implementable version of the question -- it is what
+a saver can act on -- and it produces a null, for a reason Section 2 already
+gave: the damage is short-horizon, and a sixty-eight-year window averages it
+away.
+
+But this paper's utility window is *retirement consumption alone*, and a
+retiree drawing down over thirty years cannot wait a shock out. So the state
+variable is read a second time, at the retirement date rather than the birth
+date. A twenty-five-year-old cannot know what it will say; a sixty-three-year
+old standing there observes it exactly as reliably, against tercile
+boundaries built from history before *their* retirement.
+
+{retire_adv_tbl}
+
+{timing_line}
+
+### What a retiree should hold
+
+Sweeping a *lifetime* allocation answers a question no retiree can act on:
+they cannot go back and hold something else from twenty-five. What they can
+choose is what to hold from the day they stop working. These portfolios are
+identical to the baseline through accumulation and swept only afterwards, so
+the maximum in each bucket is an instruction a retiree could follow.
+
+{ret_eq_tbl}
+
+{ret_dom_tbl}
+
+{retire_opt_line}
+
+## 6. What this changes
 
 * Trailing inflation is a **short-horizon** risk. At {horizon} year(s) the
   nominal legs give up {found['nominal_gap_pp']:+.2f} points a year after a
@@ -8359,11 +8482,11 @@ and how much of that equity at home.
   over most of the panel; and any policy response to inflation, since the
   spending rules here are nominal-blind by construction.
 
-## 6. Figures
+## 7. Figures
 
 {figure_list}
 
-## 7. Reproduction
+## 8. Reproduction
 
 ```bash
 python main.py --steps 27
