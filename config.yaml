@@ -828,6 +828,27 @@ human_capital:
   modes: [home, strict, diagonal]
 
 # ---------------------------------------------------------------------
+# Step 28 - foreign dividend withholding tax
+# ---------------------------------------------------------------------
+# The concrete instance of step 20's hypothetical. A cost differential
+# between holding your own market and holding everyone else's that is not a
+# fund fee, is not negotiable and is not a choice.
+withholding:
+  enabled: true
+  n_paths: 100000
+  challenger: international_equity
+  # Everything the challenger has to stay ahead of as the rate rises.
+  rivals: [balanced_all_equity, target_date_fund, domestic_equity]
+  # Statutory rates run to 30% (US, non-treaty); the grid runs past that on
+  # purpose, because the distance to a break-even is the margin of safety.
+  rate_grid: [0.0, 0.05, 0.075, 0.10, 0.15, 0.20, 0.25, 0.30, 0.35, 0.40, 0.50]
+  # The rate the drag table and the prose quote. The typical treaty rate on
+  # portfolio dividends, which is what a documented retail investor pays.
+  headline_rate: 0.15
+  # The second question: not "who wins" but "what should be held".
+  domestic_grid: [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0]
+
+# ---------------------------------------------------------------------
 # Step 25 - a pension system that is not the American one
 # ---------------------------------------------------------------------
 pension:

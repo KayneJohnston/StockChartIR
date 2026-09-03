@@ -8374,3 +8374,198 @@ paths, γ = {gamma:g}. Tables in
 `{cfg['run']['table_dir']}/inflation_*.csv`.
 """
     return _write(path, [intro, body])
+
+
+def write_doc_28(
+    path: str | Path,
+    cfg: Mapping[str, Any],
+    frames: Mapping[str, pd.DataFrame],
+    figures: Sequence[str],
+    notes: Mapping[str, Any],
+) -> Path:
+    """Foreign withholding tax, and the rate at which it undoes the headline."""
+    curve = frames["curve"]
+    crossed = frames["crossings"]
+    anchors = frames["anchors"]
+    drag = frames["drag"]
+    optima = frames["optimal"]
+    gamma = float(notes["gamma"])
+    found = notes["verdict"]
+    headline = float(notes["headline_rate"])
+    rivals = list(notes["rivals"])
+
+    drag_tbl = md_table(_compact(
+        drag, ["era", "mean_dividend_share", "drag_bp"],
+        {"era": "Era", "mean_dividend_share": "Mean dividend share of return",
+         "drag_bp": "Drag (bp a year)"}), floatfmt="{:.2f}")
+
+    lead_cols = [f"lead_over_{r}_pct" for r in rivals
+                 if f"lead_over_{r}_pct" in curve.columns]
+    curve_tbl = md_table(_compact(
+        curve, ["rate_pct"] + lead_cols + ["winner"],
+        {"rate_pct": "Rate (%)", "winner": "Best",
+         **{c: f"vs {c[len('lead_over_'):-len('_pct')]} (%)"
+            for c in lead_cols}}), floatfmt="{:.2f}")
+
+    cross_tbl = md_table(_compact(
+        crossed, ["rival", "lead_at_zero_pct", "crossing_pct",
+                  "equivalent_drag_bp"],
+        {"rival": "Rival", "lead_at_zero_pct": "Lead at 0% (%)",
+         "crossing_pct": "Overtakes at (%)",
+         "equivalent_drag_bp": "which is (bp a year)"}), floatfmt="{:.2f}")
+
+    anchor_tbl = md_table(_compact(
+        anchors, ["label", "rate_pct", "drag_bp"] + lead_cols,
+        {"label": "Rate", "rate_pct": "%", "drag_bp": "Drag (bp)",
+         **{c: f"vs {c[len('lead_over_'):-len('_pct')]} (%)"
+            for c in lead_cols}}), floatfmt="{:.2f}")
+
+    opt_tbl = md_table(_compact(
+        optima, ["rate", "optimal_domestic_share", "cec_at_optimum",
+                 "margin_over_low_end_pct", "margin_over_runner_up_pct"],
+        {"rate": "Rate", "optimal_domestic_share": "Optimal domestic share",
+         "cec_at_optimum": "CEC there",
+         "margin_over_low_end_pct": "Over all-international (%)",
+         "margin_over_runner_up_pct": "Over the next grid point (%)"}),
+        floatfmt="{:.3f}")
+
+    if found["any_rival_overtakes"]:
+        headline_line = (
+            f"**The headline does not survive a statutory withholding rate.** "
+            f"`{found['first_rival']}` overtakes all-international at "
+            f"**{found['first_crossing_pct']:.1f}%**, which is "
+            f"{'inside' if found['crossing_within_statutory'] else 'outside'} "
+            f"the 30% a non-resident pays without a treaty and "
+            f"{'inside' if found['crossing_within_treaty'] else 'outside'} the "
+            f"15% a documented one pays. "
+            f"{int(found['n_rivals_overtaking'])} of {len(rivals)} rivals "
+            f"overtake somewhere on the grid.")
+    else:
+        headline_line = (
+            f"**The headline survives every withholding rate tested**, up to "
+            f"{found['highest_rate_pct']:.0f}% — far past any statutory rate. "
+            f"All-international is still ahead of every rival at the top of "
+            f"the grid.")
+
+    if found.get("optimum_ever_moves"):
+        opt_line = (
+            f"**The optimal portfolio walks home as the rate rises**, from "
+            f"{found['optimal_domestic_at_zero']:.0%} domestic at a zero rate "
+            f"to {found['optimal_domestic_at_top']:.0%} at "
+            f"{found['highest_rate_pct']:.0f}% — "
+            f"{found['optimal_domestic_shift'] * 100:+.0f} points. That is the "
+            f"more useful of the two answers: an investor does not choose "
+            f"between two fixed portfolios, they choose a weight.")
+    else:
+        opt_line = (
+            f"**The optimal portfolio does not move**: "
+            f"{found.get('optimal_domestic_at_zero', float('nan')):.0%} "
+            f"domestic at every rate tested.")
+
+    figure_list = "\n".join(f"* `{f}`" for f in figures)
+    intro = _header(
+        "28 - Foreign Dividend Withholding Tax",
+        "docs/20 asks how large a cost differential would undo the headline. "
+        "This is the one that is not hypothetical, not negotiable, and not a "
+        "choice.")
+
+    body = f"""
+## 1. Why this is not the fee study again
+
+Section 20 finds the fee differential that would cancel the headline and
+describes it as beyond any index-fund pair. That framing has a hole in it.
+There is a cost differential between holding your own market and holding
+everyone else's that is not a fund's fee: **foreign dividend withholding
+tax**. A government taxes dividends leaving its borders; a resident holding
+that same market pays nothing or gets a full credit. The statutory US rate on
+dividends to non-resident individuals is 30%, most treaties cut it to 15% for
+portfolio investors, and a broad developed-markets index fund bears a
+weighted average of roughly 7.5%.
+
+Two things make it a different experiment from a fee.
+
+**The base is dividends, not assets.** A fee is levied on the whole portfolio;
+withholding only on the part of the return that arrives as a dividend. The
+drag is therefore proportional to the dividend yield, which in this panel has
+fallen by roughly a third since the war.
+
+**It falls on exactly one leg.** All-international pays it on every dividend
+it receives, the 50/50 split on half, a domestic-only portfolio on none.
+
+## 2. The arithmetic
+
+The source data compounds: `1 + total = (1 + capital gain)(1 + dividend)`,
+verified to eight decimal places, with the dividend measured against the
+ending price. Withholding at rate `tau` leaves the investor `(1 - tau)` of the
+dividend, so
+
+    1 + r_net = (1 + r_gross) * (1 - tau * q),   q = dp / (1 + dp)
+
+exactly — a multiplicative haircut of precisely the form Section 20 uses for
+an expense ratio, with a time-varying rate `tau * q` instead of a constant.
+`q` is the share of a year's ending value that arrived as a taxable dividend;
+it averages {float(notes['mean_share']):.4f} across
+{float(notes['coverage']):.1%} of the panel's country-years.
+
+That translation is what makes a statutory rate comparable with an expense
+ratio at all:
+
+{drag_tbl}
+
+{"The same law costs an investor less now than it did before the war, because it is levied on a dividend yield that has fallen." if found.get("drag_falls_over_time") else "The drag does not fall across the panel's eras."}
+
+## 3. Who wins, and at what rate
+
+{curve_tbl}
+
+{cross_tbl}
+
+{headline_line}
+
+### Against the rates that actually exist
+
+{anchor_tbl}
+
+## 4. What to hold at each rate
+
+Asking which of two fixed portfolios wins presumes the investor is choosing
+between two fixed portfolios. They are not; they are choosing a weight. The
+same domestic-share grid used in Section 27 is scored at every rate, on the
+same paths.
+
+{opt_tbl}
+
+{opt_line}
+
+## 5. What this changes
+
+* The break-even in Section 20 was described as beyond any index-fund pair.
+  At the panel's own dividend share, a 30% statutory rate is worth
+  {30.0 * float(notes['mean_share']) * 100:.0f} basis points a year on the
+  international sleeve — the same order as that break-even, reached by
+  statute rather than by fund selection.
+* {"The ranking changes somewhere inside the statutory range, so the headline is conditional on the investor's tax position." if found.get("crossing_within_statutory") else "The ranking does not change inside the statutory range."}
+* **What is not modelled**: dividend imputation, which in Australia and New
+  Zealand refunds corporate tax to *domestic* shareholders; the second layer
+  of withholding suffered by holding a US-domiciled fund of foreign stocks
+  rather than the stocks themselves; reclaim procedures, which recover part
+  of the tax at a paperwork cost most retail investors do not pay; and the
+  investor's own income tax on the dividend afterwards. Every one of those
+  runs against the international sleeve, so the rates here are a floor on the
+  real burden rather than an estimate of it.
+
+## 6. Figures
+
+{figure_list}
+
+## 7. Reproduction
+
+```bash
+python main.py --steps 28
+```
+
+Runtime {float(notes['elapsed_seconds']):.0f}s at {int(notes['n_paths']):,}
+paths, γ = {gamma:g}, headline rate {headline:.0%}. Tables in
+`{cfg['run']['table_dir']}/withholding_*.csv`.
+"""
+    return _write(path, [intro, body])

@@ -2954,6 +2954,113 @@ def plot_human_capital(curve: pd.DataFrame, ranking: pd.DataFrame,
     return _save(fig, directory, name)
 
 
+def plot_withholding(curve: pd.DataFrame, crossings: pd.DataFrame,
+                     anchors: pd.DataFrame, drag: pd.DataFrame,
+                     optima: pd.DataFrame, sweep: pd.DataFrame,
+                     dom_param: Mapping[str, float], column: str,
+                     challenger: str, rivals: Sequence[str],
+                     directory: str | Path,
+                     name: str = "fig53_withholding") -> Path:
+    """What a tax on foreign dividends does to the case for foreign equity."""
+    with plt.rc_context(STYLE):
+        fig, axes = _grid(4, 3.0)
+
+        # -- 1. the drag a statutory rate produces, by era -----------------
+        ax = axes[0]
+        eras = drag[drag["era"] != "whole panel"]
+        if len(eras):
+            ax.bar(range(len(eras)), eras["drag_bp"].to_numpy(dtype=float),
+                   color=_colour(0), width=0.62)
+            whole = drag[drag["era"] == "whole panel"]
+            if len(whole):
+                ax.axhline(float(whole["drag_bp"].iloc[0]), color="0.4",
+                           linewidth=1.0, linestyle=":")
+            ax.set_xticks(np.arange(len(eras)))
+            _strategy_ticks(ax, list(eras["era"]), fontsize=6.0)
+        ax.set_ylabel("Drag on the sleeve (bp a year)")
+        _title(ax, "The same law costs less as dividend yields fall")
+
+        # -- 2. every strategy's certainty equivalent against the rate -----
+        ax = axes[1]
+        keys = [challenger] + list(rivals)
+        for i, key in enumerate(keys):
+            col = f"cec_{key}"
+            if col not in curve.columns:
+                continue
+            block = curve.sort_values("rate_pct")
+            ax.plot(block["rate_pct"].to_numpy(dtype=float),
+                    block[col].to_numpy(dtype=float), marker=_marker(i),
+                    color=_colour(i), linewidth=1.6, markersize=3.2,
+                    label=_abbr(key).replace("\n", " "))
+        for _, r in anchors.iterrows():
+            ax.axvline(float(r["rate_pct"]), color="0.75", linewidth=0.8,
+                       linestyle=":", zorder=0)
+        ax.set_xlabel("Withholding rate on foreign dividends (%)")
+        ax.set_ylabel("Certainty equivalent consumption")
+        _title(ax, "Only the foreign leg pays it")
+        ax.legend(fontsize=5.5, loc="lower left", labelspacing=0.3,
+                  handlelength=1.4, frameon=True, framealpha=0.92,
+                  edgecolor="none")
+
+        # -- 3. the lead, and where it runs out ----------------------------
+        ax = axes[2]
+        block = curve.sort_values("rate_pct")
+        x = block["rate_pct"].to_numpy(dtype=float)
+        for i, rival in enumerate(rivals):
+            col = f"lead_over_{rival}_pct"
+            if col not in block.columns:
+                continue
+            y = block[col].to_numpy(dtype=float)
+            ax.plot(x, y, marker=_marker(i), color=_colour(i), linewidth=1.6,
+                    markersize=3.2, label=_abbr(rival).replace("\n", " "))
+        ax.axhline(0.0, color="black", linewidth=1.1)
+        for _, r in crossings.iterrows():
+            if bool(r["reached_on_grid"]):
+                ax.axvline(float(r["crossing_pct"]), color="0.5",
+                           linewidth=0.9, linestyle="--", zorder=0)
+        ax.set_xlabel("Withholding rate on foreign dividends (%)")
+        ax.set_ylabel("All-international's lead (%)")
+        survives = bool(len(block) and
+                        all(float(block[f"lead_over_{r}_pct"].iloc[-1]) > 0
+                            for r in rivals
+                            if f"lead_over_{r}_pct" in block.columns))
+        _title(ax, "The lead survives every rate tested" if survives
+               else "Where the lead runs out")
+        ax.legend(fontsize=5.5, loc="lower left", labelspacing=0.3,
+                  handlelength=1.4, frameon=True, framealpha=0.92,
+                  edgecolor="none")
+
+        # -- 4. what to hold at each rate ----------------------------------
+        ax = axes[3]
+        rates = sorted(sweep["rate"].unique())
+        for i, rate in enumerate(rates):
+            sub = sweep[(np.isclose(sweep["rate"], rate))
+                        & (sweep["strategy"].isin(dom_param))].copy()
+            if not len(sub):
+                continue
+            sub["share"] = [dom_param[k] for k in sub["strategy"]]
+            sub = sub.sort_values("share")
+            ax.plot(sub["share"].to_numpy(dtype=float) * 100.0,
+                    sub[column].to_numpy(dtype=float), color=_colour(i),
+                    linewidth=1.3, label=f"{rate:.0%}")
+        if len(optima):
+            ax.scatter(
+                optima["optimal_domestic_share"].to_numpy(dtype=float) * 100.0,
+                optima["cec_at_optimum"].to_numpy(dtype=float), s=38,
+                facecolors="none", edgecolors="black", linewidths=1.1,
+                zorder=5)
+        ax.set_xlabel("Domestic share of the equity sleeve (%)")
+        ax.set_ylabel("Certainty equivalent consumption")
+        _title(ax, "The optimum walks home as the tax rises")
+        ax.legend(fontsize=5.0, ncol=2, loc="lower left", labelspacing=0.25,
+                  handlelength=1.2, columnspacing=0.8, frameon=True,
+                  framealpha=0.92, edgecolor="none", title="rate",
+                  title_fontsize=5.0)
+
+        fig.tight_layout()
+    return _save(fig, directory, name)
+
+
 def plot_inflation_state(grid: pd.DataFrame, ordering: pd.DataFrame,
                          advantage: pd.DataFrame, eq_optima: pd.DataFrame,
                          dom_optima: pd.DataFrame, sweep: pd.DataFrame,

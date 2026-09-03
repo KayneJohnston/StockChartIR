@@ -187,6 +187,22 @@ def front_matter(ctx: Any) -> List[Flowable]:
     oos_runs = int(oos_found["runs"])
     oos_forward = float(oos_found["forward_gain_pct"])
     oos_backward = float(oos_found["backward_gain_pct"])
+    from src import withholding as _wht
+    wht_curve = f.table("withholding_curve")
+    wht_crossed = f.table("withholding_crossings")
+    wht_drag = f.table("withholding_drag")
+    wht_optima = f.table("withholding_optimal")
+    wht_found = _wht.verdict(wht_curve, wht_crossed, wht_optima, wht_drag,
+                             str(f.cfg["withholding"]["challenger"]))
+    wht_share = float(wht_drag.loc[wht_drag["era"] == "whole panel",
+                                   "mean_dividend_share"].iloc[0])
+    wht_statutory_bp = 0.30 * wht_share * 1e4
+    wht_first = float(wht_found["first_crossing_pct"])
+    wht_rival = str(wht_found["first_rival"])
+    wht_bites = bool(wht_found["crossing_within_statutory"])
+    wht_home_low = float(wht_found.get("optimal_domestic_at_zero", float("nan")))
+    wht_home_high = float(wht_found.get("optimal_domestic_at_top", float("nan")))
+    wht_top = float(wht_found["highest_rate_pct"])
     from src import inflation as _ifl
     inf_pred = f.table("inflation_predictive")
     inf_window = int(f.cfg["inflation_state"].get("headline_window", 3))
@@ -318,7 +334,19 @@ def front_matter(ctx: Any) -> List[Flowable]:
         f"all-international pays the foreign expense ratio on everything and "
         f"the 50/50 split on half, needs a differential of "
         f"{fee_be_bp:.0f} basis points to cancel the lead — beyond any "
-        f"index-fund pair. Currency hedging the international leg loses "
+        f"index-fund pair, though not beyond the tax code: foreign dividend "
+        f"withholding is a differential of exactly that kind that is neither "
+        f"a fee nor a choice, and at the panel's own dividend share the "
+        f"{0.30:.0%} statutory rate a non-resident pays is worth "
+        f"{wht_statutory_bp:.0f} basis points a year on the international "
+        f"sleeve alone. "
+        + (f"The 50/50 split overtakes all-international at a withholding rate "
+           f"of {wht_first:.1f}%, just inside that statutory rate, and the "
+           f"certainty-equivalent-maximising home share walks from "
+           f"{wht_home_low:.0%} to {wht_home_high:.0%} across the grid"
+           if wht_bites else
+           f"The lead nonetheless survives every rate tested, to {wht_top:.0f}%")
+        + f". Currency hedging the international leg loses "
         f"certainty-equivalent consumption at every ratio tested, even when "
         f"the hedge is free. Conditioning on what inflation has just done — a "
         f"state variable an investor observes more reliably than a dividend "
@@ -540,6 +568,7 @@ SECTION_ORDER: Tuple[str, ...] = (
     "valuation",
     "inflation",
     "fees",
+    "withholding",
     "human_capital",
     "mortality",
     "pension",
@@ -588,8 +617,8 @@ EXTENSION_SECTIONS: Tuple[str, ...] = SECTION_ORDER[
 #: abstract announcing "four" and then describing five.
 EXTENSION_GROUPS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("robustness", ("cohorts", "panel", "sleeve", "hedging", "valuation",
-                    "inflation", "fees", "human_capital", "mortality",
-                    "pension")),
+                    "inflation", "fees", "withholding", "human_capital",
+                    "mortality", "pension")),
     ("portfolio", ("glide", "allocation", "leverage", "turnover",
                    "out_of_sample")),
     ("menu", ("housing", "mortgage")),
@@ -6390,11 +6419,18 @@ def section_limitations(ctx: Any) -> List[Flowable]:
         f"capital weakens rather than strengthens the case for early equity."
     ) if wg.get("countries") else ""
     out.extend(ctx.bullets([x for x in [
-        "<b>No taxes.</b> Every return is pre-tax and every withdrawal is "
-        "untaxed. Tax-deferred and taxable accounts behave differently under "
-        "the same allocation, and the asymmetric treatment of capital gains "
-        "and income would change the ranking of spending rules in Section #spending "
-        "more than it would change the allocation ranking.",
+        "<b>One tax, and only one.</b> Section #withholding prices foreign "
+        "dividend withholding, because it is the tax that falls unequally on "
+        "the two legs this paper compares and is therefore the one that can "
+        "change the answer — and it does, inside the statutory range. Every "
+        "other tax is absent: returns are otherwise pre-tax, withdrawals "
+        "untaxed, and there is no distinction between a taxable and a "
+        "tax-deferred account. The asymmetric treatment of capital gains and "
+        "income would change the ranking of spending rules in Section "
+        "#spending more than it would change the allocation ranking; "
+        "dividend imputation, which refunds corporate tax to domestic "
+        "shareholders in Australia and New Zealand, would push the same way "
+        "as withholding and is not modelled either.",
         "<b>Every return is gross.</b> No fee is charged anywhere in the "
         "baseline. Section #fees prices the omission rather than repairing "
         "it, by finding the fee differential that would undo the headline, "
@@ -7991,6 +8027,227 @@ def section_out_of_sample(ctx: Any) -> List[Flowable]:
     return out
 
 
+def section_withholding(ctx: Any) -> List[Flowable]:
+    f = ctx.f
+    curve = f.table("withholding_curve")
+    crossed = f.table("withholding_crossings")
+    anchors = f.table("withholding_anchors")
+    drag = f.table("withholding_drag")
+    optima = f.table("withholding_optimal")
+
+    from src import withholding as wht
+    cfg = f.cfg
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    wcfg = cfg["withholding"]
+    challenger = str(wcfg.get("challenger", "international_equity"))
+    rivals = [str(r) for r in wcfg.get("rivals", ())]
+    headline = float(wcfg.get("headline_rate", 0.15))
+    found = wht.verdict(curve, crossed, optima, drag, challenger)
+    mean_share = float(drag.loc[drag["era"] == "whole panel",
+                                "mean_dividend_share"].iloc[0]) \
+        if len(drag) else float("nan")
+    statutory = float(wht.ANCHORS["the US statutory rate for non-residents"])
+    from src.fees import verdict as _fee_verdict
+    fee_found = _fee_verdict(
+        f.table("fee_common"), f.table("fee_differential"),
+        (str(cfg["fees"]["challenger"]), str(cfg["fees"]["incumbent"])),
+        f.table("fee_anchors"))
+    fee_be_bp = float(fee_found["break_even_differential_bp"])
+    statutory_drag_bp = statutory * mean_share * 1e4
+
+    out: List[Flowable] = [
+        ctx.h1("#withholding. The Cost Differential That Is Not a Fee")]
+    out.append(ctx.p(
+        f"Section #fees asks how large a cost differential between a domestic "
+        f"and an international fund would have to be to cancel the headline, "
+        f"and answers {fee_be_bp:.0f} basis points — a number it describes as "
+        f"beyond any index-fund pair. That framing has a hole in it. There is "
+        f"a cost differential between holding your own market and holding "
+        f"everyone else's that is not a fund's fee, is not negotiable, and is "
+        f"not a choice: <b>foreign dividend withholding tax</b>."))
+    out.append(ctx.p(
+        "A government taxes dividends leaving its borders. A resident holding "
+        "that same market pays nothing on them, or receives a full credit; a "
+        "foreigner pays and, in an ordinary retail structure, cannot reclaim. "
+        "The statutory United States rate on dividends to non-resident "
+        "individuals is 30%, most treaties reduce it to 15% for portfolio "
+        "investors, and a broad developed-markets index fund bears a "
+        "weighted average of roughly 7.5% across its constituents. None of "
+        "those is a price an investor can shop around for."))
+    out.append(ctx.p(
+        "Two things make this a different experiment from a fee, and both "
+        "cut against the sleeve this paper recommends. The <b>base is "
+        "dividends, not assets</b>: a fee is levied on the whole portfolio, "
+        "withholding only on the part of the return that arrives as a "
+        "dividend — so the drag tracks the dividend yield, which in this "
+        "panel has fallen by roughly a third since the war. And it falls on "
+        "<b>exactly one leg</b>: all-international pays it on every dividend "
+        "it receives, the 50/50 split on half, a domestic-only portfolio on "
+        "none. Section #fees builds that asymmetry by hypothesis. Here it is "
+        "the law."))
+
+    out.append(ctx.h2("#withholding.1 Putting a tax rate in fee units"))
+    out.append(ctx.p(
+        "The panel's source data compounds rather than adds — one plus the "
+        "total return equals one plus the capital gain times one plus the "
+        "dividend, verified to eight decimal places, with the dividend "
+        "measured against the ending price. Withholding at rate <i>τ</i> "
+        "leaves the investor <i>(1 − τ)</i> of that dividend, so the "
+        "after-tax return is the gross return multiplied by <i>(1 − τq)</i>, "
+        "where <i>q = dp/(1 + dp)</i> is the share of the year's ending value "
+        "that arrived as a taxable dividend. That is exactly the "
+        "multiplicative form Section #fees uses for an expense ratio, with a "
+        "time-varying rate in place of a constant — which is what makes a "
+        "statutory tax rate comparable with a fund's fee at all."))
+    out.extend(ctx.table(
+        [["Era", "Mean dividend share of the return",
+          "Drag on the sleeve (bp a year)"]]
+        + [[str(r["era"]), f"{float(r['mean_dividend_share']):.4f}",
+            f"{float(r['drag_bp']):.1f}"] for _, r in drag.iterrows()],
+        f"What a {headline:.0%} withholding rate actually costs, by era.",
+        note="A statutory rate is a constant; the drag it produces is not, "
+             "because it is levied on a dividend yield that has fallen. An "
+             "investor facing the same law in 1930 and in 2010 paid "
+             "materially different amounts for it."))
+    out.append(ctx.note(
+        f"That translation is the section's first result, and it is worth "
+        f"pausing on. At the panel's own mean dividend share of "
+        f"{mean_share:.4f}, the {statutory:.0%} statutory rate is worth "
+        f"<b>{statutory_drag_bp:.0f} basis points a year</b> on the "
+        f"international sleeve. The break-even differential Section #fees "
+        f"reports — the one it calls beyond any index-fund pair — is "
+        f"{fee_be_bp:.0f} basis points. They are the same order of magnitude, "
+        f"and one of them is not optional."))
+
+    out.append(ctx.h2("#withholding.2 Who wins, and at what rate"))
+    lead_cols = [f"lead_over_{r}_pct" for r in rivals
+                 if f"lead_over_{r}_pct" in curve.columns]
+    out.extend(ctx.table(
+        [["Rate"] + [f"vs {_pretty_strategy(c[len('lead_over_'):-len('_pct')])}"
+                     for c in lead_cols] + ["Best strategy"]]
+        + [[f"{float(r['rate_pct']):.1f}%"]
+           + [f"{float(r[c]):+.2f}%" for c in lead_cols]
+           + [_pretty_strategy(str(r["winner"]))]
+           for _, r in curve.sort_values("rate").iterrows()],
+        f"All-international's lead over each rival, γ = {gamma:g}."))
+    out.extend(ctx.table(
+        [["Rival", "Lead at a zero rate", "Overtakes at", "which is"]]
+        + [[_pretty_strategy(str(r["rival"])),
+            f"{float(r['lead_at_zero_pct']):+.2f}%",
+            f"{float(r['crossing_pct']):.1f}%" if bool(r["reached_on_grid"])
+            else "never on this grid",
+            f"{float(r['equivalent_drag_bp']):.0f} bp a year"
+            if bool(r["reached_on_grid"]) else "—"]
+           for _, r in crossed.iterrows()],
+        "Where each rival overtakes all-international.",
+        note="The last column converts the crossing rate into the annual "
+             "drag it represents at the panel's mean dividend share, so it "
+             "can be read against the fee differential of Section #fees."))
+    out.append(ctx.p(
+        (f"<b>The headline does not survive a statutory withholding rate.</b> "
+         f"<i>{_pretty_strategy(found['first_rival'])}</i> overtakes "
+         f"all-international at {found['first_crossing_pct']:.1f}%, which is "
+         f"{'inside' if found['crossing_within_statutory'] else 'outside'} "
+         f"the {statutory:.0%} a non-resident pays without a treaty and "
+         f"{'inside' if found['crossing_within_treaty'] else 'outside'} the "
+         f"{headline:.0%} a documented one pays. "
+         f"{int(found['n_rivals_overtaking'])} of {len(rivals)} rivals "
+         f"overtake somewhere on the grid."
+         if found["any_rival_overtakes"] else
+         f"<b>The headline survives every withholding rate tested</b>, to "
+         f"{found['highest_rate_pct']:.0f}% — far past any statutory rate. "
+         f"All-international is still ahead of every rival at the top of the "
+         f"grid, so the tax is real, it is large, and it is not large enough.")))
+    out.extend(ctx.table(
+        [["Rate", "%", "Drag (bp a year)"]
+         + [f"vs {_pretty_strategy(c[len('lead_over_'):-len('_pct')])}"
+            for c in lead_cols]]
+        + [[str(r["label"]), f"{float(r['rate_pct']):.1f}",
+            f"{float(r['drag_bp']):.0f}"]
+           + [f"{float(r[c]):+.2f}%" for c in lead_cols]
+           for _, r in anchors.iterrows()],
+        "The rates that actually exist, placed on the swept curve.",
+        note="These are configured anchors, not findings: nothing in this "
+             "project's data can verify a statutory rate."))
+
+    out.append(ctx.h2("#withholding.3 What to hold at each rate"))
+    out.append(ctx.p(
+        "Asking which of two fixed portfolios wins presumes the investor is "
+        "choosing between two fixed portfolios. They are not — they are "
+        "choosing a weight. The same domestic-share grid Section #inflation "
+        "uses is scored at every rate, on the same paths, and the "
+        "certainty-equivalent maximum read off. This is the more useful of "
+        "the two answers, because it is a schedule an investor can look up "
+        "against the rate they actually face."))
+    out.extend(ctx.table(
+        [["Withholding rate", "Optimal domestic share of equity", "CEC there",
+          "Over all-international (%)", "Over the next grid point (%)"]]
+        + [[f"{float(r['rate']):.1%}",
+            f"{float(r['optimal_domestic_share']):.0%}",
+            f"{float(r['cec_at_optimum']):.4f}",
+            f"{float(r['margin_over_low_end_pct']):+.2f}"
+            if "margin_over_low_end_pct" in optima.columns else "—",
+            f"{float(r['margin_over_runner_up_pct']):.3f}"]
+           for _, r in optima.sort_values("rate").iterrows()],
+        "The certainty-equivalent-maximising domestic share at each rate.",
+        note="The last column is the honesty check: a winner that beats its "
+             "neighbour by a rounding error has not identified an optimum."))
+    out.append(ctx.p(
+        (f"<b>The optimal portfolio walks home as the tax rises.</b> The "
+         f"domestic share that maximises the certainty equivalent moves from "
+         f"{found['optimal_domestic_at_zero']:.0%} at a zero rate to "
+         f"{found['optimal_domestic_at_top']:.0%} at "
+         f"{found['highest_rate_pct']:.0f}%, "
+         f"{found['optimal_domestic_shift'] * 100:+.0f} points. Nothing about "
+         f"the return panel has changed between those rows — only who is "
+         f"allowed to keep the dividends."
+         if found.get("optimum_moves_home") else
+         f"<b>The optimal portfolio does not move</b>: "
+         f"{found.get('optimal_domestic_at_zero', float('nan')):.0%} domestic "
+         f"at every rate tested, which says the tax changes the level of what "
+         f"an investor gets and not the shape of what they should hold.")))
+
+    out.extend(ctx.figure(
+        "fig53_withholding",
+        "Top left: what one statutory rate costs by era, as dividend yields "
+        "fall. Top right: each fixed strategy's certainty equivalent against "
+        "the rate, with the real rates marked. Bottom left: all-international's "
+        "lead over each rival, and where it runs out. Bottom right: the "
+        "certainty-equivalent surface over the domestic share, one curve per "
+        "rate, with the maximum circled."))
+
+    out.append(ctx.h2("#withholding.4 What this changes"))
+    out.extend(ctx.bullets([
+        (f"<b>Section #fees understates the cost differential an "
+         f"international investor faces, because it looks only at fees.</b> "
+         f"At the panel's own dividend share the {statutory:.0%} statutory "
+         f"rate is worth {statutory_drag_bp:.0f} basis points a year against "
+         f"that section's {fee_be_bp:.0f}-point break-even. The break-even is "
+         f"not beyond reach; it is roughly the law."),
+        (f"The headline ranking "
+         f"{'changes inside the statutory range, so it is conditional on the investor’s tax position and residence' if found.get('crossing_within_statutory') else 'does not change inside the statutory range'}. "
+         f"A reader who can hold foreign equity through a vehicle that "
+         f"reclaims the tax — many pension wrappers can — faces the top row "
+         f"of these tables. A reader in an ordinary taxable account does not."),
+        ("The optimal domestic share is the number to carry rather than the "
+         "winner of a two-horse race, and it moves with the rate. That is "
+         "the practical form of this section's answer."
+         if found.get("optimum_moves_home") else
+         "The optimal domestic share does not move with the rate."),
+        "<b>What is not modelled</b>: dividend imputation, which in Australia "
+        "and New Zealand refunds corporate tax to <i>domestic</i> "
+        "shareholders and would widen the home market's advantage further; "
+        "the second layer of withholding an investor suffers by holding a "
+        "US-domiciled fund of foreign stocks rather than the stocks "
+        "themselves; reclaim procedures, which recover part of the tax at a "
+        "paperwork cost most retail investors do not pay; and the investor's "
+        "own income tax on the dividend afterwards. Every one of those runs "
+        "the same way, against the international sleeve, so the rates here "
+        "are a floor on the real burden rather than an estimate of it.",
+    ]))
+    return out
+
+
 def section_human_capital(ctx: Any) -> List[Flowable]:
     f = ctx.f
     curve = f.table("human_capital_gap")
@@ -8300,6 +8557,7 @@ def story(ctx: Any) -> List[Flowable]:
     parts += section_valuation(ctx)
     parts += section_inflation(ctx)
     parts += section_fees(ctx)
+    parts += section_withholding(ctx)
     parts += section_human_capital(ctx)
     parts += section_mortality(ctx)
     parts += section_pension(ctx)

@@ -480,7 +480,8 @@ def domestic_share_strategies(spec: Any,
 
 
 def optimum_by_bucket(frame: pd.DataFrame, parameter: Mapping[str, float],
-                      column: str, name: str) -> pd.DataFrame:
+                      column: str, name: str,
+                      group: str = "bucket") -> pd.DataFrame:
     """The certainty-equivalent-maximising point of a swept grid, per bucket.
 
     Reports the interior optimum and the curvature around it, because a flat
@@ -488,9 +489,13 @@ def optimum_by_bucket(frame: pd.DataFrame, parameter: Mapping[str, float],
     second-best differ by a rounding error has not identified anything, and
     the table should let a reader see that rather than hiding it behind an
     argmax.
+
+    ``group`` names the column the sweep was run across -- inflation terciles
+    here, withholding rates in Section #withholding. The two studies ask the
+    same question of the same grids, so they share the arithmetic.
     """
     rows: List[Dict[str, Any]] = []
-    for label, block in frame.groupby("bucket", sort=False):
+    for label, block in frame.groupby(group, sort=False):
         scored = block[block["strategy"].isin(parameter)].copy()
         if not len(scored):
             continue
@@ -509,7 +514,7 @@ def optimum_by_bucket(frame: pd.DataFrame, parameter: Mapping[str, float],
         low_end = float(scored[column].iloc[0])
         high_end = float(scored[column].iloc[-1])
         rows.append({
-            "bucket": label,
+            group: label,
             "n_paths": int(best["n_paths"]),
             f"optimal_{name}": float(best[name]),
             "cec_at_optimum": top,

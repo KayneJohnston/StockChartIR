@@ -44,6 +44,7 @@ from src import panel_robustness as pr
 from src import plots
 from src import provenance as pvn
 from src import valuation as vln
+from src import withholding as wh
 from src import report as rp
 from src import retirement as rt
 from src import sleeve as slv
@@ -167,6 +168,10 @@ def _apply_quick(cfg: Dict[str, Any]) -> Dict[str, Any]:
         cfg["inflation_state"]["domestic_grid"] = [0.0, 0.5, 1.0]
         cfg["inflation_state"]["windows"] = [1, 3]
         cfg["inflation_state"]["horizons"] = [1, 10]
+    if "withholding" in cfg:
+        cfg["withholding"]["n_paths"] = 2000
+        cfg["withholding"]["rate_grid"] = [0.0, 0.15, 0.30, 0.50]
+        cfg["withholding"]["domestic_grid"] = [0.0, 0.5, 1.0]
     if "mortality" in cfg:
         cfg["mortality"]["n_paths"] = 4000
     LOGGER.warning("quick mode: n_paths reduced to %s",
@@ -3178,6 +3183,99 @@ def step27_inflation(cfg: Dict[str, Any],
     return state
 
 
+# ---------------------------------------------------------------------------
+# Step 28
+# ---------------------------------------------------------------------------
+def step28_withholding(cfg: Dict[str, Any],
+                       state: Dict[str, Any]) -> Dict[str, Any]:
+    """Tax the international sleeve's dividends and sweep the rate."""
+    wht_cfg = cfg.get("withholding", {})
+    if not wht_cfg.get("enabled", False):
+        LOGGER.info("withholding study disabled; skipping step 28")
+        return state
+    LOGGER.info("=== STEP 28: foreign dividend withholding tax ===")
+    started = time.perf_counter()
+
+    panel = state.get("panel") or dl.build_panel(cfg)
+    jst = dl.load_jst(cfg)
+    spec = state.get("spec") or lc.spec_from_config(cfg)
+    fixed = dict(state.get("strategies") or lc.build_strategies(cfg, spec))
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    column = f"cec_crra_gamma{gamma:g}"
+    n_paths = int(wht_cfg.get("n_paths", cfg["bootstrap"]["n_paths"]))
+    grid = [float(r) for r in wht_cfg.get("rate_grid", wh.DEFAULT_RATES)]
+    challenger = str(wht_cfg.get("challenger", "international_equity"))
+    rivals = [str(r) for r in wht_cfg.get("rivals", ())]
+    headline = float(wht_cfg.get("headline_rate", 0.15))
+
+    share = wh.dividend_share(jst, panel.countries, panel.years)
+    sleeve = wh.sleeve_dividend_share(share)
+    coverage = float(np.isfinite(sleeve).mean())
+    LOGGER.info("dividend share of gross return: mean %.4f across %.1f%% of "
+                "country-years", float(np.nanmean(sleeve)), coverage * 100.0)
+    if coverage < 0.5:
+        raise RuntimeError(
+            "fewer than half the panel's country-years carry a dividend "
+            "observation; a withholding tax computed on them would be a "
+            "statement about the covered cells rather than about the panel")
+
+    drag = wh.realised_drag(headline, sleeve, panel.years)
+
+    # One sweep, two questions. The fixed strategies answer "who wins"; the
+    # domestic-share grid answers "what should be held", and running them
+    # together means both are scored on identical paths at every rate.
+    dom_strats, dom_param = inf.domestic_share_strategies(
+        spec, [float(x) for x in wht_cfg.get("domestic_grid",
+                                             inf.DEFAULT_DOMESTIC_GRID)])
+    strategies = {**fixed, **dom_strats}
+
+    def summarise(taxed: dl.Panel, paths: int) -> pd.DataFrame:
+        return _run_variant(cfg, taxed, spec, strategies, paths)
+
+    frame = wh.sweep(panel, summarise, n_paths, sleeve, grid)
+    frame["n_paths"] = n_paths
+    curve = wh.gap_curve(frame[frame["strategy"].isin(fixed)], challenger,
+                         rivals)
+    crossed = wh.crossings(curve, rivals, sleeve)
+    anchors = wh.anchor_table(curve, rivals, sleeve)
+    optima = wh.optimum_by_rate(
+        frame[frame["strategy"].isin(dom_param)], dom_param, column)
+    findings = wh.verdict(curve, crossed, optima, drag, challenger)
+    LOGGER.info("withholding verdict: %d of %d rivals overtake; first at "
+                "%.1f%%; optimal domestic share %.0f%% -> %.0f%%",
+                findings["n_rivals_overtaking"], len(rivals),
+                findings["first_crossing_pct"],
+                findings.get("optimal_domestic_at_zero", float("nan")) * 100,
+                findings.get("optimal_domestic_at_top", float("nan")) * 100)
+
+    tables = cfg["run"]["table_dir"]
+    for block, name in ((frame, "withholding_sweep"),
+                        (curve, "withholding_curve"),
+                        (crossed, "withholding_crossings"),
+                        (anchors, "withholding_anchors"),
+                        (drag, "withholding_drag"),
+                        (optima, "withholding_optimal")):
+        _save_table(block, tables, name)
+
+    figures = [str(plots.plot_withholding(
+        curve, crossed, anchors, drag, optima, frame, dom_param, column,
+        challenger, rivals, cfg["run"]["figure_dir"]))]
+
+    elapsed = time.perf_counter() - started
+    rp.write_doc_28(
+        Path("docs") / "28_withholding_tax.md", cfg,
+        {"curve": curve, "crossings": crossed, "anchors": anchors,
+         "drag": drag, "optimal": optima},
+        figures,
+        {"elapsed_seconds": elapsed, "gamma": gamma, "n_paths": n_paths,
+         "headline_rate": headline, "challenger": challenger,
+         "rivals": rivals, "mean_share": float(np.nanmean(sleeve)),
+         "coverage": coverage, "verdict": findings})
+    LOGGER.info("docs/28 written (%.0fs)", elapsed)
+    state["withholding_curve"] = curve
+    return state
+
+
 STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
          4: step4_report, 5: step5_sensitivity, 6: step6_spending,
          7: step7_glide_path, 8: step8_hedging, 9: step9_retirement_timing,
@@ -3189,11 +3287,12 @@ STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
          20: step20_fees, 21: step21_cohorts,
          22: step22_out_of_sample, 23: step23_human_capital,
          24: step24_mortality, 25: step25_pension,
-         26: step26_turnover, 27: step27_inflation}
+         26: step26_turnover, 27: step27_inflation,
+         28: step28_withholding}
 
 
 def run(config_path: str = "config.yaml",
-        steps: Sequence[int] = tuple(range(1, 28)),
+        steps: Sequence[int] = tuple(range(1, 29)),
         quick: bool = False) -> Dict[str, Any]:
     """Execute the pipeline and return the accumulated state."""
     cfg = dl.load_config(config_path)
@@ -3223,8 +3322,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--steps", nargs="+", type=int,
-                        default=list(range(1, 28)),
-                        choices=list(range(1, 28)))
+                        default=list(range(1, 29)),
+                        choices=list(range(1, 29)))
     parser.add_argument("--quick", action="store_true",
                         help="small N for smoke tests")
     parser.add_argument("--verbose", action="store_true")

@@ -1,0 +1,5 @@
+label,rate,rate_pct,drag_bp,lead_over_balanced_all_equity_pct,lead_over_target_date_fund_pct,lead_over_domestic_equity_pct
+a recovering pension fund,0.0,0.0,0.0,5.793327461736175,17.607361405776658,25.7076968845412
+a broad developed-markets index fund,0.075,7.5,28.74331817736839,4.204908813056507,14.967718242803564,22.137477991496503
+the typical treaty rate on portfolio dividends,0.15,15.0,57.48663635473678,2.6744436150890616,12.443289843397753,18.735557759048827
+the US statutory rate for non-residents,0.3,30.0,114.97327270947356,-0.14584440070170013,7.799870422061828,12.478979333552198

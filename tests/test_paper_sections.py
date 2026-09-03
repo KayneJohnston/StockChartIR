@@ -257,7 +257,8 @@ class TestLimitationsIsNotStale:
     def test_names_the_sections_that_answer_each_omission(self) -> None:
         source = self._source()
         for key in ("#fees", "#mortality", "#housing", "#pension",
-                    "#cohorts", "#out_of_sample", "#turnover"):
+                    "#cohorts", "#out_of_sample", "#turnover",
+                    "#withholding"):
             assert key in source, f"limitations never mentions {key}"
 
 
@@ -316,3 +317,32 @@ class TestInflationSectionIsWiredIn:
         for literal in ("0.58", "-5.19", "-2.32", "+3.54", "10%", "100%"):
             assert f'"{literal}"' not in source, \
                 f"{literal!r} is typed into the inflation section"
+
+
+class TestWithholdingSectionIsWiredIn:
+    """The concrete instance of the fee experiment, placed beside it."""
+
+    def test_appears_in_the_reading_order(self) -> None:
+        assert "withholding" in content.SECTION_ORDER
+
+    def test_follows_the_fee_study_it_sharpens(self) -> None:
+        order = list(content.SECTION_ORDER)
+        assert order.index("withholding") == order.index("fees") + 1
+
+    def test_is_counted_among_the_robustness_studies(self) -> None:
+        assert "withholding" in dict(content.EXTENSION_GROUPS)["robustness"]
+
+    def test_the_groups_still_partition_the_extensions(self) -> None:
+        covered = [k for _, members in content.EXTENSION_GROUPS
+                   for k in members]
+        assert sorted(covered) == sorted(content.EXTENSION_SECTIONS)
+        assert len(covered) == len(set(covered))
+
+    def test_the_fee_break_even_is_read_not_typed(self) -> None:
+        """The section's whole point is a comparison with Section #fees'
+        break-even, so that number has to come from the fee module."""
+        import inspect
+        source = inspect.getsource(content.section_withholding)
+        assert "break_even_differential_bp" in source
+        for literal in ("114", "115", "29.2", "112"):
+            assert f'"{literal}"' not in source
