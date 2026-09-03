@@ -218,6 +218,33 @@ class TestNewSectionsAreWiredIn:
         assert order.index("leverage") < order.index("turnover")
         assert order.index("turnover") < order.index("out_of_sample")
 
+
+class TestSequenceIsWiredIn:
+    """The permutation study, and where it has to sit to make sense."""
+
+    def test_it_appears_in_the_reading_order(self) -> None:
+        assert "sequence" in content.SECTION_ORDER
+        assert hasattr(content, "section_sequence")
+
+    def test_it_follows_the_symptoms_it_explains(self) -> None:
+        """It opens by naming the retirement-date result as a symptom.
+
+        Placed before that section the opening sentence refers forward, and
+        the reader meets the explanation before the thing being explained.
+        """
+        order = list(content.SECTION_ORDER)
+        assert order.index("retirement") < order.index("sequence")
+        assert order.index("inflation") < order.index("sequence")
+
+    def test_it_precedes_the_spending_rules_it_reframes(self) -> None:
+        """Its closing claim is about what the rules in #spending trade."""
+        order = list(content.SECTION_ORDER)
+        assert order.index("sequence") < order.index("spending")
+
+    def test_it_belongs_to_the_plan_group(self) -> None:
+        groups = dict(content.EXTENSION_GROUPS)
+        assert "sequence" in groups["plan"]
+
     def test_the_groups_still_partition_the_extensions(self) -> None:
         covered = [k for _, members in content.EXTENSION_GROUPS
                    for k in members]

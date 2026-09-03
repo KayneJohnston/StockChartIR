@@ -828,6 +828,28 @@ human_capital:
   modes: [home, strict, diagonal]
 
 # ---------------------------------------------------------------------
+# Step 29 - sequence-of-returns risk, isolated
+# ---------------------------------------------------------------------
+# Keep each lifetime's returns exactly as drawn and shuffle the order. Same
+# multiset, same mean; anything that changes is sequence. For a lump sum
+# nothing would change at all -- the product of gross returns is commutative
+# -- so what this measures is the interaction of ordering with cash flows.
+sequence:
+  enabled: true
+  n_paths: 20000
+  # Orderings per path. The decomposition needs several of the *same* bag of
+  # returns to separate within-bag variance from between-bag variance; eight
+  # is enough for the share to be stable to a fraction of a point.
+  n_reps: 8
+  phases: [none, accumulation, retirement, both]
+  # The strategy the decomposition is reported for. A single one, so the
+  # numbers are a consumption effect rather than a mixture of portfolios.
+  focus: balanced_all_equity
+  challenger: balanced_all_equity
+  incumbent: target_date_fund
+  seed: 20260904
+
+# ---------------------------------------------------------------------
 # Step 28 - foreign dividend withholding tax
 # ---------------------------------------------------------------------
 # The concrete instance of step 20's hypothetical. A cost differential

@@ -2954,6 +2954,96 @@ def plot_human_capital(curve: pd.DataFrame, ranking: pd.DataFrame,
     return _save(fig, directory, name)
 
 
+def plot_sequence(frame: pd.DataFrame, ranking: pd.DataFrame,
+                  comparison: pd.DataFrame, focus: str,
+                  directory: str | Path,
+                  name: str = "fig55_sequence_risk") -> Path:
+    """How much of a lifetime's outcome is the order the returns arrived in."""
+    order = [p for p in ("none", "accumulation", "retirement", "both")
+             if p in set(frame["phase"])]
+    tick = {"none": "nothing\nshuffled", "accumulation": "working\nyears",
+            "retirement": "retired\nyears", "both": "whole\nlifetime"}
+    block = frame[frame["strategy"] == focus].set_index("phase")
+
+    with plt.rc_context(STYLE):
+        fig, axes = _grid(4, 3.0)
+
+        # -- 1. the share of variance that is pure ordering ----------------
+        ax = axes[0]
+        share = [float(block.loc[p, "sequence_share"]) * 100.0 for p in order]
+        colours = [_colour(2) if p == "retirement" else _colour(0)
+                   for p in order]
+        ax.bar(range(len(order)), share, color=colours, width=0.64)
+        ax.set_xticks(np.arange(len(order)))
+        _strategy_ticks(ax, [tick.get(p, p) for p in order], fontsize=5.5)
+        ax.set_ylabel("Share of outcome variance (%)")
+        _title(ax, "How much of the risk is only the order")
+
+        # -- 2. the same in consumption units, split ------------------------
+        ax = axes[1]
+        seqsd = np.array([float(block.loc[p, "sd_sequence"]) for p in order])
+        levsd = np.array([float(block.loc[p, "sd_level"]) for p in order])
+        ax.bar(range(len(order)), levsd, color=_colour(1), width=0.64,
+               label="the returns drawn")
+        ax.bar(range(len(order)), seqsd, bottom=levsd, color=_colour(2),
+               width=0.64, label="the order they came in")
+        ax.set_xticks(np.arange(len(order)))
+        _strategy_ticks(ax, [tick.get(p, p) for p in order], fontsize=5.5)
+        ax.set_ylabel("Standard deviation of retirement\nconsumption")
+        _title(ax, "Ordering risk stacked on return risk")
+        ax.legend(fontsize=5.5, loc="upper left", labelspacing=0.3,
+                  handlelength=1.2, frameon=True, framealpha=0.92,
+                  edgecolor="none")
+
+        # -- 3. what it costs ----------------------------------------------
+        ax = axes[2]
+        cec = [float(block.loc[p, "cec"]) for p in order]
+        ax.plot(range(len(order)), cec, marker=_marker(0), color=_colour(0),
+                linewidth=1.7, markersize=4.0, label="certainty equivalent")
+        ax.set_xticks(np.arange(len(order)))
+        _strategy_ticks(ax, [tick.get(p, p) for p in order], fontsize=5.5)
+        ax.set_ylabel("Certainty equivalent consumption")
+        twin = ax.twinx()
+        ruin = [float(block.loc[p, "prob_ruin"]) * 100.0 for p in order]
+        twin.plot(range(len(order)), ruin, marker=_marker(1), color=_colour(2),
+                  linewidth=1.5, markersize=3.4, linestyle="--",
+                  label="P(ruin)")
+        twin.set_ylabel("P(ruin), %", fontsize=7)
+        twin.tick_params(labelsize=6.5)
+        _title(ax, "What a random order costs")
+        handles = ax.get_legend_handles_labels()[0] + \
+            twin.get_legend_handles_labels()[0]
+        labels = ax.get_legend_handles_labels()[1] + \
+            twin.get_legend_handles_labels()[1]
+        ax.legend(handles, labels, fontsize=5.5, loc="center left",
+                  labelspacing=0.3, handlelength=1.4, frameon=True,
+                  framealpha=0.92, edgecolor="none")
+
+        # -- 4. where the risk sits depends on the withdrawal rule ---------
+        ax = axes[3]
+        if len(comparison):
+            idx = np.arange(len(comparison))
+            ax.barh(idx - 0.19,
+                    comparison["share_accumulation"].to_numpy(dtype=float)
+                    * 100.0, height=0.36, color=_colour(0),
+                    label="working years")
+            ax.barh(idx + 0.19,
+                    comparison["share_retirement"].to_numpy(dtype=float)
+                    * 100.0, height=0.36, color=_colour(2),
+                    label="retired years")
+            ax.set_yticks(idx)
+            ax.set_yticklabels([_wrap(str(v), 18)
+                                for v in comparison["label"]], fontsize=5.5)
+            ax.legend(fontsize=5.5, loc="lower right", labelspacing=0.3,
+                      handlelength=1.2, frameon=True, framealpha=0.92,
+                      edgecolor="none")
+        ax.set_xlabel("Share of outcome variance that is ordering (%)")
+        _title(ax, "The withdrawal rule decides where the risk lands")
+
+        fig.tight_layout()
+    return _save(fig, directory, name)
+
+
 def plot_withholding(curve: pd.DataFrame, crossings: pd.DataFrame,
                      anchors: pd.DataFrame, drag: pd.DataFrame,
                      optima: pd.DataFrame, sweep: pd.DataFrame,

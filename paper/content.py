@@ -611,6 +611,7 @@ SECTION_ORDER: Tuple[str, ...] = (
     "saving",
     "accumulation",
     "retirement",
+    "sequence",
     "spending",
     # Closing.
     "discussion",
@@ -646,7 +647,8 @@ EXTENSION_GROUPS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("portfolio", ("glide", "allocation", "leverage", "turnover",
                    "out_of_sample")),
     ("menu", ("housing", "mortgage")),
-    ("plan", ("saving", "accumulation", "retirement", "spending")),
+    ("plan", ("saving", "accumulation", "retirement", "sequence",
+              "spending")),
 )
 
 
@@ -2312,6 +2314,262 @@ def section_sensitivity(ctx: Any) -> List[Flowable]:
 # ---------------------------------------------------------------------------
 # 7. Retirement spending rules
 # ---------------------------------------------------------------------------
+def section_sequence(ctx: Any) -> List[Flowable]:
+    f = ctx.f
+    frame = f.table("sequence_decomposition")
+    ranking = f.table("sequence_ranking")
+    comparison = f.table("sequence_rule_comparison")
+
+    from src import sequence as sqn
+    cfg = f.cfg
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    scfg = cfg["sequence"]
+    focus = str(scfg.get("focus", "balanced_all_equity"))
+    n_reps = int(scfg.get("n_reps", 8))
+    pair = (str(scfg.get("challenger", "balanced_all_equity")),
+            str(scfg.get("incumbent", "target_date_fund")))
+    found = sqn.verdict(frame, focus)
+    rule_found = sqn.rule_verdict(comparison)
+    horizon = int(cfg["lifecycle"]["age_death"]) - int(cfg["lifecycle"]["age_start"])
+    said = {"none": "nothing", "accumulation": "the working years",
+            "retirement": "the retired years", "both": "the whole lifetime"}
+    block = frame[frame["strategy"] == focus].set_index("phase")
+
+    out: List[Flowable] = [
+        ctx.h1("#sequence. Sequence-of-Returns Risk, Isolated")]
+    out.append(ctx.p(
+        "Section #retirement establishes that the single decade around a "
+        "person's retirement date explains more of their outcome than the "
+        "entire allocation question, and Section #inflation shows that "
+        "reading a state variable at the retirement date rather than the "
+        "birth date turns a null into an eight-point effect. Both are "
+        "symptoms of the same thing. Neither measures it."))
+    out.append(ctx.p(
+        f"The experiment that does is simple enough to state in a sentence. "
+        f"Take a simulated lifetime, keep its {horizon} annual returns "
+        f"exactly as drawn, and shuffle the order. Same multiset, same mean, "
+        f"same everything a return distribution can describe. Anything that "
+        f"changes is sequence."))
+    out.append(ctx.note(
+        "For a lump sum nothing would change at all: the product of gross "
+        "returns is commutative, so a buy-and-hold investor with no cash "
+        "flows ends at the same wealth whatever the order. That is verified "
+        "here to machine precision, and it is the point — sequence risk "
+        "exists <i>only</i> through cash flows. A contribution made before a "
+        "crash buys more; a withdrawal made after one sells more. Every "
+        "series of a year moves together under the permutation, so the "
+        "cross-asset covariance the bootstrap exists to preserve survives it."))
+
+    out.append(ctx.h2("#sequence.1 The decomposition"))
+    out.append(ctx.p(
+        f"Each original path is a bag of returns. Reordering it makes the "
+        f"outcome a random variable, so the total variance splits exactly "
+        f"into the average variance <i>within</i> a bag — which is sequence, "
+        f"since the bag is held fixed — and the variance of the bag means, "
+        f"which is the risk of having drawn that bag at all. Estimating the "
+        f"first term needs several orderings of the same path, which is what "
+        f"the {n_reps} replications are for."))
+    out.extend(ctx.table(
+        [["What was shuffled", "Share of variance that is ordering",
+          "SD from ordering", "SD from the returns", "CEC", "P(ruin)"]]
+        + [[said.get(str(p), str(p)),
+            f"{float(block.loc[p, 'sequence_share']):.1%}",
+            f"{float(block.loc[p, 'sd_sequence']):.3f}",
+            f"{float(block.loc[p, 'sd_level']):.3f}",
+            f"{float(block.loc[p, 'cec']):.4f}",
+            f"{float(block.loc[p, 'prob_ruin']):.1%}"]
+           for p in sqn.PHASES if p in block.index],
+        f"Variance of mean retirement consumption for "
+        f"<i>{_pretty_strategy(focus)}</i>, split into ordering and returns, "
+        f"γ = {gamma:g}.",
+        note="The first row is the control. Shuffling nothing must give a "
+             "sequence share of zero, and the pipeline fails loudly "
+             "if it does not — without that check the decomposition could be "
+             "measuring anything."))
+    out.append(ctx.p(
+        (f"<b>Most of the risk in a lifetime is the order, not the "
+         f"returns.</b> Holding the bag fixed and reshuffling it accounts for "
+         f"{found['share_both']:.1%} of the variance in retirement "
+         f"consumption. Which returns a saver draws matters less than when "
+         f"they arrive."
+         if found.get("ordering_is_most_of_the_risk") else
+         f"<b>Ordering is a minority of the risk, and not a small one.</b> "
+         f"Reshuffling a fixed bag of returns accounts for "
+         f"{found['share_both']:.1%} of the variance in retirement "
+         f"consumption; the rest is the risk of having drawn that bag at "
+         f"all.")))
+    out.append(ctx.p(
+        (f"<b>And it is an accumulation phenomenon, which is the opposite of "
+         f"where the literature points.</b> Shuffling only the working years "
+         f"accounts for {found['share_accumulation']:.1%} of the variance; "
+         f"shuffling only the retired years accounts for "
+         f"{found['share_retirement']:.1%}. The next subsection explains "
+         f"why, and the explanation is not about returns."
+         if not found.get("retirement_dominates") else
+         f"<b>And it is a decumulation phenomenon, as the usual telling has "
+         f"it.</b> Shuffling only the retired years accounts for "
+         f"{found['share_retirement']:.1%} of the variance against "
+         f"{found['share_accumulation']:.1%} for the working years — a factor "
+         f"of {found['retirement_over_accumulation']:.1f}.")))
+    out.append(ctx.p(
+        f"The whole-lifetime figure exceeds the two phases added together, "
+        f"and that is not an inconsistency. Shuffling the whole lifetime lets "
+        f"a year lived at eighty land at twenty-six, so it captures the "
+        f"interaction between the phases as well as the ordering inside each "
+        f"— which the phase-restricted shuffles hold fixed by construction."))
+
+    out.append(ctx.h2("#sequence.2 The withdrawal rule decides where it lands"))
+    out.append(ctx.p(
+        "The result above is a property of the withdrawal rule as much as of "
+        "the returns, and reporting it under one rule alone would be "
+        "reporting the rule. A withdrawal fixed in real terms is computed "
+        "from wealth <i>at</i> retirement and never revisited, so it refuses "
+        "to let retirement-phase returns reach the retiree's consumption at "
+        "all — until the money runs out, at which point they reach it all at "
+        "once. A percentage-of-portfolio rule passes every return straight "
+        "through to what the retiree eats. The two should therefore put "
+        "sequence risk in completely different places, and the decomposition "
+        "is repeated under three rules to find out."))
+    if len(comparison):
+        out.extend(ctx.table(
+            [["Withdrawal rule", "Ordering risk in the working years",
+              "in the retired years", "ratio", "Cost in CEC (%)",
+              "Cost in ruin (points)"]]
+            + [[str(r["label"]),
+                f"{float(r['share_accumulation']):.1%}",
+                f"{float(r['share_retirement']):.1%}",
+                f"{float(r['retirement_over_accumulation']):.2f}",
+                f"{float(r['cec_cost_pct']):+.2f}",
+                f"{float(r['ruin_cost_pp']):+.2f}"]
+               for _, r in comparison.iterrows()],
+            "Where sequence risk sits, rule by rule.",
+            note="The last two columns are what a random ordering costs "
+                 "relative to the drawn one under each rule — in "
+                 "consumption, and in the probability of running out."))
+    out.append(ctx.p(
+        (f"<b>The rule relocates the risk rather than removing it.</b> Under "
+         f"a fixed real withdrawal the retired years carry "
+         f"{rule_found['fixed_real_ratio']:.2f} times the ordering risk of "
+         f"the working years; under a percentage-of-portfolio rule they carry "
+         f"{rule_found['percentage_ratio']:.2f} times — "
+         f"{rule_found['percentage_ratio'] / max(rule_found['fixed_real_ratio'], 1e-9):.0f}× "
+         f"more. Nothing about the returns has changed between those rows. "
+         f"What changed is whether the retiree is allowed to feel them."
+         if rule_found.get("rule_relocates_the_risk") else
+         f"The location of the ordering risk is similar under every rule "
+         f"tested: the retired years carry between "
+         f"{rule_found.get('min_ratio', float('nan')):.2f} and "
+         f"{rule_found.get('max_ratio', float('nan')):.2f} times the working "
+         f"years' share.")))
+    out.append(ctx.p(
+        (f"That is not a free lunch, and the last column says so. The fixed "
+         f"real rule buys its smooth consumption by absorbing the ordering "
+         f"into <i>ruin</i> instead: a random order costs it "
+         f"{rule_found['fixed_real_ruin_cost_pp']:+.2f} points of failure "
+         f"probability against "
+         f"{rule_found['percentage_ruin_cost_pp']:+.2f} for the percentage "
+         f"rule, which simply cuts spending instead of running out. The "
+         f"choice between them is a choice about which form the sequence risk "
+         f"takes, not about how much of it there is."
+         if rule_found.get("fixed_real_trades_ruin_for_smoothness") else
+         "The rules do not differ systematically in what a random ordering "
+         "costs them in failure probability.")))
+
+    out.append(ctx.h2("#sequence.3 Does it change which portfolio wins?"))
+    out.append(ctx.p(
+        "A decomposition says how much of the dispersion is ordering. It does "
+        "not say whether ordering changes which portfolio an investor should "
+        "hold, and those are different questions with potentially different "
+        "answers."))
+    winners = set(str(w) for w in ranking["winner"]) if len(ranking) else set()
+    if len(ranking):
+        out.extend(ctx.table(
+            [["What was shuffled", "Lead of the pair (%)",
+              "Best of the whole menu",
+              "P(ruin), challenger", "P(ruin), incumbent"]]
+            + [[said.get(str(r["phase"]), str(r["phase"])),
+                f"{float(r['lead_pct']):+.2f}",
+                _pretty_strategy(str(r["winner"])),
+                f"{float(r['challenger_ruin']):.1%}",
+                f"{float(r['incumbent_ruin']):.1%}"]
+               for _, r in ranking.iterrows()],
+            f"<i>{_pretty_strategy(pair[0])}</i> against "
+            f"<i>{_pretty_strategy(pair[1])}</i> under each shuffle.",
+            note=f"Two comparisons sit side by side. The lead column is the "
+                 f"headline pair only — <i>{_pretty_strategy(pair[0])}</i> "
+                 f"over <i>{_pretty_strategy(pair[1])}</i>. The next column "
+                 f"is the best of all {len(set(frame['strategy']))} "
+                 f"strategies, which need not be either of them."))
+        leads = ranking.set_index("phase")["lead_pct"].astype(float)
+        narrows = ("none" in leads.index and "both" in leads.index
+                   and leads["both"] < leads["none"])
+        out.append(ctx.p(
+            (f"<b>The ranking is unmoved by the ordering.</b> "
+             f"<i>{_pretty_strategy(sorted(winners)[0])}</i> wins under every "
+             f"shuffle. Sequence risk is large, it is real, and it does not "
+             f"discriminate between these portfolios — which is why it "
+             f"belongs in this part of the paper rather than among the "
+             f"allocation sections."
+             if len(winners) == 1 else
+             f"<b>The ordering changes which portfolio wins</b> "
+             f"({', '.join(sorted(winners))}), which means the allocation "
+             f"results elsewhere in this paper carry a dependence on the "
+             f"order the returns happened to arrive in.")))
+        if narrows:
+            out.append(ctx.p(
+                f"The lead does narrow, and by enough to be worth stating: "
+                f"{leads['none']:+.2f}% on the drawn order against "
+                f"{leads['both']:+.2f}% on a random one, so shuffling "
+                f"absorbs "
+                f"{(1 - leads['both'] / leads['none']):.0%} of the gap "
+                f"between the two portfolios. Ordering does not reverse the "
+                f"comparison, but it is not neutral to it either: a saver "
+                f"unlucky in the order banks less of the advantage the "
+                f"allocation offers."))
+
+    out.extend(ctx.figure(
+        "fig55_sequence_risk",
+        "Top left: the share of outcome variance that is nothing but the "
+        "order. Top right: the same in consumption units, ordering risk "
+        "stacked on return risk. Bottom left: what a random order costs in "
+        "certainty-equivalent consumption and in failure probability. Bottom "
+        "right: where the ordering risk lands under each withdrawal rule."))
+
+    out.append(ctx.h2("#sequence.4 What this changes"))
+    out.extend(ctx.bullets([
+        f"<b>Sequence risk is measurable, and it is large.</b> Ordering "
+        f"accounts for {found['share_both']:.1%} of the variance in "
+        f"retirement consumption on this panel — a number the paper has been "
+        f"gesturing at since Section #retirement without putting a figure to "
+        f"it.",
+        (f"<b>Where it lands is a property of the withdrawal rule, not of the "
+         f"market.</b> A fixed real withdrawal pushes it almost entirely into "
+         f"the accumulation phase and pays for that in ruin; a percentage "
+         f"rule lets it into consumption instead. That reframes Section "
+         f"#spending: the rules there are not competing on how much risk they "
+         f"take but on what shape it takes."
+         if rule_found.get("rule_relocates_the_risk") else
+         "The location of the ordering risk is similar under every "
+         "withdrawal rule tested."),
+        ("<b>It does not touch the allocation answer.</b> The headline pair "
+         "keeps its order under every shuffle, which is worth knowing "
+         "precisely because the effect is so large elsewhere."
+         if len(winners) == 1 else
+         "<b>It does touch the allocation answer.</b> The best strategy is "
+         "not the same under every shuffle, so the rankings elsewhere in "
+         "this paper inherit some dependence on the order the returns "
+         "arrived in."),
+        "<b>What is not modelled</b>: any response to the sequence. The "
+        "investor here does not spend less after a bad year, delay "
+        "retirement, or hold a cash buffer, and each of those would reduce "
+        "the figures above. This measures the exposure, not what a thoughtful "
+        "retiree would do about it — so it is an upper bound on the damage "
+        "and, read the other way, a lower bound on the value of the flexible "
+        "rules in Section #spending.",
+    ]))
+    return out
+
+
 def section_spending(ctx: Any) -> List[Flowable]:
     f = ctx.f
     best = f.table("spending_rule_best_per_family").copy()
@@ -8728,6 +8986,7 @@ def story(ctx: Any) -> List[Flowable]:
     parts += section_saving(ctx)
     parts += section_accumulation(ctx)
     parts += section_retirement(ctx)
+    parts += section_sequence(ctx)
     parts += section_spending(ctx)
     parts += section_discussion(ctx)
     parts += section_limitations(ctx)

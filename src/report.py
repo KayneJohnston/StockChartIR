@@ -8692,3 +8692,284 @@ paths, γ = {gamma:g}, headline rate {headline:.0%}. Tables in
 `{cfg['run']['table_dir']}/withholding_*.csv`.
 """
     return _write(path, [intro, body])
+
+
+def write_doc_29(
+    path: str | Path,
+    cfg: Mapping[str, Any],
+    frames: Mapping[str, pd.DataFrame],
+    figures: Sequence[str],
+    notes: Mapping[str, Any],
+) -> Path:
+    """Sequence-of-returns risk, isolated by permutation."""
+    frame = frames["decomposition"]
+    ranking = frames["ranking"]
+    comparison = frames["rule_comparison"]
+    gamma = float(notes["gamma"])
+    found = notes["verdict"]
+    rules = notes["rule_verdict"]
+    focus = str(notes["focus"])
+    n_reps = int(notes["n_reps"])
+    label = {"none": "nothing shuffled", "accumulation": "working years",
+             "retirement": "retired years", "both": "whole lifetime"}
+
+    block = frame[frame["strategy"] == focus].copy()
+    block["what moved"] = [label.get(p, p) for p in block["phase"]]
+    decomp_tbl = md_table(_compact(
+        block, ["what moved", "sequence_share", "sd_sequence", "sd_level",
+                "sd_total", "cec", "prob_ruin"],
+        {"what moved": "What was shuffled",
+         "sequence_share": "Share of variance that is ordering",
+         "sd_sequence": "SD from ordering", "sd_level": "SD from the returns",
+         "sd_total": "SD total", "cec": "CEC", "prob_ruin": "P(ruin)"}),
+        floatfmt="{:.4f}")
+
+    whole = frame[frame["phase"] == "both"].sort_values("sequence_share")
+    by_strategy_tbl = md_table(_compact(
+        whole, ["strategy", "sequence_share", "sd_sequence", "cec"],
+        {"strategy": "Strategy",
+         "sequence_share": "Share of variance that is ordering",
+         "sd_sequence": "SD from ordering", "cec": "CEC"}),
+        floatfmt="{:.4f}") if len(whole) else ""
+
+    rank_tbl = md_table(_compact(
+        ranking.assign(**{"what moved": [label.get(p, p)
+                                         for p in ranking["phase"]]}),
+        ["what moved", "lead_pct", "winner", "challenger_ruin",
+         "incumbent_ruin"],
+        {"what moved": "What was shuffled",
+         "lead_pct": "Lead of the pair (%)",
+         "winner": "Best of the whole menu",
+         "challenger_ruin": "P(ruin), challenger",
+         "incumbent_ruin": "P(ruin), incumbent"}), floatfmt="{:.3f}")
+
+    leads = ranking.set_index("phase")["lead_pct"].astype(float)
+    if "none" in leads.index and "both" in leads.index and leads["none"]:
+        absorbed = 1.0 - leads["both"] / leads["none"]
+        narrowing = (
+            f"The lead narrows without reversing: {leads['none']:+.3f}% on "
+            f"the drawn order against {leads['both']:+.3f}% on a random one, "
+            f"so the shuffle absorbs {absorbed:.0%} of the gap between the "
+            f"two portfolios. Ordering does not change the answer, but a "
+            f"saver unlucky in the order banks less of the advantage the "
+            f"allocation offers."
+            if absorbed > 0 else
+            f"The lead is {leads['none']:+.3f}% on the drawn order and "
+            f"{leads['both']:+.3f}% on a random one, so the shuffle does not "
+            f"narrow it.")
+    else:
+        narrowing = ""
+
+    rule_tbl = md_table(_compact(
+        comparison, ["label", "share_accumulation", "share_retirement",
+                     "retirement_over_accumulation", "consumption_sd_both",
+                     "ruin_cost_pp"],
+        {"label": "Withdrawal rule",
+         "share_accumulation": "Ordering share, working years",
+         "share_retirement": "Ordering share, retired years",
+         "retirement_over_accumulation": "Retired / working",
+         "consumption_sd_both": "SD of consumption",
+         "ruin_cost_pp": "Ruin cost of ordering (pp)"}),
+        floatfmt="{:.3f}") if len(comparison) else ""
+
+    if rules.get("rule_relocates_the_risk"):
+        relocation = (
+            f"**The location of sequence risk is a property of the "
+            f"withdrawal rule, not of the returns.** Under a fixed real rule "
+            f"the retired years carry {rules['fixed_real_ratio']:.2f} times "
+            f"the ordering risk of the working years; under a rule that "
+            f"spends a fixed percentage of the portfolio they carry "
+            f"{rules['percentage_ratio']:.2f} times -- "
+            f"{rules['percentage_ratio'] / rules['fixed_real_ratio']:.1f} "
+            f"times the exposure, drawn from the same returns.")
+    else:
+        relocation = (
+            f"**The withdrawal rule does not move sequence risk much.** The "
+            f"retired-over-working ratio runs from {rules['min_ratio']:.2f} "
+            f"to {rules['max_ratio']:.2f} across the {rules['rules']} rules, "
+            f"which is not the reordering the mechanism above predicts.")
+
+    if rules.get("fixed_real_trades_ruin_for_smoothness"):
+        traded = (
+            f"The risk does not vanish when a rule refuses to look at the "
+            f"portfolio; it changes units. A fixed real rule pays "
+            f"{rules['fixed_real_ruin_cost_pp']:+.2f}pp of ruin for the "
+            f"ordering it will not absorb, against "
+            f"{rules['percentage_ruin_cost_pp']:+.2f}pp for the percentage "
+            f"rule, which cannot run out by construction and takes the same "
+            f"shock as consumption volatility instead. That is the trade the "
+            f"spending rules in `docs/06` are making, stated in the units of "
+            f"this experiment.")
+    else:
+        traded = (
+            f"The expected trade -- smoother consumption bought with a higher "
+            f"chance of ruin -- does not appear here: the fixed real rule "
+            f"pays {rules['fixed_real_ruin_cost_pp']:+.2f}pp of ruin against "
+            f"{rules['percentage_ruin_cost_pp']:+.2f}pp for the percentage "
+            f"rule.")
+
+    if found.get("retirement_dominates"):
+        where = (
+            f"**Sequence risk is a decumulation problem.** Shuffling only the "
+            f"retired years accounts for "
+            f"{found['share_retirement']:.1%} of outcome variance; shuffling "
+            f"only the working years accounts for "
+            f"{found['share_accumulation']:.1%} -- a factor of "
+            f"{found['retirement_over_accumulation']:.1f}. A saver can be "
+            f"unlucky in the order their contributions bought; a retiree can "
+            f"be ruined by the order their withdrawals sold.")
+    else:
+        where = (
+            f"**Sequence risk is not concentrated in decumulation.** The "
+            f"working years account for "
+            f"{found['share_accumulation']:.1%} of outcome variance against "
+            f"{found['share_retirement']:.1%} for the retired years, which "
+            f"runs against the usual telling and is worth explaining.")
+
+    if found.get("ordering_is_most_of_the_risk"):
+        headline = (
+            f"**Most of the risk in a lifetime is the order, not the "
+            f"returns.** Holding the bag of returns fixed and reshuffling it "
+            f"accounts for {found['share_both']:.1%} of the variance in "
+            f"retirement consumption. Which returns a saver draws matters "
+            f"less than when they arrive.")
+    else:
+        headline = (
+            f"**Ordering is a minority of the risk, but not a small one.** "
+            f"Reshuffling a fixed bag of returns accounts for "
+            f"{found['share_both']:.1%} of the variance in retirement "
+            f"consumption; the remainder is the risk of having drawn that bag "
+            f"at all.")
+
+    figure_list = "\n".join(f"* `{f}`" for f in figures)
+    intro = _header(
+        "29 - Sequence-of-Returns Risk, Isolated",
+        "Keep the returns and shuffle the order. Anything that changes is "
+        "sequence.")
+
+    body = f"""
+## 1. The experiment
+
+`docs/09` establishes that the decade around a person's retirement date
+explains more of their outcome than the allocation question does, and
+`docs/27` shows that reading a state variable at the retirement date rather
+than the birth date turns a null into an eight-point effect. Both are
+symptoms. Neither measures the thing itself.
+
+The experiment that does is simple. Take a simulated lifetime, keep its {int(cfg['lifecycle']['age_death']) - int(cfg['lifecycle']['age_start'])} annual
+returns exactly as drawn, and shuffle the order. Same multiset, same mean, same
+everything a return distribution can describe. Anything that changes is
+sequence.
+
+**Why anything changes at all.** For a lump sum it would not: the product of
+gross returns is commutative, so a buy-and-hold investor with no cash flows
+ends at the same wealth whatever the order. That is verified here to machine
+precision, and it is the point -- sequence risk exists *only* through cash
+flows. A contribution made before a crash buys more; a withdrawal made after
+one sells more.
+
+**Every series of a year moves together.** Returns, inflation and the calendar
+metadata share one permutation per path. Shuffling the assets independently
+would dismantle the cross-asset covariance the block bootstrap exists to
+preserve.
+
+## 2. The decomposition
+
+Each original path is a bag of returns. Reordering makes the outcome a random
+variable, so the total variance splits exactly:
+
+    Var(outcome) = E[ Var over orderings ] + Var[ mean over orderings ]
+                 = sequence risk           + return-level risk
+
+Estimating the first term needs several orderings of the *same* path, which
+is what the {n_reps} replications are for. The `nothing shuffled` row is the
+control. Shuffling nothing must reproduce every lifetime bit for bit, so its
+sequence share must be zero, and the step fails loudly if it is not.
+
+{decomp_tbl}
+
+{headline}
+
+{where}
+
+## 3. Does a glide path help?
+
+Reducing sequence risk is the entire theoretical case for de-risking with
+age: a portfolio that holds less equity near the retirement date has less to
+lose from a badly timed crash. That claim is testable here directly, by
+comparing the share of variance that is ordering across strategies.
+
+{by_strategy_tbl}
+
+## 4. Why the working years dominate
+
+The result in section 2 is the wrong way round against the usual telling, and
+the reason is not in the returns. It is in the withdrawal rule. A fixed real
+rule reads the portfolio exactly once -- at the retirement date, to set the
+withdrawal -- and never again. Every return after that date is invisible to
+consumption until the money runs out, so reordering the retired years has
+almost nothing to act on. Reordering the working years moves the wealth the
+rule is computed from, and that is what reaches the retiree.
+
+If that is the mechanism, the ratio should move when the rule does. Repeating
+the decomposition under three rules from `docs/06` tests it, holding the
+strategy, the paths and the orderings fixed.
+
+{rule_tbl}
+
+{relocation}
+
+{traded}
+
+## 5. Does it change which portfolio wins?
+
+A decomposition says how much of the dispersion is ordering. It does not say
+whether ordering changes *which* portfolio an investor should hold, and those
+are different questions.
+
+{rank_tbl}
+
+The two comparisons in that table are different. The lead column is the
+headline pair alone; the column beside it is the best of all six strategies,
+which need not be either of them.
+
+{narrowing}
+
+## 6. What this changes
+
+* Ordering accounts for {found['share_both']:.1%} of the variance in
+  retirement consumption, against
+  {found['share_accumulation']:.1%} from the working years alone and
+  {found['share_retirement']:.1%} from the retired years alone.
+* A random order rather than the drawn one costs
+  {found['cec_cost_of_ordering_pct']:+.2f}% of certainty-equivalent
+  consumption and moves the probability of ruin from
+  {found['ruin_none']:.1%} to {found['ruin_both']:.1%}.
+* Where that risk sits is a choice, not a fact. Moving from a fixed real
+  withdrawal to a fixed percentage of the portfolio shifts the
+  retired-over-working ratio from {rules['fixed_real_ratio']:.2f} to
+  {rules['percentage_ratio']:.2f} on identical returns, and pays for it in
+  consumption volatility rather than in the
+  {rules['fixed_real_ruin_cost_pp']:+.2f}pp of ruin the fixed rule takes.
+* **What is not modelled**: any response to the sequence. The investor here
+  does not spend less after a bad year, delay retirement, or hold a buffer,
+  and every one of those would reduce the number above. This measures the
+  exposure, not what a thoughtful retiree would do about it -- so it is an
+  upper bound on the damage and a lower bound on the value of the flexible
+  spending rules in `docs/06`.
+
+## 7. Figures
+
+{figure_list}
+
+## 8. Reproduction
+
+```bash
+python main.py --steps 29
+```
+
+Runtime {float(notes['elapsed_seconds']):.0f}s at {int(notes['n_paths']):,}
+paths x {n_reps} orderings, γ = {gamma:g}. Tables in
+`{cfg['run']['table_dir']}/sequence_*.csv`.
+"""
+    return _write(path, [intro, body])

@@ -49,6 +49,7 @@ from src import report as rp
 from src import retirement as rt
 from src import sleeve as slv
 from src import saving as sav
+from src import sequence as seq
 from src import sensitivity as sn
 from src import spending as spg
 from src import turnover as tn
@@ -168,6 +169,9 @@ def _apply_quick(cfg: Dict[str, Any]) -> Dict[str, Any]:
         cfg["inflation_state"]["domestic_grid"] = [0.0, 0.5, 1.0]
         cfg["inflation_state"]["windows"] = [1, 3]
         cfg["inflation_state"]["horizons"] = [1, 10]
+    if "sequence" in cfg:
+        cfg["sequence"]["n_paths"] = 2000
+        cfg["sequence"]["n_reps"] = 3
     if "withholding" in cfg:
         cfg["withholding"]["n_paths"] = 2000
         cfg["withholding"]["rate_grid"] = [0.0, 0.15, 0.30, 0.50]
@@ -3359,6 +3363,112 @@ def step28_withholding(cfg: Dict[str, Any],
     return state
 
 
+# ---------------------------------------------------------------------------
+# Step 29
+# ---------------------------------------------------------------------------
+def step29_sequence(cfg: Dict[str, Any],
+                    state: Dict[str, Any]) -> Dict[str, Any]:
+    """Shuffle the order of each lifetime's returns; write docs/29."""
+    seq_cfg = cfg.get("sequence", {})
+    if not seq_cfg.get("enabled", False):
+        LOGGER.info("sequence-risk study disabled; skipping step 29")
+        return state
+    LOGGER.info("=== STEP 29: sequence-of-returns risk, isolated ===")
+    started = time.perf_counter()
+
+    panel = state.get("panel") or dl.build_panel(cfg)
+    spec = state.get("spec") or lc.spec_from_config(cfg)
+    strategies = state.get("strategies") or lc.build_strategies(cfg, spec)
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    n_paths = int(seq_cfg.get("n_paths", cfg["bootstrap"]["n_paths"]))
+    chunk_size = int(cfg["bootstrap"]["chunk_size"])
+    n_reps = int(seq_cfg.get("n_reps", 8))
+    phases = [str(p) for p in seq_cfg.get("phases", seq.PHASES)]
+    focus = str(seq_cfg.get("focus", "balanced_all_equity"))
+    pair = (str(seq_cfg.get("challenger", "balanced_all_equity")),
+            str(seq_cfg.get("incumbent", "target_date_fund")))
+
+    frames: List[pd.DataFrame] = []
+    for phase in phases:
+        LOGGER.info("shuffling the %s years, %d orderings of %d lifetimes",
+                    phase, n_reps, n_paths)
+        results = seq.run(bs.from_config(panel, cfg), strategies, spec, cfg,
+                          n_paths, chunk_size, phase, n_reps,
+                          int(seq_cfg.get("seed", 20260904)),
+                          int(cfg["run"]["seed"]))
+        frames.append(seq.summarise(results, phase, spec, cfg))
+    frame = pd.concat(frames, ignore_index=True)
+    findings = seq.verdict(frame, focus, phases)
+    ranking = seq.ranking_holds(frame, *pair)
+
+    # Where sequence risk *sits* is a property of the withdrawal rule, not of
+    # the returns: a rule that fixes consumption in real terms refuses to let
+    # retirement-phase returns reach the retiree at all, and pays for that in
+    # ruin. Repeating the decomposition under three rules separates the two.
+    rule_frames: List[pd.DataFrame] = []
+    for rule_key, rule_label in seq.DEFAULT_RULES:
+        rule = spg.build(rule_key, rate=float(
+            cfg["lifecycle"]["retirement"]["rule_rate"]))
+        for phase in phases:
+            LOGGER.info("rule %s: shuffling the %s years", rule_key, phase)
+            results = seq.run(bs.from_config(panel, cfg),
+                              {focus: strategies[focus]}, spec, cfg, n_paths,
+                              chunk_size, phase, n_reps,
+                              int(seq_cfg.get("seed", 20260904)),
+                              int(cfg["run"]["seed"]), spending=rule)
+            block = seq.summarise(results, phase, spec, cfg)
+            block.insert(0, "rule", rule_key)
+            block.insert(1, "rule_label", rule_label)
+            rule_frames.append(block)
+    by_rule = pd.concat(rule_frames, ignore_index=True)
+    comparison = seq.rule_comparison(by_rule, focus)
+    rule_found = seq.rule_verdict(comparison)
+    findings.update({f"rule_{k}": v for k, v in rule_found.items()})
+    LOGGER.info("retirement-over-accumulation ratio: %.2f under a fixed real "
+                "rule, %.2f under a percentage rule",
+                rule_found.get("fixed_real_ratio", float("nan")),
+                rule_found.get("percentage_ratio", float("nan")))
+
+    # The control has to come back at zero, or the decomposition is
+    # measuring something other than the order of the returns.
+    if not findings.get("control_is_clean", True):
+        raise RuntimeError(
+            f"shuffling nothing produced a sequence share of "
+            f"{findings['control_share']:.3e} rather than zero; the "
+            f"decomposition is picking up something that is not ordering")
+    LOGGER.info("sequence share for %s: %.1f%% accumulation, %.1f%% "
+                "retirement, %.1f%% whole lifetime", focus,
+                findings["share_accumulation"] * 100,
+                findings["share_retirement"] * 100,
+                findings["share_both"] * 100)
+    LOGGER.info("ordering costs %.2f%% of certainty-equivalent consumption "
+                "and moves ruin %.1f%% -> %.1f%%",
+                findings["cec_cost_of_ordering_pct"],
+                findings["ruin_none"] * 100, findings["ruin_both"] * 100)
+
+    tables = cfg["run"]["table_dir"]
+    _save_table(frame, tables, "sequence_decomposition")
+    _save_table(ranking, tables, "sequence_ranking")
+    _save_table(by_rule, tables, "sequence_by_rule")
+    _save_table(comparison, tables, "sequence_rule_comparison")
+
+    figures = [str(plots.plot_sequence(frame, ranking, comparison, focus,
+                                       cfg["run"]["figure_dir"]))]
+
+    elapsed = time.perf_counter() - started
+    rp.write_doc_29(
+        Path("docs") / "29_sequence_risk.md", cfg,
+        {"decomposition": frame, "ranking": ranking,
+         "by_rule": by_rule, "rule_comparison": comparison},
+        figures,
+        {"elapsed_seconds": elapsed, "gamma": gamma, "n_paths": n_paths,
+         "n_reps": n_reps, "phases": phases, "focus": focus, "pair": pair,
+         "rule_verdict": rule_found, "verdict": findings})
+    LOGGER.info("docs/29 written (%.0fs)", elapsed)
+    state["sequence_decomposition"] = frame
+    return state
+
+
 STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
          4: step4_report, 5: step5_sensitivity, 6: step6_spending,
          7: step7_glide_path, 8: step8_hedging, 9: step9_retirement_timing,
@@ -3371,11 +3481,11 @@ STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
          22: step22_out_of_sample, 23: step23_human_capital,
          24: step24_mortality, 25: step25_pension,
          26: step26_turnover, 27: step27_inflation,
-         28: step28_withholding}
+         28: step28_withholding, 29: step29_sequence}
 
 
 def run(config_path: str = "config.yaml",
-        steps: Sequence[int] = tuple(range(1, 29)),
+        steps: Sequence[int] = tuple(range(1, 30)),
         quick: bool = False) -> Dict[str, Any]:
     """Execute the pipeline and return the accumulated state."""
     cfg = dl.load_config(config_path)
@@ -3405,8 +3515,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--steps", nargs="+", type=int,
-                        default=list(range(1, 29)),
-                        choices=list(range(1, 29)))
+                        default=list(range(1, 30)),
+                        choices=list(range(1, 30)))
     parser.add_argument("--quick", action="store_true",
                         help="small N for smoke tests")
     parser.add_argument("--verbose", action="store_true")
