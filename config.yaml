@@ -1110,3 +1110,31 @@ tax:
   # Zero is the case worth holding in mind: hold until the pension starts and
   # the only tax is on unfranked dividends.
   realisation_grid: [0.0, 0.0335, 0.10, 0.25, 0.50]
+
+# ---------------------------------------------------------------------
+# Step 34 - the withdrawal rule when the horizon is not known
+# ---------------------------------------------------------------------
+# Every rule comparison before this one scores a retirement that ends at 93
+# with certainty, which is not neutral: a rule that amortises to a fixed date
+# is handed the answer, one that hedges longevity is paying for a risk that
+# has been switched off, and ruin is measured against a certainty of living
+# to 93. Section #mortality re-weights the aggregation but only varies the
+# allocation, and says in terms that the treatment is approximate for the
+# horizon-based rules. This solves all three decisions together instead.
+longevity:
+  enabled: true
+  n_paths: 25000
+  # Held constant through retirement. The free-form schedule of section
+  # #glide is a different question; this one is about the rule.
+  equity_grid: [0.70, 0.80, 0.90, 1.00]
+  # Share of the equity sleeve held at home.
+  domestic_grid: [0.00, 0.10, 0.20, 0.30, 0.50]
+  # Coarser than `spending.rate_grid`: this section asks which *kind* of rule
+  # wins under an uncertain horizon, not where a rate optimum sits to the
+  # basis point.
+  rate_grid: [0.030, 0.035, 0.040, 0.045, 0.050, 0.060]
+  # Gompertz survival, matching section #mortality and the actuarial
+  # spending rule so that "should the rule know the table?" is a comparison
+  # inside the grid rather than a mismatch between two calibrations.
+  mortality_modal_age: 88.0
+  mortality_dispersion: 10.0

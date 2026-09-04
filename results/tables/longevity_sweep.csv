@@ -1,0 +1,101 @@
+equity,domestic,rule,rule_label,rate,has_rate,label,cec_fixed,cec_mortality,ruin_fixed,ruin_mortality,mean_consumption
+0.8,0.1,constant_real,constant_real,0.035,True,"constant_real @ 3.5%, 80% equity / 10% domestic",1.0279993303335995,1.0445149827823526,0.056,0.02700665475874295,1.442274003733541
+0.8,0.1,constant_real,constant_real,0.045,True,"constant_real @ 4.5%, 80% equity / 10% domestic",1.0589876435358023,1.1013532015548242,0.1465,0.07431892616437205,1.5378803179556044
+0.8,0.1,constant_percent,constant_percent,0.035,True,"constant_percent @ 3.5%, 80% equity / 10% domestic",1.0985168449470593,1.0970522228372463,0.0,0.0,1.671284892366706
+0.8,0.1,constant_percent,constant_percent,0.045,True,"constant_percent @ 4.5%, 80% equity / 10% domestic",1.156653817899547,1.1644820560456755,0.0,0.0,1.723330532627924
+0.8,0.1,guyton_klinger,guyton_klinger,0.035,True,"guyton_klinger @ 3.5%, 80% equity / 10% domestic",1.049973400200208,1.04963198921345,0.0,0.0,1.593405822951461
+0.8,0.1,guyton_klinger,guyton_klinger,0.045,True,"guyton_klinger @ 4.5%, 80% equity / 10% domestic",1.1170625699897208,1.1234634328399045,0.0,0.0,1.667619583388451
+0.8,0.1,guyton_klinger,guyton_klinger (tight band),0.035,True,"guyton_klinger (tight band) @ 3.5%, 80% equity / 10% domestic",1.0674997282728704,1.0663051861568391,0.0,0.0,1.6278546430048024
+0.8,0.1,guyton_klinger,guyton_klinger (tight band),0.045,True,"guyton_klinger (tight band) @ 4.5%, 80% equity / 10% domestic",1.1333857260287472,1.1390400142164088,0.0,0.0,1.7004170546799027
+0.8,0.1,guyton_klinger,guyton_klinger (no inflation rule),0.035,True,"guyton_klinger (no inflation rule) @ 3.5%, 80% equity / 10% domestic",1.0927680586993351,1.0895802357083875,0.0175,0.008028608827226178,1.633268230785101
+0.8,0.1,guyton_klinger,guyton_klinger (no inflation rule),0.045,True,"guyton_klinger (no inflation rule) @ 4.5%, 80% equity / 10% domestic",1.1568125858795484,1.1651368624113596,0.0355,0.01594783501445295,1.7088628568969868
+0.8,0.1,vanguard_dynamic,vanguard_dynamic,0.035,True,"vanguard_dynamic @ 3.5%, 80% equity / 10% domestic",1.095143069942557,1.098881014557267,0.03,0.015289711751892128,1.5888965522463092
+0.8,0.1,vanguard_dynamic,vanguard_dynamic,0.045,True,"vanguard_dynamic @ 4.5%, 80% equity / 10% domestic",1.141780765839369,1.1666633745510753,0.0665,0.0341836437603559,1.6730567564383596
+0.8,0.1,vanguard_dynamic,vanguard_dynamic (asymmetric),0.035,True,"vanguard_dynamic (asymmetric) @ 3.5%, 80% equity / 10% domestic",1.0534016977465315,1.0588324002966825,0.009,0.005510434617113393,1.4922907041370708
+0.8,0.1,vanguard_dynamic,vanguard_dynamic (asymmetric),0.045,True,"vanguard_dynamic (asymmetric) @ 4.5%, 80% equity / 10% domestic",1.1182959218759672,1.1355457185669138,0.0305,0.015885340231685464,1.5801959242887278
+0.8,0.1,endowment,endowment,0.035,True,"endowment @ 3.5%, 80% equity / 10% domestic",1.0977157466561276,1.0972594638265436,0.0005,0.00023935847987302967,1.6513403614726827
+0.8,0.1,endowment,endowment,0.045,True,"endowment @ 4.5%, 80% equity / 10% domestic",1.15790364407586,1.1688145955856117,0.0015,0.0008738202522173171,1.7115468354064265
+0.8,0.1,endowment,endowment (light smoothing),0.035,True,"endowment (light smoothing) @ 3.5%, 80% equity / 10% domestic",1.0992395512320539,1.0978969892521142,0.0,0.0,1.6678863102672783
+0.8,0.1,endowment,endowment (light smoothing),0.045,True,"endowment (light smoothing) @ 4.5%, 80% equity / 10% domestic",1.158168624750389,1.1664615152696263,0.0,0.0,1.7214618690421173
+0.8,0.1,life_expectancy,life_expectancy,,False,"life_expectancy, 80% equity / 10% domestic",1.194586098757433,1.1826146518012255,0.0,0.0,2.159301698917123
+0.8,0.1,life_expectancy,life_expectancy (+5y buffer),,False,"life_expectancy (+5y buffer), 80% equity / 10% domestic",1.1467244166248387,1.12220421257772,0.0,0.0,2.002485297568613
+0.8,0.1,gompertz,gompertz,,False,"gompertz, 80% equity / 10% domestic",1.2641325695455494,1.2730659808696532,0.0,0.0,1.9223514573202927
+0.8,0.1,gompertz,gompertz (+5y buffer),,False,"gompertz (+5y buffer), 80% equity / 10% domestic",1.2057168605943651,1.1965862860154959,0.0,0.0,1.8953353171868421
+0.8,0.1,amortisation,amortisation (0% assumed return),,False,"amortisation (0% assumed return), 80% equity / 10% domestic",1.194586098757433,1.1826146518012255,0.0,0.0,2.159301698917123
+0.8,0.1,amortisation,amortisation (2% assumed return),,False,"amortisation (2% assumed return), 80% equity / 10% domestic",1.246520502649014,1.2511005221129152,0.0,0.0,2.05157515001402
+0.8,0.1,amortisation,amortisation (4% assumed return),,False,"amortisation (4% assumed return), 80% equity / 10% domestic",1.2677837711527946,1.2948722874526042,0.0,0.0,1.953448746619652
+0.8,0.3,constant_real,constant_real,0.035,True,"constant_real @ 3.5%, 80% equity / 30% domestic",1.0130489358984855,1.0296659724710813,0.0585,0.029384216028422727,1.4246008399368524
+0.8,0.3,constant_real,constant_real,0.045,True,"constant_real @ 4.5%, 80% equity / 30% domestic",1.0407223746889225,1.083044832306127,0.161,0.08147550118763905,1.5144822212994136
+0.8,0.3,constant_percent,constant_percent,0.035,True,"constant_percent @ 3.5%, 80% equity / 30% domestic",1.0749119690741062,1.0747928004306928,0.0,0.0,1.6283747033950622
+0.8,0.3,constant_percent,constant_percent,0.045,True,"constant_percent @ 4.5%, 80% equity / 30% domestic",1.129866567974826,1.1388752200633028,0.0,0.0,1.6774510689125386
+0.8,0.3,guyton_klinger,guyton_klinger,0.035,True,"guyton_klinger @ 3.5%, 80% equity / 30% domestic",1.0319130935846659,1.0322050888965872,0.0,0.0,1.5604817467830356
+0.8,0.3,guyton_klinger,guyton_klinger,0.045,True,"guyton_klinger @ 4.5%, 80% equity / 30% domestic",1.096349922983301,1.1034983247708576,0.0,0.0,1.630107407330347
+0.8,0.3,guyton_klinger,guyton_klinger (tight band),0.035,True,"guyton_klinger (tight band) @ 3.5%, 80% equity / 30% domestic",1.0486421908035135,1.0480442021184777,0.0,0.0,1.5923768200972679
+0.8,0.3,guyton_klinger,guyton_klinger (tight band),0.045,True,"guyton_klinger (tight band) @ 4.5%, 80% equity / 30% domestic",1.1113931836036943,1.117594347866338,0.0,0.0,1.6602113246765307
+0.8,0.3,guyton_klinger,guyton_klinger (no inflation rule),0.035,True,"guyton_klinger (no inflation rule) @ 3.5%, 80% equity / 30% domestic",1.0726411143966341,1.0703320010293433,0.016,0.007387376122734974,1.5955560706213416
+0.8,0.3,guyton_klinger,guyton_klinger (no inflation rule),0.045,True,"guyton_klinger (no inflation rule) @ 4.5%, 80% equity / 30% domestic",1.1323380369214848,1.1413985465374763,0.0385,0.01648556203027644,1.6666524744230773
+0.8,0.3,vanguard_dynamic,vanguard_dynamic,0.035,True,"vanguard_dynamic @ 3.5%, 80% equity / 30% domestic",1.0769992094238636,1.0812346084455366,0.0345,0.016823823979048746,1.5587641995980284
+0.8,0.3,vanguard_dynamic,vanguard_dynamic,0.045,True,"vanguard_dynamic @ 4.5%, 80% equity / 30% domestic",1.1200596671253331,1.1450002385461127,0.076,0.03895346780776551,1.6367992084038683
+0.8,0.3,vanguard_dynamic,vanguard_dynamic (asymmetric),0.035,True,"vanguard_dynamic (asymmetric) @ 3.5%, 80% equity / 30% domestic",1.0353958255047215,1.0415756526802005,0.01,0.005746483637273336,1.4697070966328978
+0.8,0.3,vanguard_dynamic,vanguard_dynamic (asymmetric),0.045,True,"vanguard_dynamic (asymmetric) @ 4.5%, 80% equity / 30% domestic",1.0980840732049604,1.1159049816331963,0.033,0.017536913213446814,1.5523343368003404
+0.8,0.3,endowment,endowment,0.035,True,"endowment @ 3.5%, 80% equity / 30% domestic",1.0747579854932137,1.0755659848960823,0.0005,0.00021961053432735674,1.6107149014126896
+0.8,0.3,endowment,endowment,0.045,True,"endowment @ 4.5%, 80% equity / 30% domestic",1.1322254864832606,1.1440565145203838,0.001,0.00047836377694698997,1.6672804156860057
+0.8,0.3,endowment,endowment (light smoothing),0.035,True,"endowment (light smoothing) @ 3.5%, 80% equity / 30% domestic",1.0756099694604944,1.07562804815452,0.0,0.0,1.6253605712364767
+0.8,0.3,endowment,endowment (light smoothing),0.045,True,"endowment (light smoothing) @ 4.5%, 80% equity / 30% domestic",1.1312991678743918,1.1407838935850294,0.0,0.0,1.67583581384123
+0.8,0.3,life_expectancy,life_expectancy,,False,"life_expectancy, 80% equity / 30% domestic",1.1707313076501358,1.159104541489927,0.0,0.0,2.0784164422932827
+0.8,0.3,life_expectancy,life_expectancy (+5y buffer),,False,"life_expectancy (+5y buffer), 80% equity / 30% domestic",1.1234759609650198,1.1006623475832078,0.0,0.0,1.9331550776053208
+0.8,0.3,gompertz,gompertz,,False,"gompertz, 80% equity / 30% domestic",1.2331797460051823,1.2436890980002964,0.0,0.0,1.8627980640254445
+0.8,0.3,gompertz,gompertz (+5y buffer),,False,"gompertz (+5y buffer), 80% equity / 30% domestic",1.178244800268048,1.170938035734486,0.0,0.0,1.8362260393133238
+0.8,0.3,amortisation,amortisation (0% assumed return),,False,"amortisation (0% assumed return), 80% equity / 30% domestic",1.1707313076501356,1.159104541489927,0.0,0.0,2.0784164422932827
+0.8,0.3,amortisation,amortisation (2% assumed return),,False,"amortisation (2% assumed return), 80% equity / 30% domestic",1.219218040034252,1.2237135654437297,0.0,0.0,1.9806230313026398
+0.8,0.3,amortisation,amortisation (4% assumed return),,False,"amortisation (4% assumed return), 80% equity / 30% domestic",1.2381225441933055,1.2644682195914352,0.0,0.0,1.8914705747236997
+1.0,0.1,constant_real,constant_real,0.035,True,"constant_real @ 3.5%, 100% equity / 10% domestic",1.0927923652743199,1.1115212838440613,0.049,0.02307769412752529,1.5578918688916683
+1.0,0.1,constant_real,constant_real,0.045,True,"constant_real @ 4.5%, 100% equity / 10% domestic",1.12039648577708,1.1698077681830752,0.135,0.06741276180638307,1.6839626622558943
+1.0,0.1,constant_percent,constant_percent,0.035,True,"constant_percent @ 3.5%, 100% equity / 10% domestic",1.19938331856965,1.1927653884527807,0.0,0.0,1.997612243344176
+1.0,0.1,constant_percent,constant_percent,0.045,True,"constant_percent @ 4.5%, 100% equity / 10% domestic",1.2692458916936264,1.2722560469302195,0.0,0.0,2.0702408630928377
+1.0,0.1,guyton_klinger,guyton_klinger,0.035,True,"guyton_klinger @ 3.5%, 100% equity / 10% domestic",1.1369165005568531,1.1330738451813258,0.0,0.0,1.826485536437694
+1.0,0.1,guyton_klinger,guyton_klinger,0.045,True,"guyton_klinger @ 4.5%, 100% equity / 10% domestic",1.2156925076899698,1.2187821796583225,0.0,0.0,1.9412855456929794
+1.0,0.1,guyton_klinger,guyton_klinger (tight band),0.035,True,"guyton_klinger (tight band) @ 3.5%, 100% equity / 10% domestic",1.1555083123527519,1.1503645382163759,0.0,0.0,1.8744402577207242
+1.0,0.1,guyton_klinger,guyton_klinger (tight band),0.045,True,"guyton_klinger (tight band) @ 4.5%, 100% equity / 10% domestic",1.2319378846645628,1.2339930327055701,0.001,0.0002628321725948511,1.9883557331578179
+1.0,0.1,guyton_klinger,guyton_klinger (no inflation rule),0.035,True,"guyton_klinger (no inflation rule) @ 3.5%, 100% equity / 10% domestic",1.1868336750249862,1.179093498719439,0.0125,0.006040362606580481,1.8950882714316721
+1.0,0.1,guyton_klinger,guyton_klinger (no inflation rule),0.045,True,"guyton_klinger (no inflation rule) @ 4.5%, 100% equity / 10% domestic",1.2612736678003493,1.2660370070040639,0.029,0.01219332573218355,2.0113756151424886
+1.0,0.1,vanguard_dynamic,vanguard_dynamic,0.035,True,"vanguard_dynamic @ 3.5%, 100% equity / 10% domestic",1.182700331665443,1.183773713444812,0.021,0.011562754597327007,1.7817006676586205
+1.0,0.1,vanguard_dynamic,vanguard_dynamic,0.045,True,"vanguard_dynamic @ 4.5%, 100% equity / 10% domestic",1.2290618227572156,1.2561878152180543,0.0615,0.03087874411643896,1.908765758067986
+1.0,0.1,vanguard_dynamic,vanguard_dynamic (asymmetric),0.035,True,"vanguard_dynamic (asymmetric) @ 3.5%, 100% equity / 10% domestic",1.1295490383029818,1.1343934719811821,0.01,0.0055027125246336125,1.6305096375398216
+1.0,0.1,vanguard_dynamic,vanguard_dynamic (asymmetric),0.045,True,"vanguard_dynamic (asymmetric) @ 4.5%, 100% equity / 10% domestic",1.2046482667228249,1.2216565460827793,0.0215,0.012127366232300669,1.7537519733183218
+1.0,0.1,endowment,endowment,0.035,True,"endowment @ 3.5%, 100% equity / 10% domestic",1.198545924900695,1.1930816259454042,0.0005,0.00021961053432735674,1.9575759016415626
+1.0,0.1,endowment,endowment,0.045,True,"endowment @ 4.5%, 100% equity / 10% domestic",1.2703069630160295,1.2770221850319048,0.001,0.0004589690142003864,2.0437416349867132
+1.0,0.1,endowment,endowment (light smoothing),0.035,True,"endowment (light smoothing) @ 3.5%, 100% equity / 10% domestic",1.2007862932914883,1.194300060385231,0.0,0.0,1.9906634322935561
+1.0,0.1,endowment,endowment (light smoothing),0.045,True,"endowment (light smoothing) @ 4.5%, 100% equity / 10% domestic",1.2716623962824742,1.2752117481534304,0.0,0.0,2.065886964315784
+1.0,0.1,life_expectancy,life_expectancy,,False,"life_expectancy, 100% equity / 10% domestic",1.2927091186353428,1.281603583410585,0.0,0.0,2.785293081709882
+1.0,0.1,life_expectancy,life_expectancy (+5y buffer),,False,"life_expectancy (+5y buffer), 100% equity / 10% domestic",1.245690916611351,1.215004005648104,0.0,0.0,2.5390493399624057
+1.0,0.1,gompertz,gompertz,,False,"gompertz, 100% equity / 10% domestic",1.3918372764931188,1.3942555719881968,0.0,0.0,2.3714407234521264
+1.0,0.1,gompertz,gompertz (+5y buffer),,False,"gompertz (+5y buffer), 100% equity / 10% domestic",1.319893341285648,1.3039695021064437,0.0,0.0,2.345694895206634
+1.0,0.1,amortisation,amortisation (0% assumed return),,False,"amortisation (0% assumed return), 100% equity / 10% domestic",1.2927091186353428,1.281603583410585,0.0,0.0,2.785293081709882
+1.0,0.1,amortisation,amortisation (2% assumed return),,False,"amortisation (2% assumed return), 100% equity / 10% domestic",1.35589286315555,1.363441005972522,0.0,0.0,2.59481543246294
+1.0,0.1,amortisation,amortisation (4% assumed return),,False,"amortisation (4% assumed return), 100% equity / 10% domestic",1.3856262849356935,1.4181181961320655,0.0,0.0,2.4223480796619166
+1.0,0.3,constant_real,constant_real,0.035,True,"constant_real @ 3.5%, 100% equity / 30% domestic",1.0791688500980086,1.098134273203695,0.048,0.023494293476973706,1.5286877364535454
+1.0,0.3,constant_real,constant_real,0.045,True,"constant_real @ 4.5%, 100% equity / 30% domestic",1.1082413146586974,1.1567359932394106,0.1365,0.068972751358917,1.6453680539537343
+1.0,0.3,constant_percent,constant_percent,0.035,True,"constant_percent @ 3.5%, 100% equity / 30% domestic",1.1777412390655502,1.1720826328494474,0.0,0.0,1.9121475100794114
+1.0,0.3,constant_percent,constant_percent,0.045,True,"constant_percent @ 4.5%, 100% equity / 30% domestic",1.245704421281418,1.2496413360579655,0.0,0.0,1.9793613163552257
+1.0,0.3,guyton_klinger,guyton_klinger,0.035,True,"guyton_klinger @ 3.5%, 100% equity / 30% domestic",1.1180611009899373,1.1145648302037852,0.0,0.0,1.7635662633735782
+1.0,0.3,guyton_klinger,guyton_klinger,0.045,True,"guyton_klinger @ 4.5%, 100% equity / 30% domestic",1.195459397907497,1.1988187667236885,0.001,0.00024420684216182125,1.8697002971197045
+1.0,0.3,guyton_klinger,guyton_klinger (tight band),0.035,True,"guyton_klinger (tight band) @ 3.5%, 100% equity / 30% domestic",1.1358437378087323,1.1309828745522188,0.0,0.0,1.8085422506209647
+1.0,0.3,guyton_klinger,guyton_klinger (tight band),0.045,True,"guyton_klinger (tight band) @ 4.5%, 100% equity / 30% domestic",1.2120437296195976,1.2142512125245324,0.001,0.0003200372897411962,1.9134007082191786
+1.0,0.3,guyton_klinger,guyton_klinger (no inflation rule),0.035,True,"guyton_klinger (no inflation rule) @ 3.5%, 100% equity / 30% domestic",1.1691181411981306,1.1617122296260283,0.0095,0.004729996315856266,1.8273916179192156
+1.0,0.3,guyton_klinger,guyton_klinger (no inflation rule),0.045,True,"guyton_klinger (no inflation rule) @ 4.5%, 100% equity / 30% domestic",1.241323014584602,1.2460506777670395,0.027,0.011530076962018071,1.9337514492103145
+1.0,0.3,vanguard_dynamic,vanguard_dynamic,0.035,True,"vanguard_dynamic @ 3.5%, 100% equity / 30% domestic",1.1668120799897719,1.1683844626568596,0.026,0.012084435236441614,1.7305218386002723
+1.0,0.3,vanguard_dynamic,vanguard_dynamic,0.045,True,"vanguard_dynamic @ 4.5%, 100% equity / 30% domestic",1.210608049678106,1.2388449190991349,0.0655,0.033242158414874295,1.8459703709823718
+1.0,0.3,vanguard_dynamic,vanguard_dynamic (asymmetric),0.035,True,"vanguard_dynamic (asymmetric) @ 3.5%, 100% equity / 30% domestic",1.114611141394829,1.1193954236536032,0.0075,0.004617003852827688,1.5929138887673004
+1.0,0.3,vanguard_dynamic,vanguard_dynamic (asymmetric),0.045,True,"vanguard_dynamic (asymmetric) @ 4.5%, 100% equity / 30% domestic",1.1901621474786372,1.206923111686336,0.0205,0.011079490269988916,1.7073681342275788
+1.0,0.3,endowment,endowment,0.035,True,"endowment @ 3.5%, 100% equity / 30% domestic",1.1773740919549303,1.172699110447413,0.0005,0.00017974194421140126,1.8771974892690397
+1.0,0.3,endowment,endowment,0.045,True,"endowment @ 4.5%, 100% equity / 30% domestic",1.2483109879917522,1.2554091931929223,0.001,0.00043903388965499884,1.9564676977726125
+1.0,0.3,endowment,endowment (light smoothing),0.035,True,"endowment (light smoothing) @ 3.5%, 100% equity / 30% domestic",1.179045047400089,1.1735202838023762,0.0,0.0,1.906058253703528
+1.0,0.3,endowment,endowment (light smoothing),0.045,True,"endowment (light smoothing) @ 4.5%, 100% equity / 30% domestic",1.2479969801896,1.2524650650686375,0.0,0.0,1.9755730939505498
+1.0,0.3,life_expectancy,life_expectancy,,False,"life_expectancy, 100% equity / 30% domestic",1.2733491547549156,1.2614963498581777,0.0,0.0,2.6214617173180312
+1.0,0.3,life_expectancy,life_expectancy (+5y buffer),,False,"life_expectancy (+5y buffer), 100% equity / 30% domestic",1.2251940023230878,1.1954437826274984,0.0,0.0,2.398622456197963
+1.0,0.3,gompertz,gompertz,,False,"gompertz, 100% equity / 30% domestic",1.3671695964627242,1.3708185703037472,0.0,0.0,2.253835740508671
+1.0,0.3,gompertz,gompertz (+5y buffer),,False,"gompertz (+5y buffer), 100% equity / 30% domestic",1.297058155330331,1.2821973981859078,0.0,0.0,2.22778260133879
+1.0,0.3,amortisation,amortisation (0% assumed return),,False,"amortisation (0% assumed return), 100% equity / 30% domestic",1.2733491547549156,1.2614963498581777,0.0,0.0,2.6214617173180312
+1.0,0.3,amortisation,amortisation (2% assumed return),,False,"amortisation (2% assumed return), 100% equity / 30% domestic",1.3351815696063174,1.3415273928777156,0.0,0.0,2.4525781803033273
+1.0,0.3,amortisation,amortisation (4% assumed return),,False,"amortisation (4% assumed return), 100% equity / 30% domestic",1.363609179704316,1.3946478752064224,0.0,0.0,2.299509214495456

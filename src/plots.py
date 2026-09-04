@@ -263,6 +263,20 @@ def _abbr(text: Any) -> str:
     return SERIES_ABBR.get(str(text), _flat(text, 10))
 
 
+def _key(ax: Any, **kwargs: Any) -> None:
+    """Draw the legend on ``ax`` in the house style.
+
+    Named for what it does, because :func:`_legend` maps a *series name* to a
+    one-line label and returns a string -- calling that on an axes is silent
+    and leaves the panel without a key, which is how two figures shipped
+    without one.
+    """
+    options = {"fontsize": 5.0, "labelspacing": 0.25, "handlelength": 1.4,
+               "frameon": True, "framealpha": 0.92, "edgecolor": "none"}
+    options.update(kwargs)
+    ax.legend(**options)
+
+
 def _legend(text: Any) -> str:
     """The same name on one line, for a legend entry.
 
@@ -3065,6 +3079,91 @@ def plot_sequence(frame: pd.DataFrame, ranking: pd.DataFrame,
     return _save(fig, directory, name)
 
 
+def plot_longevity(swept: pd.DataFrame, shift: pd.DataFrame,
+                   ablated: pd.DataFrame, found: Mapping[str, Any],
+                   directory: str | Path,
+                   name: str = "fig62_uncertain_horizon") -> Path:
+    """What an uncertain lifespan does to the rule, the rate and the risk."""
+    with plt.rc_context(STYLE):
+        fig, axes = _grid(4, 3.0)
+
+        # -- 1. rules ranked under each horizon ---------------------------
+        # Plotted as the *change* in rank, because the levels of the two
+        # certainty equivalents are not comparable and a reader would
+        # otherwise try to read them against each other.
+        ax = axes[0]
+        block = shift.sort_values("rank_mortality")
+        pos = np.arange(len(block))
+        moves = block["rank_change"].to_numpy(dtype=float)
+        ax.barh(pos, moves, height=0.62,
+                color=[_colour(0) if m > 0 else _colour(1) if m < 0 else "0.6"
+                       for m in moves])
+        ax.axvline(0.0, color="0.35", linewidth=0.8)
+        ax.set_yticks(pos)
+        ax.set_yticklabels([_flat(x, 26) for x in block["rule_label"]],
+                           fontsize=4.6)
+        ax.invert_yaxis()
+        ax.set_xlabel("Places gained when the horizon becomes uncertain")
+        _title(ax, "Which rules a real lifespan promotes")
+
+        # -- 2. the rate, under each objective ----------------------------
+        ax = axes[1]
+        rated = swept[swept["has_rate"]]
+        for i, (label, column) in enumerate((("fixed horizon", "cec_fixed"),
+                                             ("survival-weighted",
+                                              "cec_mortality"))):
+            best = rated.groupby("rate")[column].max()
+            # Each objective is scaled to its own best, because the two are
+            # not in the same units and only the *shape* is being compared.
+            ax.plot(100.0 * best.index.to_numpy(dtype=float),
+                    100.0 * (best.to_numpy(dtype=float) / best.max() - 1.0),
+                    marker=_marker(i), color=_colour(i), linewidth=1.5,
+                    markersize=3.4, label=label)
+        ax.set_xlabel("Withdrawal rate (%)")
+        ax.set_ylabel("Cost against that objective's own best (%)")
+        _title(ax, "Where the best rate sits under each horizon")
+        _key(ax)
+
+        # -- 3. ruin, which the fixed horizon inflates --------------------
+        ax = axes[2]
+        best = swept.loc[swept.groupby("rule_label")["cec_mortality"].idxmax()]
+        best = best.sort_values("ruin_fixed", ascending=False).head(10)
+        pos = np.arange(len(best))
+        ax.barh(pos - 0.19, 100.0 * best["ruin_fixed"].to_numpy(dtype=float),
+                height=0.36, color=_colour(1), label="fixed horizon")
+        ax.barh(pos + 0.19,
+                100.0 * best["ruin_mortality"].to_numpy(dtype=float),
+                height=0.36, color=_colour(0), label="survival-weighted")
+        ax.set_yticks(pos)
+        ax.set_yticklabels([_flat(x, 26) for x in best["rule_label"]],
+                           fontsize=4.6)
+        ax.invert_yaxis()
+        ax.set_xlabel("Probability of running out (%)")
+        _title(ax, "A fixed horizon counts failures most people never live to")
+        _key(ax)
+
+        # -- 4. what re-choosing each decision is worth --------------------
+        ax = axes[3]
+        rows = ablated[ablated["freed"] != "nothing (the fixed-horizon choice)"]
+        pos = np.arange(len(rows))
+        gains = rows["gain_pct"].to_numpy(dtype=float)
+        ax.bar(pos, gains, width=0.6,
+               color=[_colour(2) if str(f) == "all three" else _colour(0)
+                      for f in rows["freed"]])
+        for i, value in enumerate(gains):
+            ax.annotate(f"{value:+.2f}%", (i, value), ha="center",
+                        va="bottom" if value >= 0 else "top", fontsize=5.4,
+                        xytext=(0, 2 if value >= 0 else -2),
+                        textcoords="offset points")
+        ax.axhline(0.0, color="0.35", linewidth=0.8)
+        ax.set_xticks(pos)
+        ax.set_xticklabels([str(f) for f in rows["freed"]], fontsize=5.0)
+        ax.set_ylabel("Gain over the fixed-horizon choice (%)")
+        _title(ax, "What re-choosing each decision is worth")
+
+        return _save(fig, directory, name)
+
+
 def plot_bridge(bridge: pd.DataFrame, directory: str | Path,
                 name: str = "fig61_system_bridge") -> Path:
     """US to Australia in one chart, one feature at a time.
@@ -3195,7 +3294,7 @@ def plot_tax(swept: pd.DataFrame, curve: pd.DataFrame,
         ax.set_xlabel("Withdrawal (multiples of average earnings)")
         ax.set_ylabel("Rate (%)")
         _title(ax, "The US torpedo: the rate faced against the bracket")
-        _legend(ax)
+        _key(ax)
 
         # -- 3. ruin, which the tax moves through the withdrawal -----------
         ax = axes[2]
@@ -3211,7 +3310,7 @@ def plot_tax(swept: pd.DataFrame, curve: pd.DataFrame,
         ax.set_xticklabels([r.replace("_", " ") for r in rules], fontsize=5.0)
         ax.set_ylabel("Probability of ruin (%)")
         _title(ax, "Ruin, by withdrawal rule and tax regime")
-        _legend(ax)
+        _key(ax)
 
         # -- 4. tax as a share of gross retirement income ------------------
         ax = axes[3]
@@ -3228,7 +3327,7 @@ def plot_tax(swept: pd.DataFrame, curve: pd.DataFrame,
         ax.set_xticklabels([r.replace("_", " ") for r in rules], fontsize=5.0)
         ax.set_ylabel("Tax as a share of gross income (%)")
         _title(ax, "What is actually paid")
-        _legend(ax)
+        _key(ax)
 
         return _save(fig, directory, name)
 

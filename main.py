@@ -37,6 +37,7 @@ from src import leisure as le
 from src import leverage as lev
 from src import humancapital as hc
 from src import lifecycle as lc
+from src import longevity as lv
 from src import mortality as mrt
 from src import mortgage as mgg
 from src import observed as obs
@@ -4415,6 +4416,127 @@ def step33_tax(cfg: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
     return state
 
 
+def step34_longevity(cfg: Dict[str, Any],
+                     state: Dict[str, Any]) -> Dict[str, Any]:
+    """Solve allocation, rule and rate together under a real lifespan."""
+    block = cfg.get("longevity", {})
+    if not block.get("enabled", False):
+        LOGGER.info("longevity study disabled; skipping step 34")
+        return state
+    LOGGER.info("=== STEP 34: the rule when the horizon is not known ===")
+    started = time.perf_counter()
+
+    panel = state.get("panel") or dl.build_panel(cfg)
+    spec = state.get("spec") or lc.spec_from_config(cfg)
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    beta = float(cfg["utility"]["discount_factor"])
+    n_paths = int(block.get("n_paths", cfg["bootstrap"]["n_paths"]))
+
+    survive = mrt.survival(spec,
+                           float(block.get("mortality_modal_age", 88.0)),
+                           float(block.get("mortality_dispersion", 10.0)))
+    # `life_expectancy` returns the expected *age* at death, so the years a
+    # retiree should plan for is that less the age they stop at. Comparing
+    # the age with the horizon directly -- which an earlier version did --
+    # puts 81.9 next to 30 and reads as nonsense.
+    expected_age = mrt.life_expectancy(spec, survive)
+    expectancy = expected_age - spec.age_retire
+    LOGGER.info("expected age at death %.1f, so %.1f retired years against "
+                "the %d the fixed horizon assumes", expected_age, expectancy,
+                spec.age_death - spec.age_retire)
+
+    for chunk in bs.from_config(panel, cfg).chunks(n_paths, n_paths):
+        paths = chunk
+    income = lc.simulate_income(
+        spec, n_paths, np.random.default_rng(int(cfg["run"]["seed"])),
+        dom_eq=paths.dom_eq, intl_eq=paths.intl_eq)
+
+    allocations = lv.allocation_grid(
+        [float(x) for x in block.get("equity_grid", (1.0,))],
+        [float(x) for x in block.get("domestic_grid", (0.1,))])
+    plans = lv.plan_grid(cfg["spending"]["rules"],
+                         [float(x) for x in block.get("rate_grid", (0.04,))])
+    combos = [lv.Combination(equity=e, domestic=d, rule=k, rate=r,
+                             params=params, suffix=suffix)
+              for e, d in allocations for k, r, params, suffix in plans]
+    LOGGER.info("%d allocations x %d policies = %d combinations",
+                len(allocations), len(plans), len(combos))
+
+    bond_share = float(cfg.get("glide", {}).get("bond_share", 0.7))
+    horizon = spec.horizon
+
+    def _simulate(combo: lv.Combination) -> Any:
+        weights = gp.weights_from_shares(np.full(horizon, combo.equity),
+                                         np.full(horizon, combo.domestic),
+                                         bond_share)
+        strategy = lc.Strategy(key="grid", label=combo.label(),
+                               weights=weights)
+        return lc.simulate(paths, strategy, spec, income,
+                           spending=combo.build())
+
+    def _fixed(outcome: Any) -> float:
+        return float(ut.crra_certainty_equivalent(
+            ut.bundle_from_outcome(outcome, cfg, spec), gamma, beta,
+            float(cfg["utility"]["bequest_weight"]),
+            bool(cfg["utility"]["bequest_enabled"])))
+
+    def _mortality(outcome: Any) -> float:
+        return float(mrt.certainty_equivalent(outcome, spec, cfg, gamma,
+                                              survive))
+
+    def _ruin(outcome: Any) -> float:
+        return float(mrt.probability_of_ruin(outcome, spec, survive))
+
+    swept = lv.sweep(_simulate, _fixed, _mortality, _ruin, combos)
+    winners = lv.by_objective(swept)
+    shift = lv.ranking_shift(swept)
+    ablated = lv.ablation(swept)
+    found = lv.verdict(swept, shift, ablated)
+    found["life_expectancy"] = float(expectancy)
+    found["expected_age_at_death"] = float(expected_age)
+    found["fixed_horizon_years"] = float(spec.age_death - spec.age_retire)
+
+    LOGGER.info("fixed horizon picks %s; a real lifespan picks %s",
+                lv.describe(found["fixed_rule"], found["fixed_rate"]),
+                lv.describe(found["mortality_rule"],
+                            found["mortality_rate"]))
+    if "best_depleting_ratio" in found:
+        LOGGER.info("ruin on the best rule that can run out (%s): %.1f%% over "
+                    "a fixed horizon against %.1f%% survival-weighted, a "
+                    "factor of %.1f", found["best_depleting_rule"],
+                    100.0 * found["best_depleting_ruin_fixed"],
+                    100.0 * found["best_depleting_ruin_mortality"],
+                    found["best_depleting_ratio"])
+    if "joint_gain_pct" in found:
+        LOGGER.info("re-choosing for a real horizon is worth %.2f%%, of which "
+                    "%s alone is %.2f%%; interaction %.2f%%",
+                    found["joint_gain_pct"],
+                    found.get("dominant_decision", "n/a"),
+                    found.get("dominant_gain_pct", float("nan")),
+                    found.get("interaction_pct", float("nan")))
+
+    tables = Path(cfg["run"]["table_dir"])
+    _save_table(swept, tables, "longevity_sweep")
+    _save_table(winners, tables, "longevity_optimum")
+    _save_table(shift, tables, "longevity_ranking")
+    _save_table(ablated, tables, "longevity_ablation")
+
+    figures = [str(plots.plot_longevity(
+        swept, shift, ablated, found, Path(cfg["run"]["figure_dir"])))]
+    elapsed = time.perf_counter() - started
+    rp.write_doc_34(
+        Path("docs") / "34_uncertain_horizon.md", cfg,
+        {"swept": swept, "optimum": winners, "ranking": shift,
+         "ablation": ablated},
+        figures,
+        {"elapsed_seconds": elapsed, "gamma": gamma, "n_paths": n_paths,
+         "verdict": found, "allocations": len(allocations),
+         "policies": len(plans)})
+    LOGGER.info("docs/34 written (%.0fs)", elapsed)
+    state["longevity_sweep"] = swept
+    return state
+
+
 STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
          4: step4_report, 5: step5_sensitivity, 6: step6_spending,
          7: step7_glide_path, 8: step8_hedging, 9: step9_retirement_timing,
@@ -4429,11 +4551,12 @@ STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
          26: step26_turnover, 27: step27_inflation,
          28: step28_withholding, 29: step29_sequence,
          30: step30_franking, 31: step31_plan,
-         32: step32_leisure, 33: step33_tax}
+         32: step32_leisure, 33: step33_tax,
+         34: step34_longevity}
 
 
 def run(config_path: str = "config.yaml",
-        steps: Sequence[int] = tuple(range(1, 34)),
+        steps: Sequence[int] = tuple(range(1, 35)),
         quick: bool = False) -> Dict[str, Any]:
     """Execute the pipeline and return the accumulated state."""
     cfg = dl.load_config(config_path)
@@ -4463,8 +4586,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--steps", nargs="+", type=int,
-                        default=list(range(1, 34)),
-                        choices=list(range(1, 34)))
+                        default=list(range(1, 35)),
+                        choices=list(range(1, 35)))
     parser.add_argument("--quick", action="store_true",
                         help="small N for smoke tests")
     parser.add_argument("--verbose", action="store_true")

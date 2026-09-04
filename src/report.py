@@ -68,6 +68,16 @@ def _write(path: str | Path, sections: Sequence[str]) -> Path:
     return path
 
 
+def _join(items: Sequence[str]) -> str:
+    """`a`, `a and b`, `a, b and c` -- an Oxford-free list for prose."""
+    parts = [str(x) for x in items if str(x)]
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return parts[0]
+    return f"{', '.join(parts[:-1])} and {parts[-1]}"
+
+
 def _nth_best(n: int) -> str:
     """`the best`, `the second-best`, ... for a rank in prose."""
     return "the best" if int(n) == 1 else f"the {_ordinal(int(n))}-best"
@@ -10663,5 +10673,223 @@ python main.py --steps 33
 Runtime {float(notes['elapsed_seconds']):.0f}s at {int(notes['n_paths']):,}
 paths, gamma = {gamma:g}, retiring at {int(notes['retire_age'])}. Tables in
 `results/tables/tax_*.csv`; schedules and their sources in `src/tax.py`.
+"""
+    return _write(path, [intro, body])
+
+
+def write_doc_34(
+    path: str | Path,
+    cfg: Mapping[str, Any],
+    frames: Mapping[str, pd.DataFrame],
+    figures: Sequence[str],
+    notes: Mapping[str, Any],
+) -> Path:
+    """The withdrawal rule when the horizon is not known."""
+    from . import longevity as lng
+
+    swept = frames["swept"]
+    winners = frames["optimum"]
+    ranking = frames["ranking"]
+    ablated = frames["ablation"]
+    found = notes["verdict"]
+    gamma = float(notes["gamma"])
+
+    winners_tbl = md_table(_compact(
+        winners, ["objective", "rule", "rate", "equity", "domestic",
+                  "cec_mortality", "ruin_mortality"],
+        {"objective": "Scored over", "rule": "Rule", "rate": "Rate",
+         "equity": "Equity", "domestic": "Domestic",
+         "cec_mortality": "CEC (survival-weighted)",
+         "ruin_mortality": "Ruin (survival-weighted)"}), floatfmt="{:.4f}")
+
+    moved = ranking[ranking["rank_change"] != 0] if len(ranking) else ranking
+    rank_tbl = md_table(_compact(
+        ranking.head(12), ["rule_label", "rank_fixed", "rank_mortality",
+                           "rank_change"],
+        {"rule_label": "Rule", "rank_fixed": "Rank, fixed horizon",
+         "rank_mortality": "Rank, real lifespan",
+         "rank_change": "Places gained"}), floatfmt="{:.0f}")
+
+    ablation_tbl = md_table(_compact(
+        ablated, ["freed", "rule", "rate", "equity", "domestic", "cec",
+                  "gain_pct"],
+        {"freed": "Free to re-choose", "rule": "Rule", "rate": "Rate",
+         "equity": "Equity", "domestic": "Domestic", "cec": "CEC",
+         "gain_pct": "Gain (%)"}), floatfmt="{:.4f}")
+
+    if found.get("anything_changes"):
+        changed = [name for name, key in (
+            ("the rule", "rule_changes"), ("the rate", "rate_changes"),
+            ("the allocation", "allocation_changes")) if found.get(key)]
+        headline = (
+            f"**A real lifespan changes {_join(changed)}.** Over a fixed "
+            f"horizon the best combination is "
+            f"{lng.describe(found['fixed_rule'], found['fixed_rate'])}, "
+            f"holding {found['fixed_equity']:.0%} equity of which "
+            f"{found['fixed_domestic']:.0%} is domestic. Survival-weighted it "
+            f"is "
+            f"{lng.describe(found['mortality_rule'], found['mortality_rate'])}"
+            f", at {found['mortality_equity']:.0%} equity and "
+            f"{found['mortality_domestic']:.0%} domestic.")
+        if found.get("rate_changes"):
+            headline += (
+                f" The rate moves "
+                f"{'up' if found.get('rate_rises') else 'down'}, which is the "
+                f"direction {'a' if found.get('rate_rises') else 'no'} "
+                f"chance of not living to spend the money implies.")
+    else:
+        headline = (
+            f"**Nothing changes.** The combination that wins over a fixed "
+            f"horizon -- "
+            f"{lng.describe(found['fixed_rule'], found['fixed_rate'])}, "
+            f"{found['fixed_equity']:.0%} equity, "
+            f"{found['fixed_domestic']:.0%} domestic -- also wins once the "
+            f"horizon is a distribution. That is a finding rather than a "
+            f"non-result: it says the earlier sections were not leaning on "
+            f"their fixed death age.")
+
+    if "best_depleting_ratio" in found:
+        ruin_line = (
+            f"**The probability of ruin falls by a factor of "
+            f"{found['best_depleting_ratio']:.1f}.** Measured on the best "
+            f"rule that *can* run out -- {found['best_depleting_rule']}; the "
+            f"winning combination "
+            f"{'can too' if found.get('optimum_can_deplete') else 'cannot, so a ratio there would be zero over zero'} "
+            f"-- the fixed horizon reports "
+            f"{found['best_depleting_ruin_fixed']:.1%} and the real lifespan "
+            f"{found['best_depleting_ruin_mortality']:.1%}. Across all "
+            f"{int(found.get('depleting_combinations', 0)):,} combinations "
+            f"that can deplete the median ratio is "
+            f"{found.get('median_ruin_ratio', float('nan')):.1f}. "
+            f"Nothing about the portfolio "
+            f"changed; what changed is that the earlier number counts as a "
+            f"failure a portfolio exhausted at ninety-one for an investor "
+            f"who, on this survival curve, most likely died some years "
+            f"before. Every ruin probability elsewhere in this project "
+            f"carries that same overstatement.")
+    else:
+        ruin_line = ""
+
+    if "joint_gain_pct" in found:
+        singles = found.get("single_gains_pct", {})
+        parts = ", ".join(f"{name} {value:+.2f}%"
+                          for name, value in singles.items())
+        ablation_line = (
+            f"**Re-choosing for a real horizon is worth "
+            f"{found['joint_gain_pct']:+.2f}%** of certainty-equivalent "
+            f"consumption against carrying the fixed-horizon choice forward. "
+            f"Freed one at a time: {parts}. The interaction is "
+            f"{found.get('interaction_pct', float('nan')):+.2f}%, "
+            f"{'small enough to read the three separately' if found.get('separable') else 'large enough that none of the three can be read on its own'}.")
+    else:
+        ablation_line = ""
+
+    figure_list = "\n".join(f"* `{f}`" for f in figures)
+    intro = _header(
+        "34 - The Rule When the Horizon Is Not Known",
+        "Every rule comparison so far scores a retirement that ends at "
+        "ninety-three with certainty. That is not neutral between rules.")
+
+    body = f"""
+## 1. Why a fixed horizon is not neutral between rules
+
+`docs/24` makes a fixed death age a problem for the *aggregation* and shows
+that re-weighting by survival does not change which allocation wins. It also
+says, in terms, that the treatment is only approximate for the horizon-based
+withdrawal rules, "which would themselves change if they knew the mortality
+table". This section is that unfinished sentence.
+
+The distortion runs three ways at once:
+
+* A rule that **amortises to a fixed date** is handed the answer. Dividing
+  the balance by the years remaining is very nearly optimal when the years
+  remaining are a known constant.
+* A rule that **hedges longevity** -- a fixed share of the balance, or an
+  actuarial divisor -- pays a premium against a risk the model has switched
+  off, and so looks needlessly cautious.
+* **Ruin** is measured against certain survival to ninety-three, so a
+  portfolio exhausted at ninety-one counts as a failure for an investor who
+  most likely died some years earlier.
+
+On this calibration the expected age at death is
+{float(found.get('expected_age_at_death', float('nan'))):.1f}, so a retiree
+stopping at {int(cfg['lifecycle']['age_retire'])} should plan for
+{float(found.get('life_expectancy', float('nan'))):.1f} years -- against the
+{float(found.get('fixed_horizon_years', float('nan'))):.0f} the fixed horizon
+assumes. The model is not merely uncertain about the horizon; it is assuming
+one substantially longer than the median retiree gets.
+
+## 2. Three decisions, one objective
+
+{int(notes['allocations'])} allocations by {int(notes['policies'])} policies
+is {int(len(swept)):,} combinations, each scored twice on the *same*
+simulated lifetimes: once over the fixed horizon, once survival-weighted. No
+path is re-drawn between the two, so a difference between the scores is the
+aggregation and nothing else.
+
+The grid includes the two rules that already read a mortality table, so
+"should the withdrawal rule know how long you are likely to live?" is a
+comparison inside the sweep rather than an assumption behind it.
+
+{winners_tbl}
+
+{headline}
+
+## 3. Which rules a real lifespan promotes
+
+Each rule is scored at its own best rate and allocation under the objective
+being ranked, so no rule is penalised for a setting chosen to suit a
+different horizon.
+
+{rank_tbl}
+
+{"Of " + str(int(found.get("rules_ranked", 0))) + " rules, " + str(int(found.get("rules_that_move", 0))) + " change rank." if "rules_ranked" in found else ""}
+
+## 4. The ruin number everyone quotes
+
+{ruin_line}
+
+## 5. Which of the three decisions the horizon actually moves
+
+The baseline is what a fixed horizon would have chosen, scored under
+survival weighting -- what an investor who took this project's earlier
+advice and then went on living would actually get. Each row then frees one
+decision, and the last frees all three.
+
+{ablation_tbl}
+
+{ablation_line}
+
+## 6. What this changes
+
+* The rule comparison in `docs/06` and the joint optimisation in `docs/31`
+  both score a horizon nobody faces. This says how much that mattered.
+* **Ruin probabilities in this project are overstated**, and by a factor
+  worth carrying in mind when reading any of them.
+* What is *not* claimed: that the Gompertz curve is a life table. It is a
+  model with two parameters, and `docs/24` sweeps them; the sweep here is
+  held at that section's central calibration.
+
+## 7. What is still not modelled
+
+* Annuities, which are the direct hedge for the risk this section prices
+  and would dominate part of the grid if they were in it.
+* A rule that conditions on realised health or on updated survival, rather
+  than on the table it started with.
+* Couples, where the relevant horizon is the second death and the
+  distribution is a different shape.
+
+## 8. Figures
+
+{figure_list}
+
+## 9. Reproduction
+
+```bash
+python main.py --steps 34
+```
+
+Runtime {float(notes['elapsed_seconds']):.0f}s at {int(notes['n_paths']):,}
+paths, gamma = {gamma:g}. Tables in `results/tables/longevity_*.csv`.
 """
     return _write(path, [intro, body])

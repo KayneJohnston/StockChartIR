@@ -1,0 +1,3 @@
+objective,rule,rate,equity,domestic,cec_fixed,cec_mortality,ruin_fixed,ruin_mortality
+fixed horizon,gompertz,,1.0,0.1,1.3918372764931188,1.3942555719881968,0.0,0.0
+survival-weighted,amortisation (4% assumed return),,1.0,0.1,1.3856262849356935,1.4181181961320655,0.0,0.0
