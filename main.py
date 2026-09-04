@@ -4138,6 +4138,7 @@ def step32_leisure(cfg: Dict[str, Any],
     _save_table(feature_table, tables, "leisure_features_optimal")
     _save_table(decomposition, tables, "leisure_features_decomposition")
     _save_table(rules_frame, tables, "leisure_rule_comparison")
+    _save_table(pd.DataFrame([bite]), tables, "leisure_means_test_bite")
 
     figures = [str(plots.plot_leisure(
         swept, optima[headline], crossings[headline], claim_tbl, anchors,

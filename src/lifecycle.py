@@ -106,6 +106,16 @@ class LifecycleSpec:
     #: through this model would change every result in the project and answer
     #: a different question; this reconciles one ratio.
     income_tax_rate: float = 0.0
+
+    #: Retirement tax regime, by name in :data:`src.tax.REGIMES`. ``None``
+    #: taxes nothing, which is what every section before Section 33 assumes
+    #: and what keeps their results bit-identical.
+    tax_regime: str | None = None
+
+    #: Tax on fund earnings during accumulation, charged each working year on
+    #: the *nominal* return of the compulsory sleeve. Australia charges 15%
+    #: inside superannuation; a Roth or a 401(k) charges nothing.
+    fund_earnings_tax: float = 0.0
     # Floor on labour income, as a multiple of economy-wide average earnings,
     # standing in for unemployment insurance and in-work benefits.  Default 0
     # (no floor), which leaves every existing result unchanged.
@@ -178,6 +188,14 @@ class LifecycleSpec:
             raise ValueError("super_contributions_tax must lie in [0, 1)")
         if not 0.0 <= self.income_tax_rate < 1.0:
             raise ValueError("income_tax_rate must lie in [0, 1)")
+        if not 0.0 <= self.fund_earnings_tax < 1.0:
+            raise ValueError("fund_earnings_tax must lie in [0, 1)")
+        if self.tax_regime is not None:
+            from . import tax as tx
+            if self.tax_regime not in tx.REGIMES:
+                raise ValueError(
+                    f"unknown tax_regime {self.tax_regime!r}; expected one "
+                    f"of {tuple(tx.REGIMES)}")
         if self.replacement_window < 1:
             raise ValueError("replacement_window must be at least 1")
         if self.pension_taper < 0.0 or self.pension_free_area < 0.0:
@@ -594,6 +612,9 @@ class LifecycleOutcome:
     ruin_age: np.ndarray               # (N,) int, age_death where no ruin
     social_security: np.ndarray        # (N,) real annual benefit
     career_average_income: np.ndarray  # (N,) mean real working-life income
+    #: Retirement income tax, ``(N, n_retired)``. All zeros unless the spec
+    #: names a regime, which is what keeps every other section unchanged.
+    tax_paid: np.ndarray | None = None
 
     @property
     def n_paths(self) -> int:
@@ -706,12 +727,26 @@ def simulate(
     # contribution does not, which is why a Superannuation Guarantee is a
     # transfer into the portfolio rather than a reallocation within it.
     employer_rate = spec.super_net_rate
+    # Australia taxes fund earnings at 15% inside superannuation during
+    # accumulation. It is charged on the *nominal* return, so a period of
+    # high inflation is taxed on gains that were never real -- which is why
+    # it is applied here rather than as a flat haircut to the real return.
+    # Only the compulsory sleeve is inside the fund; the voluntary share is
+    # treated as a Roth in both countries, which Section 33 states plainly.
+    accumulation_tax = float(spec.fund_earnings_tax)
+    fund_share = spec.super_share_of_contributions
+    working_return = rp[:, :spec.n_working]
+    if accumulation_tax > 0.0 and fund_share > 0.0:
+        nominal = (1.0 + working_return) * (
+            1.0 + paths.inflation[:, :spec.n_working]) - 1.0
+        charged = accumulation_tax * np.maximum(nominal, 0.0) * fund_share
+        working_return = working_return - charged
     for h in range(spec.n_working):
         voluntary = spec.savings_rate * income[:, h]
         employer = employer_rate * income[:, h]
         consumption[:, h] = income[:, h] - voluntary
         wealth[:, h + 1] = ((wealth[:, h] + voluntary + employer)
-                            * (1.0 + rp[:, h]))
+                            * (1.0 + working_return[:, h]))
 
     wealth_at_retirement = wealth[:, spec.n_working].copy()
 
@@ -737,6 +772,13 @@ def simulate(
     # living for the next thirty.
     window = min(int(spec.replacement_window), spec.n_working)
     pre_retirement_income = income[:, spec.n_working - window:].mean(axis=1)
+
+    regime = None
+    if spec.tax_regime is not None and spec.tax_regime != "none":
+        from . import tax as tx
+        regime = tx.REGIMES[spec.tax_regime]
+    economy_average = float(spec.deterministic_income().mean())
+    tax_paid = np.zeros((n_paths, spec.n_retired))
 
     rule = spending or sp.from_spec(spec.retirement_rule, spec.rule_rate)
     inflation = paths.inflation[:, :horizon]
@@ -780,7 +822,15 @@ def simulate(
         state = dataclasses.replace(state, benefit=benefit)
         desired = np.maximum(rule.desired(state), 0.0)
         withdrawal = np.minimum(desired, np.maximum(available, 0.0))
-        consumption[:, h] = benefit + withdrawal
+        # Tax is levied on what the rule drew, not grossed up to leave the
+        # target intact. The rule is the same in every arm and the tax is
+        # not, so what changes across arms is consumption -- which is the
+        # comparison. A retiree who planned after-tax would withdraw more
+        # and run out sooner, so this is the kinder reading of both.
+        owed = (regime.tax(benefit, withdrawal, economy_average)
+                if regime is not None else 0.0)
+        tax_paid[:, h - spec.n_working] = owed
+        consumption[:, h] = np.maximum(benefit + withdrawal - owed, 0.0)
         wealth[:, h + 1] = np.maximum(available - withdrawal, 0.0) * (1.0 + rp[:, h])
 
         # Ruin is running out of money with retirement years still to fund.
@@ -810,6 +860,7 @@ def simulate(
         social_security=(benefit_paid.mean(axis=1) if means_tested
                          else benefit),
         career_average_income=income.mean(axis=1),
+        tax_paid=tax_paid,
     )
 
 

@@ -7338,9 +7338,11 @@ def section_leisure(ctx: Any) -> List[Flowable]:
         f"portfolio can be drawn at 50, where Australian super cannot."))
 
     # ---- 2x2: which of the two differences does the work ----------------
-    feat = notes.get("feature_verdict", {"measured": False})
-    decomposition = frames.get("decomposition", pd.DataFrame())
-    bite = notes.get("means_test_bite", {})
+    decomposition = f.table("leisure_features_decomposition")
+    feat = lei.feature_verdict(decomposition) if len(decomposition) \
+        else {"measured": False}
+    bite_frame = f.table("leisure_means_test_bite")
+    bite = bite_frame.iloc[0].to_dict() if len(bite_frame) else {}
     if feat.get("measured"):
         out.append(ctx.h2("#leisure.5 Which of the two differences does "
                           "the work"))
@@ -7352,10 +7354,10 @@ def section_leisure(ctx: Any) -> List[Flowable]:
             f"crossing them is guesswork, so this is the 2×2: each feature "
             f"alone, then both, against the same baseline."))
         if len(decomposition):
-            out.append(ctx.table(
-                ["What changes", "Best date", "Years later", "CEC",
-                 "vs baseline"],
-                [[str(r["feature"]),
+            out.extend(ctx.table(
+                [["What changes", "Best date", "Years later", "CEC",
+                  "vs baseline"]]
+                + [[str(r["feature"]),
                   "—" if not np.isfinite(r["age"]) else f"{r['age']:.0f}",
                   f"{r['effect']:+.0f}",
                   "—" if not np.isfinite(r["cec"]) else f"{r['cec']:.4f}",
@@ -7419,8 +7421,11 @@ def section_leisure(ctx: Any) -> List[Flowable]:
                 f"receiving almost none."))
 
     # ---- the withdrawal rule is half the comparison ----------------------
-    rulefound = notes.get("rule_verdict", {"measured": False})
-    rules_frame = frames.get("rules", pd.DataFrame())
+    rules_frame = f.table("leisure_rule_comparison")
+    rulefound = lei.rule_verdict(
+        rules_frame, portfolio_rule=str(
+            cfg["lifecycle"]["retirement"]["rule"])) if len(rules_frame) \
+        else {"measured": False}
     if rulefound.get("measured"):
         out.append(ctx.h2("#leisure.6 The withdrawal rule is half the "
                           "comparison"))
@@ -7435,10 +7440,10 @@ def section_leisure(ctx: Any) -> List[Flowable]:
             "pre-retirement income for life, the pension netted off, the "
             "portfolio paying the rest."))
         if len(rules_frame):
-            out.append(ctx.table(
-                ["Rule", "Pension system", "CEC", "Ruin (%)", "Mean c",
-                 "5th pct c"],
-                [[str(r["rule"]),
+            out.extend(ctx.table(
+                [["Rule", "Pension system", "CEC", "Ruin (%)", "Mean c",
+                  "5th pct c"]]
+                + [[str(r["rule"]),
                   SYSTEM_LABEL.get(str(r["system"]), str(r["system"])),
                   f"{r['cec']:.4f}", f"{100 * r['prob_ruin']:.1f}",
                   f"{r['mean_consumption']:.3f}",
