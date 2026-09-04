@@ -329,3 +329,25 @@ class TestWhyTheOrderChanges:
         found = lv.verdict(frame, lv.ranking_shift(frame),
                            lv.ablation(frame))
         assert not found["a_blind_rule_wins"]
+
+
+class TestCorrelationStrength:
+    """A moderate correlation is a contributing cause. Writing it up as *the*
+    cause is the mistake this banding exists to stop, and it is one an
+    earlier draft of this section made."""
+
+    def test_the_bands_run_in_order(self) -> None:
+        assert lv.correlation_strength(0.9) == "strong"
+        assert lv.correlation_strength(0.5) == "moderate"
+        assert lv.correlation_strength(0.2) == "weak"
+        assert lv.correlation_strength(0.05) == "none"
+
+    def test_sign_does_not_change_the_strength(self) -> None:
+        assert lv.correlation_strength(-0.9) == lv.correlation_strength(0.9)
+
+    def test_a_missing_correlation_is_not_a_finding(self) -> None:
+        assert lv.correlation_strength(float("nan")) == "none"
+
+    def test_the_measured_value_is_not_called_strong(self) -> None:
+        """+0.44 on the production grid: real, and not the whole story."""
+        assert lv.correlation_strength(0.44) == "moderate"

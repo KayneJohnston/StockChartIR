@@ -56,7 +56,7 @@ import pandas as pd
 LOGGER = logging.getLogger(__name__)
 
 __all__ = [
-    "Combination", "describe", "front_load", "allocation_grid", "plan_grid", "sweep", "optimum",
+    "Combination", "describe", "front_load", "correlation_strength", "allocation_grid", "plan_grid", "sweep", "optimum",
     "by_objective", "ranking_shift", "ablation", "verdict",
     "FIXED", "MORTALITY",
 ]
@@ -70,6 +70,24 @@ MORTALITY: str = "cec_mortality"
 #: Share of the joint gain the interaction may take and still let the three
 #: decisions be reported one at a time.
 SEPARABLE_SHARE: float = 0.25
+
+#: Rank-correlation bands for how much of a reordering one explanation
+#: accounts for. A moderate correlation is a contributing cause and must not
+#: be written up as *the* cause, which is the mistake these exist to stop.
+STRONG_CORR: float = 0.70
+MODERATE_CORR: float = 0.35
+
+
+def correlation_strength(value: float) -> str:
+    """``strong``, ``moderate``, ``weak`` or ``none``, for prose to branch on."""
+    magnitude = abs(float(value))
+    if not np.isfinite(magnitude) or magnitude < 0.15:
+        return "none"
+    if magnitude >= STRONG_CORR:
+        return "strong"
+    if magnitude >= MODERATE_CORR:
+        return "moderate"
+    return "weak"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -411,6 +429,8 @@ def verdict(frame: pd.DataFrame, shift: pd.DataFrame,
             found["front_load_corr"] = float(
                 joined["front_load"].corr(-joined["rank_mortality"],
                                           method="spearman"))
+            found["front_load_strength"] = correlation_strength(
+                found["front_load_corr"])
             found["front_load_corr_fixed"] = float(
                 joined["front_load"].corr(-joined["rank_fixed"],
                                           method="spearman"))

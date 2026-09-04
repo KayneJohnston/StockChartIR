@@ -10786,14 +10786,27 @@ def write_doc_34(
 
     if "front_load_corr" in found:
         corr = float(found["front_load_corr"])
+        strength = str(found.get("front_load_strength", "moderate"))
+        lead = {"strong": "**And the reason is largely the spending level, "
+                          "not the mortality table.**",
+                "moderate": "**Part of the reason is the spending level "
+                            "rather than the mortality table.**",
+                "weak": "**The spending level explains a little of it, and "
+                        "not much.**",
+                "none": "**The spending level does not explain it.**",
+                }[strength]
         why_line = (
-            f"**And the reason is the spending level, not the mortality "
-            f"table.** Rank each rule by how much of the balance it draws in "
+            f"{lead} Rank each rule by how much of the balance it draws in "
             f"the first retirement year -- a number every rule has, however "
             f"it arrives at it -- and that ordering matches the "
             f"survival-weighted ranking with a rank correlation of "
-            f"{corr:+.2f}, against {float(found['front_load_corr_fixed']):+.2f} "
-            f"under the fixed horizon.")
+            f"{corr:+.2f}, against "
+            f"{float(found['front_load_corr_fixed']):+.2f} under the fixed "
+            f"horizon. The contrast is the finding rather than the level: "
+            f"how fast a rule spends barely tracks the ranking when the "
+            f"horizon is fixed, and {'clearly' if strength in ('strong', 'moderate') else 'only faintly'} "
+            f"does once it is not. At {corr:+.2f} it is a contributing "
+            f"cause and not the whole of one.")
         if found.get("a_blind_rule_wins"):
             why_line += (
                 f" The rule that wins has never heard of a survival curve: "
