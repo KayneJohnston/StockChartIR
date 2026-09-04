@@ -7648,19 +7648,29 @@ def section_tax(ctx: Any) -> List[Flowable]:
                 "objection that prompted this section, and not the one it "
                 "expected."))
         elif found.get("ranking_survives"):
-            out.append(ctx.p(
-                "<b>The gap widens.</b> That is the opposite of what the "
-                "objection behind this section anticipated, and the reason is "
-                "a timing asymmetry rather than a difference in rates. "
-                "Australia's tax-free withdrawal is real, but it is collected "
-                "once, at the end; the fund-earnings tax that pays for it is "
-                "levied every year for four decades and compounds against the "
-                "balance. Deferring tax runs the other way — the contribution "
-                "grows by the tax not paid on it, and what is owed later is "
-                "owed on a lower income — which is why the traditional arm "
-                "comes out ahead of paying no tax at all. How much of this "
-                "rests on the one rate nobody can pin down is the next "
-                "subsection."))
+            driver = found.get("driver")
+            share = float(found.get("driver_share", float("nan")))
+            change = abs(float(found.get("gap_change_pp", 0.0)))
+            if driver == "us":
+                out.append(ctx.p(
+                    f"<b>The gap widens, by {change:.1f} percentage "
+                    f"points</b> — and which side moved matters, because a "
+                    f"gap can widen from either end. {share:.0%} of the "
+                    f"movement is the American arm <i>gaining</i> rather "
+                    f"than the Australian arm losing: a pre-tax contribution "
+                    f"grows by the tax not paid on it, and what is owed "
+                    f"later is owed on a lower income, so the deferral is "
+                    f"worth more than the retirement tax costs. Australia's "
+                    f"charge is small at both ends — nothing in retirement, "
+                    f"and very little during accumulation once unrealised "
+                    f"gains, the capital-gains discount and franking credits "
+                    f"are counted, which the next subsection sets out."))
+            else:
+                out.append(ctx.p(
+                    f"<b>The gap widens, by {change:.1f} percentage "
+                    f"points</b>, and {share:.0%} of the movement is the "
+                    f"Australian arm losing. The next subsection decomposes "
+                    f"it."))
         else:
             out.append(ctx.p(
                 "The untaxed comparison in Section #leisure therefore did not "

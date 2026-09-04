@@ -12,6 +12,7 @@ from __future__ import annotations
 import dataclasses
 
 import numpy as np
+import pandas as pd
 import pytest
 
 from src import tax as tx
@@ -341,3 +342,42 @@ class TestFundTax:
         free = tx.FundTax(rate=0.0, company_rate=0.0)
         for weight in (0.0, 0.5, 1.0):
             assert free.drag(weight) == pytest.approx(0.0)
+
+
+class TestWhichSideMovesTheGap:
+    """A gap between two systems can widen because one lost or because the
+    other gained, and those are different findings. The prose names one, so
+    the code has to decide which rather than assume the taxed-more arm did
+    the work -- which is the mistake an earlier version made."""
+
+    @staticmethod
+    def _frame(us_traditional: float, au: float,
+               us_free: float = 1.0409, au_free: float = 0.7223):
+        return pd.DataFrame([
+            {"system": "us", "regime": "none", "cec": us_free},
+            {"system": "us", "regime": "us_roth", "cec": us_free},
+            {"system": "us", "regime": "us_traditional",
+             "cec": us_free * (1.0 + us_traditional)},
+            {"system": "au_as_legislated", "regime": "none", "cec": au_free},
+            {"system": "au_as_legislated", "regime": "au",
+             "cec": au_free * (1.0 + au)},
+        ])
+
+    def test_a_gain_on_one_side_is_credited_to_that_side(self) -> None:
+        found = tx.tax_verdict(self._frame(us_traditional=0.02, au=-0.006))
+        assert found["driver"] == "us"
+        assert found["driver_share"] > 0.5
+
+    def test_a_large_loss_on_the_other_side_flips_the_driver(self) -> None:
+        found = tx.tax_verdict(self._frame(us_traditional=0.02, au=-0.168))
+        assert found["driver"] == "au"
+
+    def test_the_gap_change_is_signed_and_consistent(self) -> None:
+        found = tx.tax_verdict(self._frame(us_traditional=0.02, au=-0.006))
+        assert found["gap_change_pp"] == pytest.approx(
+            found["gap_taxed_pct"] - found["gap_untaxed_pct"])
+        assert not found["gap_narrowed"]
+
+    def test_a_shared_move_gives_neither_side_a_majority(self) -> None:
+        found = tx.tax_verdict(self._frame(us_traditional=0.02, au=-0.02))
+        assert found["driver_share"] == pytest.approx(0.5)

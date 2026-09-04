@@ -571,6 +571,19 @@ def tax_verdict(frame: "Any") -> Dict[str, Any]:
         found["gap_taxed_pct"] = 100.0 * (au_taxed / us_trad - 1.0)
         found["gap_narrowed"] = bool(
             abs(found["gap_taxed_pct"]) < abs(found["gap_untaxed_pct"]))
+        found["gap_change_pp"] = (found["gap_taxed_pct"]
+                                  - found["gap_untaxed_pct"])
+        # Which side moved it. A gap can widen because one arm lost or
+        # because the other gained, and those are different findings: the
+        # prose has to name the one that happened rather than assume the
+        # taxed-more arm did the work.
+        us_move = abs(by.get(("us", "us_traditional"), float("nan")))
+        au_move = abs(au)
+        if np.isfinite(us_move) and np.isfinite(au_move):
+            total = us_move + au_move
+            found["driver"] = "us" if us_move > au_move else "au"
+            found["driver_share"] = (max(us_move, au_move) / total
+                                     if total else float("nan"))
     return found
 
 

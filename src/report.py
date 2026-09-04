@@ -10400,18 +10400,25 @@ def write_doc_33(
                 "answer to the objection that prompted this section, and not "
                 "the one the objection expected.")
         elif found.get("ranking_survives"):
+            driver = found.get("driver")
+            share = found.get("driver_share", float("nan"))
             verdict_line += (
-                " **The gap widens.** That is the opposite of what the "
-                "objection behind this section anticipated, and the reason "
-                "is a timing asymmetry rather than a rate one. Australia's "
-                "tax-free withdrawal is real, but it is collected once, at "
-                "the end; the fund-earnings tax that pays for it is levied "
-                "every year for four decades and compounds against the "
-                "balance. Deferring tax, by contrast, is worth something "
-                "positive to the American saver, because the contribution "
-                "grows by the tax not paid on it and what is owed later is "
-                "owed on a lower income. Section 5 says how much of this "
-                "rests on the one rate nobody can pin down.")
+                f" **The gap widens, by "
+                f"{abs(float(found.get('gap_change_pp', 0.0))):.1f} "
+                f"percentage points** -- and it is worth being precise about "
+                f"which side moved, because a gap can widen from either end. "
+                + (f"{share:.0%} of the movement is the American arm "
+                   f"*gaining*, not the Australian arm losing: a pre-tax "
+                   f"contribution grows by the tax not paid on it, and what "
+                   f"is owed later is owed on a lower income, so deferral is "
+                   f"worth more than the retirement tax costs. Australia's "
+                   f"charge is small in both directions -- nothing at all in "
+                   f"retirement, and very little during accumulation once "
+                   f"unrealised gains, the capital-gains discount and "
+                   f"franking credits are counted, which section 5 sets out."
+                   if driver == "us" else
+                   f"{share:.0%} of the movement is the Australian arm "
+                   f"losing, which section 5 decomposes."))
     else:
         verdict_line = ""
 
@@ -10576,10 +10583,17 @@ swept rather than the rate.
 * The untaxed comparison in `docs/32` was not neutral between the two
   systems, and this section says by how much rather than leaving a reader
   to guess.
-* **The direction is the surprise.** The objection that prompted this work
-  expected tax to flatter Australia, since its super is withdrawn tax-free.
-  It does -- but Australia also pays the fund-earnings tax for forty years
-  first, and the two very nearly cancel.
+* **The objection that prompted this work was right, and the first attempt
+  at answering it was not.** Australia's system really does tax a retiree
+  almost nothing: nothing on the withdrawal, nothing on the pension, and --
+  once unrealised gains are left alone, the discount applied and franking
+  credits counted -- very little on the fund. An earlier version of this
+  section charged the statutory rate against the whole return and made the
+  charge look sixteen times larger than it is.
+* **What is left of the difference is not a tax story.** The two systems
+  still separate, but by roughly what `docs/32` already found without any
+  tax at all, and for the reason it gave: one household is paid a pension
+  and the other is means-tested out of one.
 * A retiree cannot read their marginal rate off a bracket table. On this
   calibration the American household's true marginal rate is close to twice
   the statutory one over most of its plausible withdrawal range.
