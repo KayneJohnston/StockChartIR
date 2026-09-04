@@ -138,6 +138,14 @@ class LifecycleSpec:
                                                 "means_tested"):
             raise ValueError(
                 f"unknown social_security_formula {self.social_security_formula!r}")
+        if not 0.0 <= self.pre_eligibility_benefit_share <= 1.0:
+            raise ValueError(
+                "pre_eligibility_benefit_share must lie in [0, 1]")
+        if (self.benefit_start_age is not None
+                and not self.age_start <= self.benefit_start_age
+                <= self.age_death):
+            raise ValueError(
+                "benefit_start_age must lie between age_start and age_death")
         if not -1.0 <= self.income_return_correlation <= 1.0:
             raise ValueError("income_return_correlation must lie in [-1, 1]")
         if self.income_intl_correlation is not None and not (
@@ -211,6 +219,34 @@ class LifecycleSpec:
     #: retires at fifty-five a full pension for thirty-eight years and makes
     #: early retirement look free.
     ss_claim_factor: float = 1.0
+    #: Age from which the retirement benefit is actually paid.  ``None`` --
+    #: the default -- means "whenever work stops", which is what every other
+    #: section assumes and what leaves those results bit-identical.
+    #:
+    #: It is not a detail once the retirement date can move.  Australia's Age
+    #: Pension is payable at 67 however early somebody stopped working, so an
+    #: Australian retiring at 55 funds twelve years entirely from their own
+    #: portfolio before any pension arrives.  A model that starts the benefit
+    #: on the day work ends cannot see that bridge, and would price early
+    #: retirement as though the state stepped in immediately.
+    benefit_start_age: int | None = None
+    #: Share of the means-tested payment available *before* the eligibility
+    #: age, standing in for the working-age safety net.  Zero -- the default
+    #: -- means somebody who exhausts their portfolio during a bridge to the
+    #: pension receives literally nothing, which no country arranges and
+    #: which a CRRA aggregator punishes without limit: one year at the
+    #: consumption floor is enough to decide a certainty equivalent on its
+    #: own.  Australia pays JobSeeker to a retiree who has run out before 67,
+    #: at appreciably less than the Age Pension but not at nothing.
+    pre_eligibility_benefit_share: float = 0.0
+
+    @property
+    def benefit_start_index(self) -> int:
+        """Simulated year from which the benefit is paid."""
+        if self.benefit_start_age is None:
+            return int(self.n_working)
+        return int(np.clip(int(self.benefit_start_age) - int(self.age_start),
+                           0, int(self.horizon)))
 
     def social_security_benefit(self, career_average: np.ndarray) -> np.ndarray:
         """Real annual retirement benefit from career-average real earnings.
@@ -664,6 +700,11 @@ def simulate(
     # figure reported afterwards is its average over the retirement years.
     means_tested = spec.social_security_formula == "means_tested"
     benefit_paid = np.zeros((n_paths, spec.n_retired)) if means_tested else None
+    # Nothing is paid before the eligibility age, which need not be the
+    # retirement date: see `LifecycleSpec.benefit_start_age`.
+    benefit_from = spec.benefit_start_index
+    entitlement = benefit
+    nothing = np.zeros_like(benefit)
 
     # --- decumulation -----------------------------------------------------
     rule = spending or sp.from_spec(spec.retirement_rule, spec.rule_rate)
@@ -694,9 +735,14 @@ def simulate(
         )
         desired = np.maximum(rule.desired(state), 0.0)
         withdrawal = np.minimum(desired, np.maximum(available, 0.0))
+        eligible = h >= benefit_from
+        share = 1.0 if eligible else float(spec.pre_eligibility_benefit_share)
         if means_tested:
-            benefit = spec.means_tested_benefit(available)
+            benefit = (share * spec.means_tested_benefit(available) if share
+                       else nothing)
             benefit_paid[:, h - spec.n_working] = benefit
+        else:
+            benefit = share * entitlement if share else nothing
         consumption[:, h] = benefit + withdrawal
         wealth[:, h + 1] = np.maximum(available - withdrawal, 0.0) * (1.0 + rp[:, h])
 

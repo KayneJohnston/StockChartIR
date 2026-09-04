@@ -998,6 +998,19 @@ leisure:
   # Gompertz parameters for the survival-weighted arm, matching step 24.
   mortality_modal_age: 88.0
   mortality_dispersion: 10.0
+  # Pension systems compared. The two differ in more than their generosity:
+  # US social security can be claimed from the day work stops (adjusted for
+  # the age), while Australia's Age Pension is payable at 67 however early
+  # somebody stopped, so an Australian retiring at 55 funds twelve years
+  # alone. That gate, not the size of the cheque, is what moves the date.
+  systems: [us, au_pension_only, au_as_legislated]
+  # Age Pension eligibility. 67 for anyone born after 1 January 1957.
+  age_pension_age: 67
+  # Share of the means-tested rate payable before that age, standing in for
+  # JobSeeker. Zero would have a retiree who exhausts their portfolio during
+  # the bridge receive literally nothing, which no country arranges and which
+  # a CRRA aggregator punishes without limit.
+  pre_pension_safety_net: 0.60
 
 
 

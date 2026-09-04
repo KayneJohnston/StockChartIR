@@ -1,0 +1,4 @@
+system,age_at_zero_leisure,age_at_top,ages_chosen,cec_at_zero_leisure,earlier_dates_reachable,earlier_dates_offered,nearest_years_earlier,nearest_break_even_pct,cost_per_year_pct
+us,60,52,4,0.7667754469071097,4,4,2,9.718105821017398,4.859052910508699
+au_pension_only,67,60,5,0.6291565049848444,6,8,2,16.007592204991795,8.003796102495897
+au_as_legislated,62,55,4,0.7132460628100052,5,5,2,13.73886460846827,6.869432304234135

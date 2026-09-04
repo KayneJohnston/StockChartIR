@@ -116,6 +116,66 @@ def anchor_table(anchors: Mapping[str, float] = ANCHORS) -> pd.DataFrame:
     return frame
 
 
+#: The pension systems compared, as the two things that actually differ.
+#:
+#: ``us``
+#:     Earnings-related, payable from the day work stops, and adjusted for
+#:     the age it starts at -- so the claiming date is worth nothing either
+#:     way and only the leisure preference moves the answer.
+#: ``au_pension_only``
+#:     A flat means-tested pension payable at a fixed age however early
+#:     somebody stopped, at the same voluntary saving rate. Isolates the
+#:     eligibility gate.
+#: ``au_as_legislated``
+#:     The same gate with the Superannuation Guarantee on top, which is what
+#:     an Australian actually faces. Separates the gate from the extra saving
+#:     that pays for crossing it.
+SYSTEMS: Tuple[str, ...] = ("us", "au_pension_only", "au_as_legislated")
+
+#: How far apart two systems' per-year costs of retiring earlier may be and
+#: still be reported as the same slope. Ten per cent of the cheaper one: wide
+#: enough that a bootstrap wobble does not flip the sentence, narrow enough
+#: that a system charging half again as much is not called "similar".
+COST_SIMILAR_BAND: float = 0.10
+
+
+def system_overrides(system: str, cfg: Mapping[str, Any],
+                     ) -> Tuple[Dict[str, Any], bool]:
+    """``(spec overrides, whether the claiming date is actuarially adjusted)``.
+
+    Australia's Age Pension carries no actuarial adjustment: it is not a
+    claiming choice at all, but an age you reach. Applying one would model a
+    system nobody lives under, so the flag rides with the overrides rather
+    than being set separately and forgotten.
+    """
+    from . import pension as pn
+
+    block = cfg.get("leisure", {})
+    if system == "us":
+        return {}, True
+    au = pn.from_config(cfg)
+    au.pop("pension_free_area_non_homeowner", None)
+    shared: Dict[str, Any] = {
+        "social_security_formula": "means_tested",
+        "benefit_start_age": int(block.get("age_pension_age", 67)),
+        "pre_eligibility_benefit_share": float(
+            block.get("pre_pension_safety_net", 0.0)),
+        **au,
+    }
+    if system == "au_pension_only":
+        return shared, False
+    if system == "au_as_legislated":
+        pension = cfg.get("pension", {})
+        return {**shared,
+                "super_guarantee_rate": float(
+                    pension.get("sg_rate", pn.SG_RATE)),
+                "super_contributions_tax": float(
+                    pension.get("sg_contributions_tax",
+                                pn.SG_CONTRIBUTIONS_TAX))}, False
+    raise ValueError(f"unknown pension system {system!r}; expected one of "
+                     f"{SYSTEMS}")
+
+
 # ---------------------------------------------------------------------------
 # Paying for the pension you claim early
 # ---------------------------------------------------------------------------
@@ -383,6 +443,95 @@ def break_even(frame: pd.DataFrame, reference: int | None = None,
             "reached_on_grid": bool(np.isfinite(value)),
         })
     return pd.DataFrame.from_records(rows)
+
+
+def system_comparison(optima: Mapping[str, pd.DataFrame],
+                      crossings: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
+    """One row per pension system: where the date settles and what moving it
+    costs.
+
+    The break-evens are not comparable across systems as absolute ages -- each
+    is measured against its own zero-leisure date, which is the point -- so
+    the row carries that reference alongside them.
+    """
+    rows: List[Dict[str, Any]] = []
+    for name, frame in optima.items():
+        ordered = frame.sort_values("leisure")
+        cross = crossings.get(name, pd.DataFrame())
+        early = cross[cross["is_earlier"]] if len(cross) else cross
+        reached = early[early["reached_on_grid"]] if len(early) else early
+        row: Dict[str, Any] = {
+            "system": name,
+            "age_at_zero_leisure": int(ordered["optimal_age"].iloc[0]),
+            "age_at_top": int(ordered["optimal_age"].iloc[-1]),
+            "ages_chosen": len(set(ordered["optimal_age"])),
+            "cec_at_zero_leisure": float(ordered["cec_at_optimum"].iloc[0]),
+            "earlier_dates_reachable": int(len(reached)),
+            "earlier_dates_offered": int(len(early)),
+        }
+        if len(reached):
+            nearest = reached.loc[reached["years_earlier"].idxmin()]
+            row.update({
+                "nearest_years_earlier": int(nearest["years_earlier"]),
+                "nearest_break_even_pct": float(nearest["break_even_pct"]),
+                "cost_per_year_pct": (float(nearest["break_even_pct"])
+                                      / max(int(nearest["years_earlier"]), 1)),
+            })
+        rows.append(row)
+    return pd.DataFrame.from_records(rows)
+
+
+def system_verdict(comparison: pd.DataFrame) -> Dict[str, Any]:
+    """What the shape of the pension does to the retirement date."""
+    if not len(comparison):
+        return {"measured": False}
+    indexed = comparison.set_index("system")
+
+    def _get(system: str, column: str) -> Any:
+        return (indexed.loc[system, column] if system in indexed.index
+                and column in indexed.columns else float("nan"))
+
+    us = _get("us", "age_at_zero_leisure")
+    gate = _get("au_pension_only", "age_at_zero_leisure")
+    legislated = _get("au_as_legislated", "age_at_zero_leisure")
+    found: Dict[str, Any] = {
+        "measured": True,
+        "systems": int(len(comparison)),
+        "us_age": us, "gated_age": gate, "legislated_age": legislated,
+    }
+    if np.isfinite(us) and np.isfinite(gate):
+        found["gate_pushes_later"] = bool(gate > us)
+        found["gate_years_later"] = float(gate - us)
+    if np.isfinite(gate) and np.isfinite(legislated):
+        # The Superannuation Guarantee is the other half of the Australian
+        # system, and it pushes the opposite way to the eligibility gate.
+        found["super_buys_back"] = bool(legislated < gate)
+        found["super_years_earlier"] = float(gate - legislated)
+    if np.isfinite(us) and np.isfinite(legislated):
+        found["legislated_vs_us_years"] = float(legislated - us)
+        found["australia_retires_later"] = bool(legislated > us)
+    if "cost_per_year_pct" in comparison.columns:
+        priced = comparison.dropna(subset=["cost_per_year_pct"])
+        if len(priced):
+            found["cheapest_system"] = str(
+                priced.loc[priced["cost_per_year_pct"].idxmin(), "system"])
+            found["dearest_system"] = str(
+                priced.loc[priced["cost_per_year_pct"].idxmax(), "system"])
+        us_cost = _get("us", "cost_per_year_pct")
+        au_cost = _get("au_as_legislated", "cost_per_year_pct")
+        if np.isfinite(us_cost) and np.isfinite(au_cost) and us_cost > 0:
+            # Two systems can move the *date* without moving the *slope*, and
+            # the reader cannot tell which happened from the dates alone. The
+            # ratio is what separates them, and it is classified here rather
+            # than eyeballed: within a tenth either way is one story, outside
+            # it is another.
+            found["us_cost_per_year"] = float(us_cost)
+            found["legislated_cost_per_year"] = float(au_cost)
+            found["cost_ratio"] = float(au_cost / us_cost)
+            found["cost_similar"] = bool(
+                abs(au_cost / us_cost - 1.0) <= COST_SIMILAR_BAND)
+            found["australia_dearer_per_year"] = bool(au_cost > us_cost)
+    return found
 
 
 def verdict(swept: pd.DataFrame, optima: pd.DataFrame,

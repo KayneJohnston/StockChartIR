@@ -9756,6 +9756,16 @@ search paths, γ = {gamma:g}. Tables in
     return _write(path, [intro, body])
 
 
+#: The three pension systems in Section 32's comparison, spelled out. The keys
+#: are what the tables carry; a reader of the prose should not have to know
+#: them.
+SYSTEM_NAME: Dict[str, str] = {
+    "us": "US social security",
+    "au_pension_only": "Age Pension only (no super guarantee)",
+    "au_as_legislated": "Age Pension + super guarantee",
+}
+
+
 def write_doc_32(
     path: str | Path,
     cfg: Mapping[str, Any],
@@ -9770,6 +9780,9 @@ def write_doc_32(
     optima = frames["optimal"]
     crossings = frames["break_even"]
     unadjusted = frames.get("unadjusted_optimal", pd.DataFrame())
+    comparison = frames.get("system_comparison", pd.DataFrame())
+    system_break = frames.get("system_break_even", pd.DataFrame())
+    sysfound = notes.get("system_verdict", {"measured": False})
     found = notes["verdict"]
     gamma = float(notes["gamma"])
     reference = int(notes["reference_age"])
@@ -9857,6 +9870,92 @@ def write_doc_32(
             f"Weighting by survival does not pull the date earlier at any "
             f"value of leisure tested, which is worth stating because it is "
             f"the opposite of what the mortality risk would suggest.")
+
+    labelled = comparison.copy()
+    if len(labelled):
+        labelled["system"] = labelled["system"].map(
+            lambda k: SYSTEM_NAME.get(str(k), str(k)))
+    system_tbl = md_table(_compact(
+        labelled, ["system", "age_at_zero_leisure", "age_at_top",
+                     "earlier_dates_reachable", "earlier_dates_offered",
+                     "nearest_break_even_pct", "cost_per_year_pct"],
+        {"system": "Pension system",
+         "age_at_zero_leisure": "Best date, leisure worth nothing",
+         "age_at_top": "Best date, leisure worth most",
+         "earlier_dates_reachable": "Earlier dates any leisure value justifies",
+         "earlier_dates_offered": "Earlier dates on the grid",
+         "nearest_break_even_pct": "Cost of the nearest earlier date (%)",
+         "cost_per_year_pct": "per year (%)"}),
+        floatfmt="{:.1f}") if len(comparison) else ""
+
+    if sysfound.get("gate_pushes_later"):
+        gate_line = (
+            f"**The eligibility gate pushes the date later, and by a lot.** "
+            f"On the same voluntary saving, an age-gated pension moves the "
+            f"best date from {sysfound['us_age']:.0f} to "
+            f"{sysfound['gated_age']:.0f} -- "
+            f"{sysfound['gate_years_later']:.0f} years. Nothing about the "
+            f"investor changed; what changed is that stopping early no longer "
+            f"starts the pension.")
+    elif sysfound.get("measured"):
+        gate_line = (
+            f"The eligibility gate does not push the date later: it sits at "
+            f"{sysfound['gated_age']:.0f} against "
+            f"{sysfound['us_age']:.0f} under the American schedule.")
+    else:
+        gate_line = ""
+
+    if sysfound.get("super_buys_back"):
+        super_line = (
+            f"**And compulsory saving buys most of it back.** Adding the "
+            f"Superannuation Guarantee moves the date from "
+            f"{sysfound['gated_age']:.0f} to "
+            f"{sysfound['legislated_age']:.0f}, recovering "
+            f"{sysfound['super_years_earlier']:.0f} of the "
+            f"{sysfound.get('gate_years_later', float('nan')):.0f} the gate "
+            f"cost. The two halves of the Australian system pull in opposite "
+            f"directions on this question, which is why a single "
+            f"Australia-versus-America row would say nothing.")
+    elif sysfound.get("measured"):
+        super_line = (
+            f"The Superannuation Guarantee does not move the date earlier: "
+            f"it stays at {sysfound['legislated_age']:.0f}.")
+    else:
+        super_line = ""
+
+    if sysfound.get("measured") and "legislated_vs_us_years" in sysfound:
+        cost_line = (
+            f"Net of both, an Australian's best date is "
+            f"{abs(sysfound['legislated_vs_us_years']):.0f} years "
+            f"{'later' if sysfound['australia_retires_later'] else 'earlier'} "
+            f"than an American's at the same voluntary saving rate "
+            f"({sysfound['legislated_age']:.0f} against "
+            f"{sysfound['us_age']:.0f}).")
+        if sysfound.get("cost_similar"):
+            cost_line += (
+                f" The *price* of going earlier still is much the same in "
+                f"both -- {sysfound['legislated_cost_per_year']:.1f}% of "
+                f"lifetime certainty-equivalent consumption per year against "
+                f"{sysfound['us_cost_per_year']:.1f}% -- so what the "
+                f"Australian system moves is where the clock starts, not how "
+                f"steeply it runs.")
+        else:
+            steeper = sysfound.get("australia_dearer_per_year")
+            cost_line += (
+                f" And it moves the *slope* as well as the start: going a "
+                f"year earlier than the best date costs an Australian "
+                f"{sysfound['legislated_cost_per_year']:.1f}% of lifetime "
+                f"certainty-equivalent consumption against an American's "
+                f"{sysfound['us_cost_per_year']:.1f}%, a factor of "
+                f"{sysfound['cost_ratio']:.2f}. So the Australian system does "
+                f"not simply shift the same trade-off later -- it makes early "
+                f"retirement {'dearer' if steeper else 'cheaper'} at the "
+                f"margin too, and an Australian weighing a year off is "
+                f"answering a {'harder' if steeper else 'softer'} question "
+                f"than an American at the same saving rate, not the same one "
+                f"a few years on.")
+    else:
+        cost_line = ""
 
     figure_list = "\n".join(f"* `{f}`" for f in figures)
     intro = _header(
@@ -9962,7 +10061,39 @@ much bigger one:
 which is beyond anything that literature reports. Whether either is true, this
 document does not say.
 
-## 6. What this changes
+## 6. The same question under Australia's pension
+
+Everything above pays an American pension: earnings-related, payable from the
+day work stops, and adjusted for the age it starts at. Australia's is shaped
+differently in two ways that pull against each other.
+
+The **Age Pension is payable at {int(notes['age_pension_age'])}** however
+early somebody stopped working. There is no claiming choice to adjust, and no
+bridge: an Australian retiring at 55 funds twelve years entirely from their
+own portfolio before a cent of pension arrives. And the **Superannuation
+Guarantee** puts {float(cfg['pension'].get('sg_rate', 0.12)):.0%} of earnings
+into that portfolio on top of whatever the worker saves voluntarily, which is
+what pays for crossing the bridge. Running the pension alone and then the
+pension with the SG separates the two.
+
+{system_tbl}
+
+{gate_line}
+
+{super_line}
+
+{cost_line}
+
+**A caveat this arm needs and the others do not.** A retiree who exhausts the
+portfolio before the pension age receives, in this model, a means-tested
+payment at {float(notes['safety_net']):.0%} of the full rate, standing in for
+the working-age safety net. At zero it would be literally nothing, and a CRRA
+aggregator punishes a single year of that without limit -- one path in ten
+thousand hitting the floor is enough to decide a certainty equivalent on its
+own. The level of that floor is a judgement, and the early dates are sensitive
+to it in a way the later ones are not.
+
+## 7. What this changes
 
 * The retirement date is not unpriceable -- it was unpriced. Charging for the
   years spent working turns `docs/31`'s corner into an interior optimum at
@@ -9982,11 +10113,11 @@ document does not say.
   which would push the date the other way and which this parameterisation
   cannot represent, since `L` is bounded below at 1.
 
-## 7. Figures
+## 8. Figures
 
 {figure_list}
 
-## 8. Reproduction
+## 9. Reproduction
 
 ```bash
 python main.py --steps 32

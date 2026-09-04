@@ -3947,37 +3947,67 @@ def step32_leisure(cfg: Dict[str, Any],
                             float(lei_cfg.get("mortality_modal_age", 88.0)),
                             float(lei_cfg.get("mortality_dispersion", 10.0)))
 
-    def simulate(age: int, factor: float) -> Any:
-        aged = dataclasses.replace(pl.spec_for(spec, age),
-                                   ss_claim_factor=float(factor))
-        income = lc.simulate_income(aged, n_paths, shocks=shocks,
-                                    dom_eq=paths.dom_eq, intl_eq=paths.intl_eq)
-        strategy = lc.build_strategies(cfg, aged)[key]
-        return lc.simulate_all(paths, {key: strategy}, aged, income)[key]
+    def build(overrides: Mapping[str, Any]) -> Any:
+        def simulate(age: int, factor: float) -> Any:
+            aged = dataclasses.replace(pl.spec_for(spec, age), **overrides,
+                                       ss_claim_factor=float(factor))
+            income = lc.simulate_income(
+                aged, n_paths, shocks=shocks, dom_eq=paths.dom_eq,
+                intl_eq=paths.intl_eq)
+            strategy = lc.build_strategies(cfg, aged)[key]
+            return lc.simulate_all(paths, {key: strategy}, aged, income)[key]
+        return simulate
 
     factors = le.fair_claim_factor(spec, survive, beta, reference, ages)
     claim_tbl = le.claim_factor_table(factors, reference)
+    rates = claim_tbl["per_year_pct"].dropna().abs()
     LOGGER.info("actuarially fair adjustment: %.1f%% to %.1f%% a year",
-                claim_tbl["per_year_pct"].min(), claim_tbl["per_year_pct"].max())
+                rates.min(), rates.max())
 
+    # Two sweeps in one: the claiming rule under the US schedule (which is
+    # the diagnostic that motivates adjusting it at all), and then the
+    # pension systems themselves.
     arms = [str(a) for a in lei_cfg.get("claim_arms", ("unadjusted",
                                                        "actuarial"))]
+    systems = [str(x) for x in lei_cfg.get("systems", le.SYSTEMS)]
     frames: List[pd.DataFrame] = []
     optima: Dict[str, pd.DataFrame] = {}
     crossings: Dict[str, pd.DataFrame] = {}
     for arm in arms:
         LOGGER.info("--- claiming arm: %s ---", arm)
-        block = le.sweep(simulate, spec, cfg, gamma, ages, grid, survive,
+        block = le.sweep(build({}), spec, cfg, gamma, ages, grid, survive,
                          None if arm == "unadjusted" else factors)
         block.insert(0, "claim_arm", arm)
+        block.insert(1, "system", "us")
         frames.append(block)
-        optima[arm] = le.optimal_age(block).assign(claim_arm=arm)
-        crossings[arm] = le.break_even(block).assign(claim_arm=arm)
+        optima[arm] = le.optimal_age(block).assign(claim_arm=arm, system="us")
+        crossings[arm] = le.break_even(block).assign(claim_arm=arm,
+                                                     system="us")
         LOGGER.info("%s: optimal age %d with no value on leisure, %d at the "
                     "top of the grid", arm,
                     int(optima[arm]["optimal_age"].iloc[0]),
                     int(optima[arm]["optimal_age"].iloc[-1]))
     swept = pd.concat(frames, ignore_index=True)
+
+    # ---- the same question under a differently-shaped pension -----------
+    by_system: Dict[str, pd.DataFrame] = {}
+    system_optima: Dict[str, pd.DataFrame] = {}
+    system_crossings: Dict[str, pd.DataFrame] = {}
+    for name in systems:
+        overrides, adjusted = le.system_overrides(name, cfg)
+        LOGGER.info("--- pension system: %s (claiming %s) ---", name,
+                    "actuarially adjusted" if adjusted else "age-gated")
+        block = le.sweep(build(overrides), spec, cfg, gamma, ages, grid,
+                         survive, factors if adjusted else None)
+        block.insert(0, "system", name)
+        by_system[name] = block
+        system_optima[name] = le.optimal_age(block).assign(system=name)
+        system_crossings[name] = le.break_even(block).assign(system=name)
+        LOGGER.info("%s: best date %d with no value on leisure, %d at the top",
+                    name, int(system_optima[name]["optimal_age"].iloc[0]),
+                    int(system_optima[name]["optimal_age"].iloc[-1]))
+    systems_swept = pd.concat(by_system.values(), ignore_index=True)
+    comparison = le.system_comparison(system_optima, system_crossings)
 
     headline = arms[-1]
     anchors = le.anchor_table()
@@ -4001,6 +4031,12 @@ def step32_leisure(cfg: Dict[str, Any],
                 tables, "leisure_optimal_age")
     _save_table(pd.concat(crossings.values(), ignore_index=True),
                 tables, "leisure_break_even")
+    _save_table(systems_swept, tables, "leisure_systems_sweep")
+    _save_table(pd.concat(system_optima.values(), ignore_index=True),
+                tables, "leisure_systems_optimal")
+    _save_table(pd.concat(system_crossings.values(), ignore_index=True),
+                tables, "leisure_systems_break_even")
+    _save_table(comparison, tables, "leisure_systems_comparison")
 
     figures = [str(plots.plot_leisure(
         swept, optima[headline], crossings[headline], claim_tbl, anchors,
@@ -4011,11 +4047,18 @@ def step32_leisure(cfg: Dict[str, Any],
         Path("docs") / "32_cost_of_working.md", cfg,
         {"swept": swept, "claim": claim_tbl, "anchors": anchors,
          "optimal": optima[headline], "break_even": crossings[headline],
-         "unadjusted_optimal": optima.get("unadjusted", pd.DataFrame())},
+         "unadjusted_optimal": optima.get("unadjusted", pd.DataFrame()),
+         "systems": systems_swept, "system_comparison": comparison,
+         "system_break_even": pd.concat(system_crossings.values(),
+                                        ignore_index=True)},
         figures,
         {"elapsed_seconds": elapsed, "gamma": gamma, "n_paths": n_paths,
          "strategy": key, "reference_age": reference, "arms": arms,
-         "headline_arm": headline, "verdict": found})
+         "headline_arm": headline, "verdict": found,
+         "systems": systems,
+         "age_pension_age": int(lei_cfg.get("age_pension_age", 67)),
+         "safety_net": float(lei_cfg.get("pre_pension_safety_net", 0.0)),
+         "system_verdict": le.system_verdict(comparison)})
     LOGGER.info("docs/32 written (%.0fs)", elapsed)
     state["leisure_break_even"] = crossings[headline]
     return state

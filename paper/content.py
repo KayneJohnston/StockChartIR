@@ -707,6 +707,14 @@ COMPACT_STRATEGY: Dict[str, str] = {
 }
 
 
+#: Readable names for Section #leisure's pension systems.
+SYSTEM_LABEL: Dict[str, str] = {
+    "us": "US social security",
+    "au_pension_only": "Age Pension only",
+    "au_as_legislated": "Age Pension + super guarantee",
+}
+
+
 def _compact_strategy(key: str) -> str:
     """A strategy name short enough for a column header."""
     return COMPACT_STRATEGY.get(key, _pretty_strategy(key))
@@ -7049,6 +7057,11 @@ def section_leisure(ctx: Any) -> List[Flowable]:
     gamma = float(cfg["utility"]["baseline_risk_aversion"])
     arm = str(cfg["leisure"]["claim_arms"][-1])
     reference = int(cfg["leisure"]["claim_reference_age"])
+    pension_age = int(cfg["leisure"].get("age_pension_age", 67))
+    safety_net = float(cfg["leisure"].get("pre_pension_safety_net", 0.0))
+    sg_rate = float(cfg.get("pension", {}).get("sg_rate", 0.12))
+    comparison = f.table("leisure_systems_comparison")
+    sysfound = lei.system_verdict(comparison)
     head = optima[optima["claim_arm"] == arm].sort_values("leisure") \
         if "claim_arm" in optima.columns else optima.sort_values("leisure")
     flat = optima[optima["claim_arm"] == "unadjusted"].sort_values("leisure") \
@@ -7225,7 +7238,104 @@ def section_leisure(ctx: Any) -> List[Flowable]:
         "adjustment that makes the date of the pension worth nothing either "
         "way."))
 
-    out.append(ctx.h2("#leisure.4 What this changes"))
+    out.append(ctx.h2("#leisure.4 The same question under Australia's pension"))
+    out.append(ctx.p(
+        f"Everything above pays an American pension: earnings-related, "
+        f"payable from the day work stops, and adjusted for the age it starts "
+        f"at. Australia's is shaped differently in two ways that pull against "
+        f"each other. The Age Pension is payable at {pension_age} however "
+        f"early somebody stopped, so there is no claiming choice to adjust "
+        f"and no bridge — an Australian retiring at 55 funds twelve years "
+        f"alone before a cent arrives. And the Superannuation Guarantee puts "
+        f"{sg_rate:.0%} of earnings into the portfolio on top of voluntary "
+        f"saving, which is what pays for crossing that bridge. Running the "
+        f"pension alone and then the pension with the guarantee separates the "
+        f"two."))
+    if len(comparison):
+        out.extend(ctx.table(
+            [["Pension system", "Best date, leisure free", "at the top",
+              "Earlier dates any leisure justifies",
+              "Nearest earlier date costs", "per year"]]
+            + [[SYSTEM_LABEL.get(str(r["system"]), str(r["system"])),
+                str(int(r["age_at_zero_leisure"])), str(int(r["age_at_top"])),
+                f"{int(r['earlier_dates_reachable'])} of "
+                f"{int(r['earlier_dates_offered'])}",
+                (f"{float(r['nearest_break_even_pct']):.1f}%"
+                 if np.isfinite(float(r.get("nearest_break_even_pct",
+                                            float("nan")))) else "—"),
+                (f"{float(r['cost_per_year_pct']):.1f}%"
+                 if np.isfinite(float(r.get("cost_per_year_pct",
+                                            float("nan")))) else "—")]
+               for _, r in comparison.iterrows()],
+            f"The retirement date under each pension, γ = {gamma:g}.",
+            note="Break-evens are measured against each system's own "
+                 "zero-leisure date, so they price the earlier retirement "
+                 "rather than the system's own lean."))
+    if sysfound.get("gate_pushes_later"):
+        out.append(ctx.p(
+            f"<b>The eligibility gate pushes the date later, and by a "
+            f"lot.</b> On the same voluntary saving, an age-gated pension "
+            f"moves the best date from {sysfound['us_age']:.0f} to "
+            f"{sysfound['gated_age']:.0f} — {sysfound['gate_years_later']:.0f} "
+            f"years. Nothing about the investor changed; what changed is that "
+            f"stopping early no longer starts the pension."))
+    if sysfound.get("super_buys_back"):
+        out.append(ctx.p(
+            f"<b>And compulsory saving buys most of it back.</b> Adding the "
+            f"Superannuation Guarantee moves the date from "
+            f"{sysfound['gated_age']:.0f} to "
+            f"{sysfound['legislated_age']:.0f}, recovering "
+            f"{sysfound['super_years_earlier']:.0f} of the "
+            f"{sysfound.get('gate_years_later', float('nan')):.0f} the gate "
+            f"cost. The two halves of the Australian system pull opposite ways "
+            f"on this question, which is why a single Australia-versus-America "
+            f"row would say nothing at all."))
+    if "legislated_vs_us_years" in sysfound:
+        net = (f"Net of both, an Australian's best date is "
+               f"{abs(sysfound['legislated_vs_us_years']):.0f} years "
+               f"{'later' if sysfound['australia_retires_later'] else 'earlier'}"
+               f" than an American's at the same voluntary saving "
+               f"({sysfound['legislated_age']:.0f} against "
+               f"{sysfound['us_age']:.0f}).")
+        if sysfound.get("cost_similar"):
+            net += (
+                f" The <i>price</i> of going earlier still is close in both — "
+                f"{sysfound['legislated_cost_per_year']:.1f}% of lifetime "
+                f"certainty-equivalent consumption per year against "
+                f"{sysfound['us_cost_per_year']:.1f}% — so what the Australian "
+                f"system moves is where the clock starts, not how steeply it "
+                f"runs.")
+        elif "cost_ratio" in sysfound:
+            steeper = sysfound.get("australia_dearer_per_year")
+            net += (
+                f" And it moves the <i>slope</i> as well as the start. A year "
+                f"earlier than the best date costs an Australian "
+                f"{sysfound['legislated_cost_per_year']:.1f}% of lifetime "
+                f"certainty-equivalent consumption against an American's "
+                f"{sysfound['us_cost_per_year']:.1f}%, a factor of "
+                f"{sysfound['cost_ratio']:.2f}. The Australian system does not "
+                f"shift one trade-off later so much as pose a "
+                f"{'harder' if steeper else 'softer'} one: the date is later "
+                f"<i>and</i> each year taken off it is "
+                f"{'dearer' if steeper else 'cheaper'}. Both follow from the "
+                f"same gate — with the pension fixed at "
+                f"{pension_age:.0f}, a year of retirement bought before then "
+                f"is funded entirely from the portfolio, so it costs more than "
+                f"a year bought against a benefit that moves with it.")
+        out.append(ctx.p(net))
+    out.append(ctx.note(
+        f"This arm needs a caveat the others do not. A retiree who exhausts "
+        f"the portfolio before the pension age receives, here, a means-tested "
+        f"payment at {safety_net:.0%} of the full rate, standing in for the "
+        f"working-age safety net. At zero it would be literally nothing, and "
+        f"a CRRA aggregator punishes a single year of that without limit — "
+        f"one path in ten thousand at the consumption floor is enough to "
+        f"decide a certainty equivalent on its own. That floor is a "
+        f"judgement, and the earliest dates are sensitive to it in a way the "
+        f"later ones are not. Nor is preservation age modelled: this "
+        f"portfolio can be drawn at 50, where Australian super cannot."))
+
+    out.append(ctx.h2("#leisure.5 What this changes"))
     out.extend(ctx.bullets([
         (f"<b>The retirement date is not unpriceable — it was unpriced.</b> "
          f"Charging for the years spent working turns Section #plan's corner "
