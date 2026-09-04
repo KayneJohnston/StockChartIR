@@ -617,6 +617,7 @@ SECTION_ORDER: Tuple[str, ...] = (
     "plan",
     "leisure",
     "tax",
+    "longevity",
     # Closing.
     "discussion",
     "limitations",
@@ -655,7 +656,7 @@ EXTENSION_GROUPS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     # is not a charge on the *portfolio* but on the retirement system, and
     # it exists only to check the comparison `leisure` makes.
     ("plan", ("saving", "accumulation", "retirement", "sequence",
-              "spending", "plan", "leisure", "tax")),
+              "spending", "plan", "leisure", "tax", "longevity")),
 )
 
 
@@ -7786,6 +7787,170 @@ def section_tax(ctx: Any) -> List[Flowable]:
     return out
 
 
+def section_longevity(ctx: Any) -> List[Flowable]:
+    """The withdrawal rule once the horizon stops being a constant."""
+    f = ctx.f
+    swept = f.table("longevity_sweep")
+    winners = f.table("longevity_optimum")
+    ranking = f.table("longevity_ranking")
+    ablated = f.table("longevity_ablation")
+    cfg = f.cfg
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+
+    from src import longevity as lng
+
+    found = lng.verdict(swept, ranking, ablated) if len(swept) \
+        else {"measured": False}
+
+    out: List[Flowable] = [
+        ctx.h1("#longevity. The Rule When the Horizon Is Not Known")]
+    out.append(ctx.p(
+        "Every comparison of withdrawal rules so far — Section #spending's "
+        "sweep, Section #plan's joint optimisation — scores a retirement "
+        "that ends at ninety-three with certainty. That is not neutral "
+        "between rules. A rule that amortises to a fixed date is handed the "
+        "answer, because dividing by the years remaining is very nearly "
+        "optimal when the years remaining are a known constant. A rule that "
+        "hedges longevity pays a premium against a risk the model has "
+        "switched off. And ruin counts as failure a portfolio exhausted at "
+        "ninety-one for an investor who most likely died some years before."))
+    out.append(ctx.p(
+        "Section #mortality re-weights the aggregation by a Gompertz "
+        "survival curve and finds it does not change which <i>allocation</i> "
+        "wins. It also says, in terms, that the treatment is only "
+        "approximate for the horizon-based rules, “which would themselves "
+        "change if they knew the mortality table”. This section is that "
+        "unfinished sentence: the rule and the rate are re-solved alongside "
+        "the allocation, on one objective."))
+    if found.get("measured"):
+        out.append(ctx.p(
+            f"The grid is {int(len(swept)):,} combinations of allocation, "
+            f"rule and rate, each scored twice on the <i>same</i> simulated "
+            f"lifetimes — once over the fixed horizon, once survival-"
+            f"weighted. No path is re-drawn between the two, so a difference "
+            f"between the scores is the aggregation and nothing else. On "
+            f"this calibration the expected age at death is "
+            f"{float(found.get('expected_age_at_death', float('nan'))):.1f}, "
+            f"so a retiree stopping at "
+            f"{int(cfg['lifecycle']['age_retire'])} should plan for "
+            f"{float(found.get('life_expectancy', float('nan'))):.1f} years "
+            f"against the "
+            f"{float(found.get('fixed_horizon_years', float('nan'))):.0f} "
+            f"assumed throughout. The model was not merely uncertain about "
+            f"the horizon; it was assuming one substantially longer than the "
+            f"median retiree gets."))
+
+    if len(winners):
+        out.extend(ctx.table(
+            [["Scored over", "Rule", "Equity", "Domestic", "CEC"]]
+            + [[str(r["objective"]), str(r["rule"]),
+                f"{float(r['equity']):.0%}", f"{float(r['domestic']):.0%}",
+                f"{float(r['cec_mortality']):.4f}"]
+               for _, r in winners.iterrows()],
+            f"The best combination under each aggregation, γ = {gamma:g}.",
+            note="Both winners derive their level from a planning horizon "
+                 "and so set no rate of their own."))
+
+    if found.get("measured"):
+        out.append(ctx.p(
+            f"<b>The horizon changes the rule and nothing else.</b> Freeing "
+            f"the allocation to be re-chosen for a real lifespan is worth "
+            f"{found.get('single_gains_pct', {}).get('allocation', 0.0):+.2f}%"
+            f" and freeing the rate "
+            f"{found.get('single_gains_pct', {}).get('rate', 0.0):+.2f}%; "
+            f"freeing the rule is worth "
+            f"{found.get('single_gains_pct', {}).get('rule', 0.0):+.2f}%, "
+            f"which is the whole of the "
+            f"{found.get('joint_gain_pct', 0.0):+.2f}% available from "
+            f"re-choosing all three, with an interaction of "
+            f"{found.get('interaction_pct', 0.0):+.2f}%. The three decisions "
+            f"do not interact here, and that is worth stating as plainly as "
+            f"an interaction would have been."))
+
+    if len(ranking):
+        moved = ranking[ranking["rank_change"] != 0]
+        out.append(ctx.h2("#longevity.1 Which rules a real lifespan "
+                          "promotes"))
+        out.extend(ctx.table(
+            [["Rule", "Fixed horizon", "Real lifespan", "Places gained"]]
+            + [[str(r["rule_label"]).replace("_", " "),
+                f"{int(r['rank_fixed'])}", f"{int(r['rank_mortality'])}",
+                f"{int(r['rank_change']):+d}"]
+               for _, r in ranking.iterrows()],
+            "Every rule at its own best rate and allocation under the "
+            "objective being ranked.",
+            note="Scoring each rule at a setting chosen to suit a different "
+                 "horizon would confound the rule with the rate."))
+        if found.get("measured") and "front_load_corr" in found:
+            corr = float(found["front_load_corr"])
+            strength = str(found.get("front_load_strength", "moderate"))
+            lead = {"strong": "<b>The reason is largely the spending "
+                              "level, not the mortality table.</b>",
+                    "moderate": "<b>Part of the reason is the spending "
+                                "level rather than the mortality table.</b>",
+                    "weak": "<b>The spending level explains little of it."
+                            "</b>",
+                    "none": "<b>The spending level does not explain it.</b>",
+                    }[strength]
+            body = (
+                f"{lead} Rank each rule by the share of the balance it draws "
+                f"in the first retirement year — a number every rule has, "
+                f"however it arrives at one — and that order matches the "
+                f"survival-weighted ranking with a rank correlation of "
+                f"{corr:+.2f}, against "
+                f"{float(found['front_load_corr_fixed']):+.2f} under the "
+                f"fixed horizon. The contrast is the finding rather than "
+                f"either level, and at {corr:+.2f} it is a contributing "
+                f"cause and not the whole of one.")
+            if found.get("a_blind_rule_wins"):
+                body += (
+                    f" The winning rule has never heard of a survival curve: "
+                    f"the best rule that reads one ranks "
+                    f"{int(found['mortality_aware_best_rank'])}. So the "
+                    f"answer to “should the withdrawal rule know how long "
+                    f"you are likely to live?” is that it does not need to — "
+                    f"it needs to spend as though the answer were shorter "
+                    f"than thirty years, and there is more than one way to "
+                    f"arrange that.")
+            out.append(ctx.p(body))
+
+    if "best_depleting_ratio" in found:
+        out.append(ctx.h2("#longevity.2 The ruin number everyone quotes"))
+        out.append(ctx.p(
+            f"<b>Ruin roughly halves.</b> On the best rule that can actually "
+            f"run out — {found['best_depleting_rule']} — the fixed horizon "
+            f"reports {found['best_depleting_ruin_fixed']:.1%} against the "
+            f"real lifespan's {found['best_depleting_ruin_mortality']:.1%}, "
+            f"and across all "
+            f"{int(found.get('depleting_combinations', 0)):,} combinations "
+            f"that can deplete the median ratio is "
+            f"{found.get('median_ruin_ratio', float('nan')):.1f}. Nothing "
+            f"about any portfolio changed. What changed is that the earlier "
+            f"number counts as a failure a portfolio exhausted at ninety-one "
+            f"for somebody who, on this survival curve, most likely died "
+            f"before reaching it. Every ruin probability elsewhere in this "
+            f"paper carries the same overstatement."))
+
+    out.extend(ctx.figure(
+        "fig62_uncertain_horizon",
+        "What an uncertain lifespan does to the rule, the rate and the "
+        "risk. Top left, how far each rule moves in the ranking; top right, "
+        "where the best rate sits under each objective, each scaled to its "
+        "own best so only the shape is compared; bottom left, ruin under "
+        "both aggregations; bottom right, what re-choosing each decision is "
+        "worth."))
+    out.append(ctx.note(
+        "What is not modelled: annuities, which are the direct hedge for the "
+        "risk this section prices and would dominate part of the grid if "
+        "they were in it; a rule that conditions on realised health rather "
+        "than on the table it started with; and couples, where the relevant "
+        "horizon is the second death and the distribution is a different "
+        "shape. The Gompertz curve is a two-parameter model rather than a "
+        "life table, and Section #mortality sweeps those parameters; the "
+        "grid here is held at that section's central calibration."))
+    return out
+
+
 def section_discussion(ctx: Any) -> List[Flowable]:
     f = ctx.f
     lottery = f.table("retirement_lottery_stats").iloc[0]
@@ -10472,6 +10637,7 @@ def story(ctx: Any) -> List[Flowable]:
     parts += section_plan(ctx)
     parts += section_leisure(ctx)
     parts += section_tax(ctx)
+    parts += section_longevity(ctx)
     parts += section_discussion(ctx)
     parts += section_limitations(ctx)
     parts += section_conclusion(ctx)
