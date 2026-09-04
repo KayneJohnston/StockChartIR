@@ -4203,6 +4203,23 @@ def step33_tax(cfg: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
     rules += [(f"replace_{int(round(100 * t))}",
                spg.build("income_replacement", rate=t)) for t in targets]
 
+    def _domestic_weight(strategy_key: str) -> float:
+        """The share of the portfolio in domestic equity while working.
+
+        The franking credit only reaches a domestic dividend, so how much of
+        the fund's tax the credit covers is a property of the allocation, not
+        of the schedule.
+        """
+        built = lc.build_strategies(cfg, pl.spec_for(spec, age))[strategy_key]
+        weights = built.weights[:pl.spec_for(spec, age).n_working]
+        return float(weights[:, lc.ASSETS.index("dom_eq")].mean())
+
+    def _fund_drag(regime: Any, strategy_key: str, cfg: Mapping[str, Any],
+                   spec: Any) -> float:
+        if regime.fund_tax is None:
+            return 0.0
+        return float(regime.fund_tax.drag(_domestic_weight(strategy_key)))
+
     rows: List[Dict[str, Any]] = []
     for system, regime_key in tx.arms(systems):
         overrides, _ = le.system_overrides(system, cfg)
@@ -4210,7 +4227,7 @@ def step33_tax(cfg: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
         aged = dataclasses.replace(
             pl.spec_for(spec, age), **overrides,
             tax_regime=None if regime_key == "none" else regime_key,
-            fund_earnings_tax=regime.fund_earnings_tax)
+            fund_tax_drag=_fund_drag(regime, key, cfg, spec))
         # A traditional account takes contributions from pre-tax earnings,
         # exactly as superannuation does, so it earns the same gross-up. A
         # Roth does not: those contributions come out of take-home pay.
@@ -4261,12 +4278,17 @@ def step33_tax(cfg: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
     # The statutory 15% is an upper bound: franking credits and the CGT
     # discount both cut what a growth fund actually pays, and Section
     # #franking has already measured the first of those on this panel.
-    grid = [float(x) for x in block.get("fund_earnings_grid", (0.15,))]
+    grid = [float(x) for x in block.get("realisation_grid", (0.0, 0.0335))]
     fund_rows: List[Dict[str, Any]] = []
     au_over, _ = le.system_overrides("au_as_legislated", cfg)
+    au_regime = tx.regime_from_config("au", cfg)
+    base_fund = au_regime.fund_tax or tx.FundTax()
+    w_dom = _domestic_weight(key)
     for rate in grid:
+        fund = dataclasses.replace(base_fund, realisation=rate)
         aged = dataclasses.replace(pl.spec_for(spec, age), **au_over,
-                                   tax_regime="au", fund_earnings_tax=rate)
+                                   tax_regime="au",
+                                   fund_tax_drag=float(fund.drag(w_dom)))
         income = lc.simulate_income(aged, n_paths, shocks=shocks,
                                     dom_eq=paths.dom_eq, intl_eq=paths.intl_eq)
         strategy = lc.build_strategies(cfg, aged)[key]
@@ -4274,7 +4296,8 @@ def step33_tax(cfg: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
                           spending=spg.from_spec(spec.retirement_rule,
                                                  spec.rule_rate))
         fund_rows.append({
-            "fund_earnings_tax": rate,
+            "realisation": rate,
+            "drag": float(fund.drag(w_dom)),
             "cec": float(ut.crra_certainty_equivalent(
                 ut.bundle_from_outcome(out, cfg, aged), gamma, beta)),
             "prob_ruin": float(np.mean(out.ruin)),
@@ -4282,13 +4305,14 @@ def step33_tax(cfg: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
         })
     fund_frame = pd.DataFrame.from_records(fund_rows)
     if len(fund_frame) > 1:
-        free = fund_frame[fund_frame["fund_earnings_tax"] == 0.0]["cec"]
+        free = fund_frame[fund_frame["realisation"] == 0.0]["cec"]
         if len(free):
             fund_frame["cost_pct"] = 100.0 * (
                 fund_frame["cec"] / float(free.iloc[0]) - 1.0)
-        LOGGER.info("fund earnings tax: %.4f at 0%% down to %.4f at %.0f%%",
+        LOGGER.info("realisation sweep: cec %.4f holding to the pension "
+                    "phase, %.4f realising %.1f%% a year",
                     fund_frame["cec"].iloc[0], fund_frame["cec"].iloc[-1],
-                    100.0 * fund_frame["fund_earnings_tax"].iloc[-1])
+                    100.0 * fund_frame["realisation"].iloc[-1])
 
     average = float(spec.deterministic_income().mean())
     benefit = float(found.get("benefit", 0.0)) or None
@@ -4326,13 +4350,16 @@ def step33_tax(cfg: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
                                if np.isscalar(v)}]),
                 tables, "tax_torpedo")
     _save_table(fund_frame, tables, "tax_fund_earnings")
+    _save_table(pd.DataFrame([base_fund.components(w_dom)]),
+                tables, "tax_fund_components")
 
     figures = [str(plots.plot_tax(
         swept, curve_frame, curve, Path(cfg["run"]["figure_dir"])))]
     elapsed = time.perf_counter() - started
     rp.write_doc_33(
         Path("docs") / "33_retirement_tax.md", cfg,
-        {"swept": swept, "curve": curve_frame, "fund": fund_frame},
+        {"swept": swept, "curve": curve_frame, "fund": fund_frame,
+         "components": pd.DataFrame([base_fund.components(w_dom)])},
         figures,
         {"elapsed_seconds": elapsed, "gamma": gamma, "n_paths": n_paths,
          "strategy": key, "retire_age": age, "verdict": found,

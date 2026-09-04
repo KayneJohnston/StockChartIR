@@ -112,10 +112,18 @@ class LifecycleSpec:
     #: and what keeps their results bit-identical.
     tax_regime: str | None = None
 
-    #: Tax on fund earnings during accumulation, charged each working year on
-    #: the *nominal* return of the compulsory sleeve. Australia charges 15%
-    #: inside superannuation; a Roth or a 401(k) charges nothing.
-    fund_earnings_tax: float = 0.0
+    #: Annual proportional drag on the compulsory sleeve's return from tax on
+    #: fund earnings during accumulation. Signed: negative is a cost, and a
+    #: sufficiently franked portfolio can come out positive.
+    #:
+    #: This is a *drag*, not a rate, and the distinction is the whole point.
+    #: An Australian fund does not pay 15% of its return: unrealised gains
+    #: are not income, realised ones carry a one-third discount, and franked
+    #: dividends carry a credit worth more than the liability.
+    #: :class:`src.tax.FundTax` derives the drag from those three; charging
+    #: the statutory rate against the return overstates it by more than an
+    #: order of magnitude.
+    fund_tax_drag: float = 0.0
     # Floor on labour income, as a multiple of economy-wide average earnings,
     # standing in for unemployment insurance and in-work benefits.  Default 0
     # (no floor), which leaves every existing result unchanged.
@@ -188,8 +196,8 @@ class LifecycleSpec:
             raise ValueError("super_contributions_tax must lie in [0, 1)")
         if not 0.0 <= self.income_tax_rate < 1.0:
             raise ValueError("income_tax_rate must lie in [0, 1)")
-        if not 0.0 <= self.fund_earnings_tax < 1.0:
-            raise ValueError("fund_earnings_tax must lie in [0, 1)")
+        if not -1.0 < self.fund_tax_drag < 1.0:
+            raise ValueError("fund_tax_drag must lie in (-1, 1)")
         if self.tax_regime is not None:
             from . import tax as tx
             if self.tax_regime not in tx.REGIMES:
@@ -733,14 +741,17 @@ def simulate(
     # it is applied here rather than as a flat haircut to the real return.
     # Only the compulsory sleeve is inside the fund; the voluntary share is
     # treated as a Roth in both countries, which Section 33 states plainly.
-    accumulation_tax = float(spec.fund_earnings_tax)
+    drag = float(spec.fund_tax_drag)
     fund_share = spec.super_share_of_contributions
     working_return = rp[:, :spec.n_working]
-    if accumulation_tax > 0.0 and fund_share > 0.0:
-        nominal = (1.0 + working_return) * (
-            1.0 + paths.inflation[:, :spec.n_working]) - 1.0
-        charged = accumulation_tax * np.maximum(nominal, 0.0) * fund_share
-        working_return = working_return - charged
+    if drag != 0.0 and fund_share > 0.0:
+        # A flat annual drag rather than a share of the year's return. Both
+        # of its parts are stocks, not flows: the dividend yield is roughly
+        # constant, and what rebalancing realises is accumulated gain rather
+        # than this year's. Scaling it by the return would tax a fund more
+        # in a good year and refund it in a bad one, which is not what the
+        # law does to a holder.
+        working_return = working_return + drag * fund_share
     for h in range(spec.n_working):
         voluntary = spec.savings_rate * income[:, h]
         employer = employer_rate * income[:, h]

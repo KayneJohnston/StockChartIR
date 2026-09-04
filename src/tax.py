@@ -166,12 +166,127 @@ AU_LITO = Offset(maximum=700.0 / 106_657.20,
 AU_SAPTO = Offset(maximum=2_230.0 / 106_657.20,
                   threshold=32_279.0 / 106_657.20, taper=0.125)
 
-#: Tax on superannuation fund earnings during accumulation.  The statutory
-#: rate is 15%; the rate a growth fund actually pays is lower, because
-#: franking credits (Section #franking measures them on this panel) and the
-#: one-third discount on gains held beyond a year both reduce it.  The
-#: statutory rate is the default and the study sweeps below it.
+#: Statutory rate on superannuation fund earnings during accumulation.  It
+#: is not the rate a fund pays: see :class:`FundTax`, which is what should be
+#: used.  Retained only as the schedule's headline.
 AU_FUND_EARNINGS_TAX: float = 0.15
+
+#: One-third discount on gains held beyond twelve months, so a realised gain
+#: is taxed at 10% rather than 15%.
+AU_CGT_DISCOUNT: float = 1.0 / 3.0
+
+#: Australian corporate rate, which sets the imputation credit.
+AU_COMPANY_RATE: float = 0.30
+
+#: Mean dividend yield on this panel, measured rather than assumed:
+#: ``src.valuation.trailing_yield`` over every country and year.  The income
+#: component of the fund's tax base is this, not the total return.
+PANEL_DIVIDEND_YIELD: float = 0.0399
+
+
+@dataclasses.dataclass(frozen=True)
+class FundTax:
+    """What a superannuation fund actually pays while it accumulates.
+
+    Not the statutory rate on the return, and not close to it.  Three things
+    stand between the headline and the charge, and together they very nearly
+    cancel it:
+
+    **Unrealised gains are not income.**  A fund that holds pays nothing on
+    appreciation; only what it *realises* is assessable.  And because
+    earnings in the retirement phase are exempt outright, a gain carried
+    across that boundary is never taxed at all -- so a member who does not
+    realise before the pension starts pays capital gains tax of zero, not of
+    fifteen per cent.
+
+    **Realised gains held beyond a year carry a one-third discount**, so the
+    rate on them is ten per cent rather than fifteen.
+
+    **Franked dividends carry an imputation credit worth more than the
+    liability.**  At a 30% company rate against a 15% fund rate the credit is
+    worth +21.4% of the cash dividend -- Section #franking derives this on
+    the same panel -- so a domestic dividend is a *refund*, and it subsidises
+    the tax on the international sleeve rather than adding to it.
+
+    What survives is 15% on unfranked dividends and 10% on whatever
+    rebalancing forces the fund to sell.  On this panel and this portfolio
+    those two very nearly offset, which is the point of the class.
+
+    ``realisation`` is the share of the portfolio turned over each year, and
+    ``embedded_gain`` the fraction of a sold parcel that is gain rather than
+    cost base.  Setting ``realisation`` to zero is the case the reader should
+    hold in mind: hold until the pension phase, and only the dividends are
+    ever taxed.
+    """
+
+    rate: float = AU_FUND_EARNINGS_TAX
+    cgt_discount: float = AU_CGT_DISCOUNT
+    company_rate: float = AU_COMPANY_RATE
+    franked_share: float = 1.0
+    dividend_yield: float = PANEL_DIVIDEND_YIELD
+    realisation: float = 0.0335
+    embedded_gain: float = 0.60
+
+    def __post_init__(self) -> None:
+        for name in ("rate", "cgt_discount", "company_rate", "franked_share",
+                     "embedded_gain"):
+            value = float(getattr(self, name))
+            if not 0.0 <= value <= 1.0:
+                raise ValueError(f"{name} must lie in [0, 1], got {value!r}")
+        if self.dividend_yield < 0.0 or self.realisation < 0.0:
+            raise ValueError("dividend_yield and realisation must be >= 0")
+
+    @property
+    def capital_gains_rate(self) -> float:
+        """The rate a discounted long-held gain actually attracts."""
+        return self.rate * (1.0 - self.cgt_discount)
+
+    def dividend_value(self, franked: float) -> float:
+        """What a dollar of dividend is worth to the fund, less the dollar.
+
+        Positive where the imputation credit exceeds the fund's own tax.
+        Delegated to :mod:`src.franking` so one arithmetic serves both
+        sections.
+        """
+        from . import franking as fk
+
+        return fk.credit_rate(self.company_rate, self.rate, float(franked))
+
+    def income_drag(self, domestic_weight: float) -> float:
+        """Annual drag from dividends. *Negative* is a charge."""
+        w = float(domestic_weight)
+        per_dollar = (w * self.dividend_value(self.franked_share)
+                      + (1.0 - w) * self.dividend_value(0.0))
+        return self.dividend_yield * per_dollar
+
+    def gains_drag(self) -> float:
+        """Annual drag from gains rebalancing forces the fund to realise."""
+        return -(self.realisation * self.embedded_gain
+                 * self.capital_gains_rate)
+
+    def drag(self, domestic_weight: float) -> float:
+        """Total annual proportional drag on the fund sleeve's return.
+
+        Signed: negative is a cost, and a portfolio franked enough can come
+        out positive.
+        """
+        return self.income_drag(domestic_weight) + self.gains_drag()
+
+    def components(self, domestic_weight: float) -> Dict[str, float]:
+        """The drag with its parts, for a table that has to show its working."""
+        income = self.income_drag(domestic_weight)
+        gains = self.gains_drag()
+        return {
+            "domestic_weight": float(domestic_weight),
+            "dividend_yield": self.dividend_yield,
+            "franked_credit": self.dividend_value(self.franked_share),
+            "unfranked_credit": self.dividend_value(0.0),
+            "income_drag": income,
+            "capital_gains_rate": self.capital_gains_rate,
+            "gains_drag": gains,
+            "total_drag": income + gains,
+            "naive_drag": -(self.rate * (self.dividend_yield + 0.04)),
+        }
 
 
 
@@ -272,7 +387,9 @@ class Regime:
     withdrawal_taxable: float = 0.0
     deduction: float = 0.0
     offsets: Tuple[Offset, ...] = ()
-    fund_earnings_tax: float = 0.0
+    #: The fund's own tax while accumulating, as a model rather than a rate.
+    #: ``None`` for a system that does not tax a retirement fund's earnings.
+    fund_tax: "FundTax | None" = None
 
     def __post_init__(self) -> None:
         if self.benefit_taxable not in ("none", "full", "provisional"):
@@ -281,8 +398,7 @@ class Regime:
                 f"'none', 'full' or 'provisional'")
         if not 0.0 <= self.withdrawal_taxable <= 1.0:
             raise ValueError("withdrawal_taxable must lie in [0, 1]")
-        if not 0.0 <= self.fund_earnings_tax < 1.0:
-            raise ValueError("fund_earnings_tax must lie in [0, 1)")
+
 
     def assessable(self, benefit: np.ndarray, withdrawal: np.ndarray,
                    average: float) -> np.ndarray:
@@ -338,7 +454,7 @@ REGIMES: Mapping[str, Regime] = {
         # all, which is why it cannot drag the pension into tax.
         withdrawal_taxable=0.0,
         offsets=(AU_SAPTO, AU_LITO),
-        fund_earnings_tax=AU_FUND_EARNINGS_TAX),
+        fund_tax=FundTax()),
 }
 
 
@@ -353,13 +469,20 @@ def regime_from_config(key: str, cfg: Mapping[str, Any] | None = None
     override = block.get(key, {}) if isinstance(block, Mapping) else {}
     if not override:
         return regime
-    allowed = {"withdrawal_taxable", "fund_earnings_tax", "deduction"}
+    allowed = {"withdrawal_taxable", "deduction", "realisation",
+               "franked_share", "dividend_yield", "embedded_gain"}
     unknown = set(override) - allowed
     if unknown:
         raise ValueError(f"unknown tax override(s) {sorted(unknown)} for "
                          f"regime {key!r}; expected {sorted(allowed)}")
-    return dataclasses.replace(regime, **{k: float(v)
-                                          for k, v in override.items()})
+    fund_keys = {"realisation", "franked_share", "dividend_yield",
+                 "embedded_gain"}
+    fund_over = {k: float(v) for k, v in override.items() if k in fund_keys}
+    plain = {k: float(v) for k, v in override.items() if k not in fund_keys}
+    if fund_over:
+        base = regime.fund_tax or FundTax()
+        plain["fund_tax"] = dataclasses.replace(base, **fund_over)
+    return dataclasses.replace(regime, **plain)
 
 
 #: What each pension system's arm is paired with. The two US rows are the

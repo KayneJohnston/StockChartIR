@@ -165,9 +165,13 @@ class TestAustralianRetiree:
         returning zero for everything."""
         assert self._tax(3.0, 0.0) > 0.0
 
-    def test_the_regime_charges_fund_earnings_during_accumulation(self
-                                                                  ) -> None:
-        assert tx.REGIMES["au"].fund_earnings_tax == pytest.approx(0.15)
+    def test_the_regime_carries_a_fund_tax_model_not_a_rate(self) -> None:
+        """The statutory 15% is not what a fund pays, and the difference is
+        more than an order of magnitude, so the regime holds the model."""
+        fund = tx.REGIMES["au"].fund_tax
+        assert fund is not None
+        assert fund.rate == pytest.approx(0.15)
+        assert abs(fund.drag(0.5)) < 0.15 * 0.05
 
 
 class TestUnitedStatesRetiree:
@@ -236,11 +240,13 @@ class TestRegime:
                 np.array([0.0, 0.1, 1.0]), np.array([0.0, 0.05, 0.5]), 1.5)
             assert np.all(owed >= 0.0)
 
-    def test_config_overrides_reach_the_regime(self) -> None:
+    def test_config_overrides_reach_the_fund_model(self) -> None:
         got = tx.regime_from_config(
-            "au", {"tax": {"au": {"fund_earnings_tax": 0.07}}})
-        assert got.fund_earnings_tax == pytest.approx(0.07)
+            "au", {"tax": {"au": {"realisation": 0.0}}})
+        assert got.fund_tax.realisation == pytest.approx(0.0)
         assert got.scale is tx.AU_SCALE
+        # Everything else on the fund model survives the override.
+        assert got.fund_tax.rate == pytest.approx(tx.REGIMES["au"].fund_tax.rate)
 
     def test_an_unknown_override_is_refused_rather_than_ignored(self) -> None:
         with pytest.raises(ValueError, match="unknown tax override"):
@@ -252,3 +258,86 @@ class TestRegime:
 
     def test_no_config_returns_the_regime_unchanged(self) -> None:
         assert tx.regime_from_config("au") is tx.REGIMES["au"]
+
+
+class TestFundTax:
+    """What a superannuation fund pays while accumulating, which is not the
+    statutory rate on the return and is not close to it.
+
+    An earlier version of this project charged 15% of the nominal return and
+    reported that it cost an Australian household 16.8% of lifetime
+    certainty-equivalent consumption. That was wrong by more than an order of
+    magnitude, for three separate reasons, and each gets a test here.
+    """
+
+    def test_unrealised_gains_are_not_taxed(self) -> None:
+        """The first reason, and the largest. A fund that holds owes nothing
+        on appreciation; only what it sells is assessable."""
+        held = tx.FundTax(realisation=0.0)
+        assert held.gains_drag() == pytest.approx(0.0)
+
+    def test_holding_to_the_pension_phase_leaves_only_dividends(self) -> None:
+        """Which is the case a member should hold in mind: earnings in the
+        retirement phase are exempt, so a gain carried across that boundary
+        is never taxed at all."""
+        held = tx.FundTax(realisation=0.0)
+        assert held.drag(0.5) == pytest.approx(held.income_drag(0.5))
+
+    def test_the_discount_makes_the_gains_rate_ten_per_cent(self) -> None:
+        """The second reason: a gain held beyond a year is discounted by a
+        third before the 15% touches it."""
+        assert tx.FundTax().capital_gains_rate == pytest.approx(0.10)
+
+    def test_a_franked_dividend_is_a_refund_not_a_charge(self) -> None:
+        """The third reason, and the one most easily missed: at a 30% company
+        rate against a 15% fund rate the imputation credit exceeds the
+        liability, so a domestic dividend *adds* to the fund."""
+        assert tx.FundTax().dividend_value(1.0) > 0.0
+
+    def test_an_unfranked_dividend_is_charged_at_the_fund_rate(self) -> None:
+        fund = tx.FundTax()
+        assert fund.dividend_value(0.0) == pytest.approx(-fund.rate)
+
+    def test_franking_subsidises_the_international_sleeve(self) -> None:
+        """A portfolio franked enough comes out ahead on income overall,
+        which is why the sign of the whole thing depends on the allocation."""
+        fund = tx.FundTax()
+        assert fund.income_drag(1.0) > 0.0        # all domestic
+        assert fund.income_drag(0.0) < 0.0        # all international
+        assert fund.income_drag(0.5) > fund.income_drag(0.0)
+
+    def test_the_drag_is_a_small_fraction_of_the_statutory_rate(self) -> None:
+        """The headline check. Charging 15% against a return of roughly 8%
+        would cost about 1.2% a year; the truth is an order of magnitude
+        smaller, and this is what the earlier version got wrong."""
+        fund = tx.FundTax()
+        naive = abs(fund.components(0.5)["naive_drag"])
+        assert abs(fund.drag(0.5)) < naive / 10.0
+
+    def test_more_realisation_costs_more(self) -> None:
+        fund = tx.FundTax()
+        drags = [dataclasses.replace(fund, realisation=r).drag(0.5)
+                 for r in (0.0, 0.1, 0.25, 0.5)]
+        assert drags == sorted(drags, reverse=True)
+
+    def test_the_components_add_to_the_total(self) -> None:
+        parts = tx.FundTax().components(0.5)
+        assert parts["income_drag"] + parts["gains_drag"] == \
+            pytest.approx(parts["total_drag"])
+
+    def test_a_rate_outside_zero_to_one_is_refused(self) -> None:
+        for field in ("rate", "cgt_discount", "company_rate", "franked_share",
+                      "embedded_gain"):
+            with pytest.raises(ValueError, match=field):
+                tx.FundTax(**{field: 1.5})
+
+    def test_negative_realisation_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="realisation"):
+            tx.FundTax(realisation=-0.1)
+
+    def test_a_zero_rate_fund_pays_and_receives_nothing(self) -> None:
+        """The control: with no fund tax there is no liability and no credit,
+        so the drag is exactly zero however the portfolio is split."""
+        free = tx.FundTax(rate=0.0, company_rate=0.0)
+        for weight in (0.0, 0.5, 1.0):
+            assert free.drag(weight) == pytest.approx(0.0)

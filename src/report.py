@@ -10323,6 +10323,8 @@ def write_doc_33(
     """The tax each retirement system actually charges."""
     swept = frames["swept"]
     curve = frames.get("curve", pd.DataFrame())
+    fund = frames.get("fund", pd.DataFrame())
+    parts = frames.get("components", pd.DataFrame())
     found = notes.get("verdict", {"measured": False})
     torpedo = notes.get("torpedo", {})
     gamma = float(notes["gamma"])
@@ -10413,6 +10415,63 @@ def write_doc_33(
     else:
         verdict_line = ""
 
+    components_tbl = md_table(_compact(
+        parts, ["domestic_weight", "dividend_yield", "franked_credit",
+                "unfranked_credit", "income_drag", "gains_drag",
+                "total_drag", "naive_drag"],
+        {"domestic_weight": "Domestic share",
+         "dividend_yield": "Dividend yield",
+         "franked_credit": "Per $1 franked dividend",
+         "unfranked_credit": "Per $1 unfranked",
+         "income_drag": "Income drag a year",
+         "gains_drag": "Realised-gains drag a year",
+         "total_drag": "Total drag a year",
+         "naive_drag": "15% of the return, for comparison"}),
+        floatfmt="{:.5f}") if len(parts) else ""
+
+    if len(parts):
+        row = parts.iloc[0]
+        total, naive = float(row["total_drag"]), float(row["naive_drag"])
+        components_line = (
+            f"**Together they leave a drag of {abs(total):.3%} a year, "
+            f"against the {abs(naive):.2%} that charging the statutory rate "
+            f"on the return would imply**"
+            + (f" -- a factor of {abs(naive / total):.0f}." if total else ".")
+            + f" The income side is "
+            f"{'positive' if float(row['income_drag']) > 0 else 'negative'}: "
+            f"at a domestic share of {float(row['domestic_weight']):.0%} the "
+            f"franking credit on one part of the portfolio "
+            f"{'more than covers' if float(row['income_drag']) > 0 else 'does not cover'}"
+            f" the fund's tax on the rest.")
+    else:
+        components_line = ""
+
+    fund_tbl = md_table(_compact(
+        fund, ["realisation", "drag", "cec", "prob_ruin", "median_wealth",
+               "cost_pct"],
+        {"realisation": "Sold each year", "drag": "Drag a year",
+         "cec": "CEC", "prob_ruin": "Ruin",
+         "median_wealth": "Median wealth at retirement",
+         "cost_pct": "Against holding to the pension phase (%)"}),
+        floatfmt="{:.5f}") if len(fund) else ""
+
+    if len(fund) > 1 and "cost_pct" in fund.columns:
+        worst = float(fund["cost_pct"].min())
+        top = float(fund["realisation"].max())
+        measured = fund.iloc[(fund["realisation"] - 0.0335).abs()
+                             .argsort().iloc[0]]
+        fund_line = (
+            f"**Holding until the pension phase is the reference, and it is "
+            f"not a fanciful case** -- it is what an index fund left alone "
+            f"does. At the {float(measured['realisation']):.2%} a year "
+            f"`docs/26` measures for this strategy, all of it forced by drift "
+            f"rather than chosen, the charge costs "
+            f"{abs(float(measured['cost_pct'])):.1f}% of the certainty "
+            f"equivalent. Only at {top:.0%} turnover -- an active fund, not "
+            f"this one -- does it reach {abs(worst):.1f}%.")
+    else:
+        fund_line = ""
+
     figure_list = "\n".join(f"* `{f}`" for f in figures)
     intro = _header(
         "33 - The Tax Each System Actually Charges",
@@ -10482,7 +10541,37 @@ point of an interacting charge, so a single spending rule would not show it.
 
 {all_tbl}
 
-## 5. What this changes
+## 5. What the Australian fund actually pays
+
+The statutory rate on fund earnings is 15%, and charging that against the
+return would overstate the charge by more than an order of magnitude. Three
+things separate the headline from what is paid, and on this portfolio they
+very nearly cancel it:
+
+* **Unrealised gains are not income.** A fund that holds owes nothing on
+  appreciation; only what it sells is assessable. And because earnings in the
+  retirement phase are exempt outright, a gain carried across that boundary
+  is never taxed at all -- so a member who does not realise before the
+  pension starts pays capital gains tax of zero, not of fifteen per cent.
+* **A realised gain held beyond a year is discounted by a third**, so the
+  rate on it is ten per cent.
+* **A franked dividend carries a credit worth more than the liability.** At a
+  30% company rate against a 15% fund rate the credit is worth +21.4% of the
+  cash dividend, so a domestic dividend is a refund, and it subsidises the
+  tax on the international sleeve rather than adding to it.
+
+{components_tbl}
+
+{components_line}
+
+What survives turns on how much the fund is made to sell, so that is what is
+swept rather than the rate.
+
+{fund_tbl}
+
+{fund_line}
+
+## 6. What this changes
 
 * The untaxed comparison in `docs/32` was not neutral between the two
   systems, and this section says by how much rather than leaving a reader
@@ -10495,7 +10584,7 @@ point of an interacting charge, so a single spending rule would not show it.
   calibration the American household's true marginal rate is close to twice
   the statutory one over most of its plausible withdrawal range.
 
-## 6. What is still not modelled
+## 7. What is still not modelled
 
 * State and local income taxes, which would raise the American charge.
 * Capital gains tax and its one-third discount inside an Australian fund,
@@ -10506,11 +10595,11 @@ point of an interacting charge, so a single spending rule would not show it.
   comparison to the retirement wrapper and is the assumption most likely to
   matter of the four.
 
-## 7. Figures
+## 8. Figures
 
 {figure_list}
 
-## 8. Reproduction
+## 9. Reproduction
 
 ```bash
 python main.py --steps 33

@@ -7560,8 +7560,9 @@ def section_tax(ctx: Any) -> List[Flowable]:
         "income is taxed, and when."))
     out.append(ctx.p(
         "The asymmetry is the reason it could not be reasoned about. "
-        "Australia charges early and smoothly — 15% on fund earnings through "
-        "accumulation — and then not at all: superannuation drawn after 60 "
+        "Australia charges early and lightly — on fund earnings through "
+        "accumulation, and far less than the 15% headline implies — and then "
+        "not at all: superannuation drawn after 60 "
         "from a taxed fund is not merely tax-free but <i>not assessable "
         "income</i>, so it cannot affect the tax on anything else. The Age "
         "Pension is assessable, but the seniors and pensioners offset lifts "
@@ -7665,6 +7666,61 @@ def section_tax(ctx: Any) -> List[Flowable]:
                 "The untaxed comparison in Section #leisure therefore did not "
                 "merely lack precision; it pointed the wrong way. That is "
                 "what a section like this exists to find."))
+    parts_frame = f.table("tax_fund_components")
+    fund_frame = f.table("tax_fund_earnings")
+    if len(parts_frame):
+        row = parts_frame.iloc[0]
+        total, naive = float(row["total_drag"]), float(row["naive_drag"])
+        out.append(ctx.h2("#tax.3 What the Australian fund actually pays"))
+        out.append(ctx.p(
+            "The statutory rate on fund earnings is 15%, and charging that "
+            "against the return would overstate the charge by more than an "
+            "order of magnitude. Three things stand between the headline and "
+            "what is paid, and on this portfolio they very nearly cancel it. "
+            "<b>Unrealised gains are not income</b>: a fund that holds owes "
+            "nothing on appreciation, and because earnings in the retirement "
+            "phase are exempt outright, a gain carried across that boundary "
+            "is never taxed at all. <b>A realised gain held beyond a year is "
+            "discounted by a third</b>, so the rate on it is ten per cent. "
+            "And <b>a franked dividend carries a credit worth more than the "
+            "liability</b> — Section #franking derives it on this same panel "
+            "— so a domestic dividend is a refund that subsidises the tax on "
+            "the international sleeve rather than adding to it."))
+        out.append(ctx.p(
+            f"Together they leave a drag of {abs(total):.3%} a year against "
+            f"the {abs(naive):.2%} the statutory rate on the return would "
+            f"imply"
+            + (f", a factor of {abs(naive / total):.0f}." if total else ".")
+            + f" At a domestic share of "
+            f"{float(row['domestic_weight']):.0%} the income side comes out "
+            + ("positive: the credit more than covers the fund's tax on the "
+               "rest of the portfolio."
+               if float(row["income_drag"]) > 0 else
+               "negative: the credit does not cover the tax on the rest.")))
+        if len(fund_frame) > 1 and "cost_pct" in fund_frame.columns:
+            measured = fund_frame.iloc[
+                (fund_frame["realisation"] - 0.0335).abs().argsort().iloc[0]]
+            out.extend(ctx.table(
+                [["Sold each year", "Drag a year", "CEC", "Ruin (%)",
+                  "Against holding to the pension phase (%)"]]
+                + [[f"{float(r['realisation']):.2%}",
+                    f"{float(r['drag']):+.4%}", f"{float(r['cec']):.4f}",
+                    f"{100 * float(r['prob_ruin']):.1f}",
+                    f"{float(r['cost_pct']):+.1f}"]
+                   for _, r in fund_frame.iterrows()],
+                "The Australian charge by how much the fund is made to sell.",
+                note="Holding until the pension phase is the reference. "
+                     "Section #turnover measures 3.35% a year for this "
+                     "strategy, all of it forced by drift rather than "
+                     "chosen."))
+            out.append(ctx.p(
+                f"<b>Holding until the pension phase is not a fanciful "
+                f"case</b> — it is what an index fund left alone does. At "
+                f"the {float(measured['realisation']):.2%} a year Section "
+                f"#turnover measures for this strategy, the charge costs "
+                f"{abs(float(measured['cost_pct'])):.1f}% of the certainty "
+                f"equivalent."))
+
     out.append(ctx.note(
         "What is still missing, in rough order of how much it would move "
         "this: the Australian marginal tax on earnings held outside super, "

@@ -1099,12 +1099,14 @@ tax:
   # (section #franking measures them on this panel) and the one-third
   # discount on gains held beyond a year both reduce what a growth fund
   # actually pays, so the statutory rate is an upper bound on the drag.
+  # Overrides for the Australian fund's own tax. `realisation` is the share
+  # of the portfolio sold each year; `src/turnover.py` measures 3.35% for
+  # this strategy, all of it forced by drift rather than chosen.
   au:
-    fund_earnings_tax: 0.15
-  # The statutory 15% is an upper bound on what a fund actually pays, and by
-  # a wide margin: franking credits (section #franking measures a fully
-  # franked credit worth 42.9% on this panel) and the one-third discount on
-  # gains held beyond a year both cut it. Sweeping the rate says how much of
-  # the result depends on a number nobody can pin down, which is better than
-  # picking one and hoping.
-  fund_earnings_grid: [0.00, 0.05, 0.075, 0.10, 0.15]
+    realisation: 0.0335
+  # What the fund pays turns on how much it is made to sell, because
+  # unrealised gains are not income and earnings in the pension phase are
+  # exempt outright -- so a gain carried across that boundary is never taxed.
+  # Zero is the case worth holding in mind: hold until the pension starts and
+  # the only tax is on unfranked dividends.
+  realisation_grid: [0.0, 0.0335, 0.10, 0.25, 0.50]
