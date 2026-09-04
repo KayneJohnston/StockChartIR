@@ -9888,18 +9888,19 @@ def write_doc_32(
          "cost_per_year_pct": "per year (%)"}),
         floatfmt="{:.1f}") if len(comparison) else ""
 
-    if sysfound.get("gate_pushes_later"):
+    if sysfound.get("australian_pension_later"):
         gate_line = (
-            f"**The eligibility gate pushes the date later, and by a lot.** "
-            f"On the same voluntary saving, an age-gated pension moves the "
-            f"best date from {sysfound['us_age']:.0f} to "
-            f"{sysfound['gated_age']:.0f} -- "
-            f"{sysfound['gate_years_later']:.0f} years. Nothing about the "
-            f"investor changed; what changed is that stopping early no longer "
-            f"starts the pension.")
+            f"**Australia's pension puts the date later, by "
+            f"{sysfound['australian_pension_years']:.0f} years.** On the same "
+            f"voluntary saving the best date moves from "
+            f"{sysfound['us_age']:.0f} under the American schedule to "
+            f"{sysfound['gated_age']:.0f}. Nothing about the investor "
+            f"changed. But the two systems differ in *two* ways at once, and "
+            f"that number belongs to the pair rather than to either of them, "
+            f"which is what the next subsection is for.")
     elif sysfound.get("measured"):
         gate_line = (
-            f"The eligibility gate does not push the date later: it sits at "
+            f"Australia's pension does not push the date later: it sits at "
             f"{sysfound['gated_age']:.0f} against "
             f"{sysfound['us_age']:.0f} under the American schedule.")
     else:
@@ -9907,15 +9908,15 @@ def write_doc_32(
 
     if sysfound.get("super_buys_back"):
         super_line = (
-            f"**And compulsory saving buys most of it back.** Adding the "
+            f"**Compulsory saving takes some of it back.** Adding the "
             f"Superannuation Guarantee moves the date from "
             f"{sysfound['gated_age']:.0f} to "
             f"{sysfound['legislated_age']:.0f}, recovering "
             f"{sysfound['super_years_earlier']:.0f} of the "
-            f"{sysfound.get('gate_years_later', float('nan')):.0f} the gate "
-            f"cost. The two halves of the Australian system pull in opposite "
-            f"directions on this question, which is why a single "
-            f"Australia-versus-America row would say nothing.")
+            f"{sysfound.get('australian_pension_years', float('nan')):.0f} "
+            f"between the two systems. This one *is* a single change -- the "
+            f"guarantee is on or off and nothing else moves -- so unlike the "
+            f"row above it can be read as a cause.")
     elif sysfound.get("measured"):
         super_line = (
             f"The Superannuation Guarantee does not move the date earlier: "
@@ -9956,6 +9957,150 @@ def write_doc_32(
                 f"a few years on.")
     else:
         cost_line = ""
+
+    # ---- which of the two differences is doing the work -----------------
+    feat = notes.get("feature_verdict", {"measured": False})
+    decomposition = frames.get("decomposition", pd.DataFrame())
+    features = frames.get("features", pd.DataFrame())
+    bite = notes.get("means_test_bite", {})
+
+    if len(decomposition):
+        shown = decomposition.copy()
+        # Ages and year counts are whole numbers; only the certainty
+        # equivalents want decimals, and a shared float format gives the
+        # ages four of them.
+        for col in ("age", "effect"):
+            shown[col] = shown[col].map(
+                lambda v: "--" if not np.isfinite(v) else f"{v:+.0f}"
+                if col == "effect" else f"{v:.0f}")
+        for col in ("cec", "cec_effect"):
+            shown[col] = shown[col].map(
+                lambda v: "--" if not np.isfinite(v) else f"{v:+.4f}"
+                if col == "cec_effect" else f"{v:.4f}")
+        feature_tbl = md_table(_compact(
+            shown, ["feature", "age", "effect", "cec", "cec_effect"],
+            {"feature": "What changes", "age": "Best date",
+             "effect": "Years later than the baseline",
+             "cec": "CEC", "cec_effect": "CEC against the baseline"}))
+    else:
+        feature_tbl = ""
+
+    if feat.get("measured"):
+        timing, formula = feat["timing_years"], feat["formula_years"]
+        dominant = feat.get("dominant")
+        which = ("when the benefit starts" if dominant == "timing"
+                 else "how the benefit is worked out")
+        other = ("how it is worked out" if dominant == "timing"
+                 else "when it starts")
+        feature_line = (
+            f"**It is {which}, not {other}.** Changing only the start date -- "
+            f"the pension arrives at "
+            f"{int(notes['age_pension_age'])} however early work stops, and "
+            f"there is no claiming choice left to reduce -- moves the best "
+            f"date by {timing:+.0f} years. Changing only the formula, so that "
+            f"a means-tested pension replaces an earnings-related one while "
+            f"still starting the day work does, moves it {formula:+.0f}.")
+        if feat.get("timing_opposes_joint"):
+            feature_line += (
+                f" The eligibility gate moves the date the *opposite* way to "
+                f"the system it belongs to, and it is worth being clear why: "
+                f"a pension payable at a fixed age is not reduced for "
+                f"stopping early, whereas an actuarially adjusted one is. "
+                f"Removing that reduction makes retiring early cheaper, not "
+                f"dearer. The gate takes away a bridge and a penalty at the "
+                f"same time, and on this panel the penalty is worth more.")
+        if not feat.get("separable", True):
+            feature_line += (
+                f" The two do not simply add: the interaction is "
+                f"{feat['interaction_years']:+.0f} years against a joint "
+                f"{feat['both_years']:+.0f}, which is "
+                f"{feat.get('interaction_share', float('nan')):.0%} of it. "
+                f"That is what you would expect if one feature disarms the "
+                f"other -- once the means test has taken the pension away, "
+                f"the date it would have arrived on stops mattering.")
+    else:
+        feature_line = ""
+
+    if bite:
+        bite_line = (
+            f"**Why the formula does so much: this household is not poor "
+            f"enough to be paid.** The assets test withdraws the pension at "
+            f"{float(bite['free_area_multiple']):.1f} times average earnings "
+            f"and reaches zero at "
+            f"{float(bite['cutoff_multiple']):.1f} times. The model's median "
+            f"retiree holds "
+            f"{float(bite['median_wealth_multiple']):.1f} times -- "
+            f"{float(bite['median_over_cutoff']):.1f} times the cut-off -- so "
+            f"{float(bite['share_above_cutoff']):.0%} of them are above the "
+            f"point where the Age Pension has been tapered away entirely. "
+            f"Against a full rate worth "
+            f"{float(bite['full_rate_replacement']):.0%} of career-average "
+            f"income, what is actually paid averages "
+            f"{float(bite['benefit_replacement']):.1%}. The American "
+            f"schedule, which is not means-tested at all, pays "
+            f"{float(bite.get('us_benefit_replacement', float('nan'))):.0%}. "
+            f"The comparison above is therefore only partly about pension "
+            f"*design*; it is substantially about a household receiving one "
+            f"pension and not the other.")
+    else:
+        bite_line = ""
+
+    # ---- and under a rule that fixes the standard of living -------------
+    rulefound = notes.get("rule_verdict", {"measured": False})
+    rules_frame = frames.get("rules", pd.DataFrame())
+    rule_tbl = ""
+    if len(rules_frame):
+        shown = rules_frame.copy()
+        shown["system"] = shown["system"].map(
+            lambda k: SYSTEM_NAME.get(str(k), str(k)))
+        shown["prob_ruin"] = 100.0 * shown["prob_ruin"]
+        rule_tbl = md_table(_compact(
+            shown, ["rule", "system", "cec", "prob_ruin", "mean_consumption",
+                    "p5_consumption"],
+            {"rule": "Withdrawal rule", "system": "Pension system",
+             "cec": "CEC", "prob_ruin": "Ruin (%)",
+             "mean_consumption": "Mean consumption",
+             "p5_consumption": "5th percentile"}), floatfmt="{:.4f}")
+
+    if rulefound.get("measured"):
+        spread = rulefound.get("portfolio_rule_ruin_spread", float("nan"))
+        if rulefound.get("portfolio_rule_ruin_identical"):
+            rule_line = (
+                f"**Under the portfolio rule the three systems have the same "
+                f"probability of ruin, to the last decimal.** That is not a "
+                f"coincidence and not a finding: a rule that withdraws a "
+                f"fixed share of wealth *at retirement* scales its spending "
+                f"with the portfolio, so doubling the balance doubles the "
+                f"withdrawals and runs out in the same year. Ruin under it is "
+                f"a property of the return sequence alone. Every statement "
+                f"about safety made under that rule -- including this "
+                f"project's -- is silent about how much was saved.")
+        else:
+            rule_line = (
+                f"Under the portfolio rule, ruin varies by "
+                f"{spread:.4f} across the three systems -- a rule that spends "
+                f"a share of wealth carries most of the portfolio's size into "
+                f"its withdrawals rather than into its longevity.")
+        if rulefound.get("contender_ever_safer"):
+            rule_line += (
+                f" Hold the target still instead and the picture changes: at "
+                f"{rulefound['widest_ruin_rule'].replace('replace_', '')}% "
+                f"replacement the Australian household runs out "
+                f"{100.0 * rulefound['widest_ruin_gap']:.1f} percentage "
+                f"points less often than the American one. The Superannuation "
+                f"Guarantee buys safety, but only under a rule that lets it.")
+        if rulefound.get("safer_but_lower"):
+            rule_line += (
+                f" And yet the certainty equivalent still favours the "
+                f"American schedule at every target. Those two facts are "
+                f"consistent and the combination is the result: Australia's "
+                f"household runs out *less often* and is *poorer when it "
+                f"does*, because what remains after the portfolio is gone is "
+                f"a flat means-tested pension rather than an earnings-related "
+                f"one. A CRRA aggregator at this risk aversion prices the "
+                f"floor more heavily than the frequency.")
+    else:
+        rule_line = ""
 
     figure_list = "\n".join(f"* `{f}`" for f in figures)
     intro = _header(
@@ -10084,6 +10229,36 @@ pension with the SG separates the two.
 
 {cost_line}
 
+## 7. Which of the two differences does the work
+
+The section above changes two things at once. Australia's pension starts on a
+fixed birthday rather than when work stops, *and* it is worked out by a means
+test rather than from a career of earnings. Attributing the gap to either one
+without crossing them is guesswork, so this is the 2x2: each feature alone,
+then both, against the same baseline.
+
+{feature_tbl}
+
+{feature_line}
+
+{bite_line}
+
+## 8. The withdrawal rule is half the comparison
+
+Everything above spends by the project's own rule: a fixed real amount, set
+as a share of the portfolio at retirement. That rule cannot answer the
+question a pension is *for*. It sets the standard of living from the
+portfolio, so a bigger portfolio spends more rather than lasting longer, and
+a pension is spent *on top of* the withdrawal rather than funding part of it.
+
+The alternative fixes the target instead: spend a set share of pre-retirement
+income for life, net off whatever pension arrives, and draw the remainder
+from the portfolio. Both rules are run against all three systems below.
+
+{rule_tbl}
+
+{rule_line}
+
 **A caveat this arm needs and the others do not.** A retiree who exhausts the
 portfolio before the pension age receives, in this model, a means-tested
 payment at {float(notes['safety_net']):.0%} of the full rate, standing in for
@@ -10093,7 +10268,7 @@ thousand hitting the floor is enough to decide a certainty equivalent on its
 own. The level of that floor is a judgement, and the early dates are sensitive
 to it in a way the later ones are not.
 
-## 7. What this changes
+## 9. What this changes
 
 * The retirement date is not unpriceable -- it was unpriced. Charging for the
   years spent working turns `docs/31`'s corner into an interior optimum at
@@ -10113,11 +10288,11 @@ to it in a way the later ones are not.
   which would push the date the other way and which this parameterisation
   cannot represent, since `L` is bounded below at 1.
 
-## 8. Figures
+## 10. Figures
 
 {figure_list}
 
-## 9. Reproduction
+## 11. Reproduction
 
 ```bash
 python main.py --steps 32

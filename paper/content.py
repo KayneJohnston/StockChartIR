@@ -7271,25 +7271,27 @@ def section_leisure(ctx: Any) -> List[Flowable]:
             note="Break-evens are measured against each system's own "
                  "zero-leisure date, so they price the earlier retirement "
                  "rather than the system's own lean."))
-    if sysfound.get("gate_pushes_later"):
+    if sysfound.get("australian_pension_later"):
         out.append(ctx.p(
-            f"<b>The eligibility gate pushes the date later, and by a "
-            f"lot.</b> On the same voluntary saving, an age-gated pension "
-            f"moves the best date from {sysfound['us_age']:.0f} to "
-            f"{sysfound['gated_age']:.0f} — {sysfound['gate_years_later']:.0f} "
-            f"years. Nothing about the investor changed; what changed is that "
-            f"stopping early no longer starts the pension."))
+            f"<b>Australia's pension puts the date "
+            f"{sysfound['australian_pension_years']:.0f} years later.</b> On "
+            f"the same voluntary saving the best date moves from "
+            f"{sysfound['us_age']:.0f} under the American schedule to "
+            f"{sysfound['gated_age']:.0f}. Nothing about the investor "
+            f"changed. But the two systems differ in <i>two</i> ways at once, "
+            f"so that number belongs to the pair and not to either of them — "
+            f"which is what Section #leisure.5 is for."))
     if sysfound.get("super_buys_back"):
         out.append(ctx.p(
-            f"<b>And compulsory saving buys most of it back.</b> Adding the "
+            f"<b>Compulsory saving takes some of it back.</b> Adding the "
             f"Superannuation Guarantee moves the date from "
             f"{sysfound['gated_age']:.0f} to "
             f"{sysfound['legislated_age']:.0f}, recovering "
             f"{sysfound['super_years_earlier']:.0f} of the "
-            f"{sysfound.get('gate_years_later', float('nan')):.0f} the gate "
-            f"cost. The two halves of the Australian system pull opposite ways "
-            f"on this question, which is why a single Australia-versus-America "
-            f"row would say nothing at all."))
+            f"{sysfound.get('australian_pension_years', float('nan')):.0f} "
+            f"between the two systems. That one is a single change — the "
+            f"guarantee is on or off and nothing else moves — so unlike the "
+            f"row above it can be read as a cause."))
     if "legislated_vs_us_years" in sysfound:
         net = (f"Net of both, an Australian's best date is "
                f"{abs(sysfound['legislated_vs_us_years']):.0f} years "
@@ -7335,7 +7337,153 @@ def section_leisure(ctx: Any) -> List[Flowable]:
         f"later ones are not. Nor is preservation age modelled: this "
         f"portfolio can be drawn at 50, where Australian super cannot."))
 
-    out.append(ctx.h2("#leisure.5 What this changes"))
+    # ---- 2x2: which of the two differences does the work ----------------
+    feat = notes.get("feature_verdict", {"measured": False})
+    decomposition = frames.get("decomposition", pd.DataFrame())
+    bite = notes.get("means_test_bite", {})
+    if feat.get("measured"):
+        out.append(ctx.h2("#leisure.5 Which of the two differences does "
+                          "the work"))
+        out.append(ctx.p(
+            f"The comparison above changes two things at once. Australia's "
+            f"pension starts on a fixed birthday rather than when work stops, "
+            f"<i>and</i> it is worked out by a means test rather than from a "
+            f"career of earnings. Attributing the gap to either without "
+            f"crossing them is guesswork, so this is the 2×2: each feature "
+            f"alone, then both, against the same baseline."))
+        if len(decomposition):
+            out.append(ctx.table(
+                ["What changes", "Best date", "Years later", "CEC",
+                 "vs baseline"],
+                [[str(r["feature"]),
+                  "—" if not np.isfinite(r["age"]) else f"{r['age']:.0f}",
+                  f"{r['effect']:+.0f}",
+                  "—" if not np.isfinite(r["cec"]) else f"{r['cec']:.4f}",
+                  f"{r['cec_effect']:+.4f}"]
+                 for _, r in decomposition.iterrows()],
+                f"Each feature of Australia's pension against the American "
+                f"baseline, γ = {gamma:g}.",
+                note="The baseline is the American schedule: earnings-"
+                     "related, payable from retirement, actuarially reduced "
+                     "for claiming early."))
+        timing, formula = feat["timing_years"], feat["formula_years"]
+        dominant = feat.get("dominant")
+        which = ("when the benefit starts" if dominant == "timing"
+                 else "how the benefit is worked out")
+        other = ("how it is worked out" if dominant == "timing"
+                 else "when it starts")
+        body = (f"<b>It is {which}, not {other}.</b> Changing only the start "
+                f"date moves the best date by {timing:+.0f} years. Changing "
+                f"only the formula — a means-tested pension replacing an "
+                f"earnings-related one, still payable the day work stops — "
+                f"moves it {formula:+.0f}.")
+        if feat.get("timing_opposes_joint"):
+            body += (
+                f" The eligibility gate moves the date the <i>opposite</i> "
+                f"way to the system it belongs to, and the reason is worth "
+                f"stating: a pension payable at a fixed age is not reduced "
+                f"for stopping early, whereas an actuarially adjusted one is. "
+                f"The gate removes a bridge and a penalty at once, and on "
+                f"this panel the penalty is worth more than the bridge.")
+        out.append(ctx.p(body))
+        if not feat.get("separable", True):
+            out.append(ctx.p(
+                f"The two do not add. The interaction is "
+                f"{feat['interaction_years']:+.0f} years against a joint "
+                f"{feat['both_years']:+.0f}, or "
+                f"{feat.get('interaction_share', float('nan')):.0%} of it — "
+                f"which is what one feature disarming the other looks like. "
+                f"Once the means test has taken the pension away, the "
+                f"birthday it would have arrived on stops mattering."))
+        if bite:
+            out.append(ctx.p(
+                f"<b>And the formula does so much because this household is "
+                f"not poor enough to be paid.</b> The assets test begins "
+                f"withdrawing the pension at "
+                f"{float(bite['free_area_multiple']):.1f}× average earnings "
+                f"and reaches zero at "
+                f"{float(bite['cutoff_multiple']):.1f}×. The median retiree "
+                f"here holds {float(bite['median_wealth_multiple']):.1f}× — "
+                f"{float(bite['median_over_cutoff']):.1f} times the cut-off — "
+                f"so {float(bite['share_above_cutoff']):.0%} of them sit "
+                f"where the Age Pension has been tapered away entirely. "
+                f"Against a full rate worth "
+                f"{float(bite['full_rate_replacement']):.0%} of career-"
+                f"average income, what is actually paid averages "
+                f"{float(bite['benefit_replacement']):.1%}; the American "
+                f"schedule, means-tested against nothing, pays "
+                f"{float(bite.get('us_benefit_replacement', float('nan'))):.0%}"
+                f". So this is only partly a comparison of pension "
+                f"<i>designs</i>. It is substantially a comparison between a "
+                f"household that receives a pension and the same household "
+                f"receiving almost none."))
+
+    # ---- the withdrawal rule is half the comparison ----------------------
+    rulefound = notes.get("rule_verdict", {"measured": False})
+    rules_frame = frames.get("rules", pd.DataFrame())
+    if rulefound.get("measured"):
+        out.append(ctx.h2("#leisure.6 The withdrawal rule is half the "
+                          "comparison"))
+        out.append(ctx.p(
+            "Everything above spends by this project's own rule: a fixed real "
+            "amount set as a share of the portfolio at retirement. That rule "
+            "cannot answer the question a pension is <i>for</i>. It sets the "
+            "standard of living from the portfolio, so a larger balance "
+            "spends more rather than lasting longer, and the pension is spent "
+            "on top of the withdrawal rather than funding part of it. The "
+            "alternative fixes the target instead — a set share of "
+            "pre-retirement income for life, the pension netted off, the "
+            "portfolio paying the rest."))
+        if len(rules_frame):
+            out.append(ctx.table(
+                ["Rule", "Pension system", "CEC", "Ruin (%)", "Mean c",
+                 "5th pct c"],
+                [[str(r["rule"]),
+                  SYSTEM_LABEL.get(str(r["system"]), str(r["system"])),
+                  f"{r['cec']:.4f}", f"{100 * r['prob_ruin']:.1f}",
+                  f"{r['mean_consumption']:.3f}",
+                  f"{r['p5_consumption']:.3f}"]
+                 for _, r in rules_frame.iterrows()],
+                f"Each pension system under each withdrawal rule, γ = "
+                f"{gamma:g}, retiring at {reference}.",
+                note="The replacement rules target a share of average income "
+                     "over the final working years, held in real terms."))
+        if rulefound.get("portfolio_rule_ruin_identical"):
+            out.append(ctx.p(
+                "<b>Under the portfolio rule all three systems ruin at the "
+                "same rate, to the last decimal.</b> That is an artefact, not "
+                "a finding, and it is worth naming because this project has "
+                "leaned on that rule throughout: withdrawals set as a share "
+                "of wealth at retirement scale with the portfolio, so "
+                "doubling the balance doubles the spending and exhausts it in "
+                "the same year. Ruin under that rule is a property of the "
+                "return sequence alone, and says nothing about how much was "
+                "saved."))
+        if rulefound.get("contender_ever_safer"):
+            out.append(ctx.p(
+                f"<b>Hold the target still and the Superannuation Guarantee "
+                f"finally shows up where it should.</b> At "
+                f"{rulefound['widest_ruin_rule'].replace('replace_', '')}% "
+                f"replacement the Australian household runs out "
+                f"{100.0 * rulefound['widest_ruin_gap']:.1f} percentage "
+                f"points less often than the American one. Compulsory saving "
+                f"buys safety — but only under a rule that permits safety to "
+                f"be bought."))
+        if rulefound.get("safer_but_lower"):
+            out.append(ctx.p(
+                "<b>And the certainty equivalent still favours the American "
+                "schedule at every target.</b> Both facts hold at once, and "
+                "the combination is the result: the Australian household runs "
+                "out <i>less often</i> and is <i>poorer when it does</i>. "
+                "What remains once the portfolio is gone is a flat "
+                "means-tested pension rather than an earnings-related one, "
+                "and a CRRA aggregator at this risk aversion prices the depth "
+                "of the floor above the frequency of reaching it. A reader "
+                "who cares about the probability of running out and a reader "
+                "who cares about the worst case will rank these two systems "
+                "differently, and neither is misreading the table."))
+
+    out.append(ctx.h2("#leisure.7 What this changes"))
     out.extend(ctx.bullets([
         (f"<b>The retirement date is not unpriceable — it was unpriced.</b> "
          f"Charging for the years spent working turns Section #plan's corner "

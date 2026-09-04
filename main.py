@@ -4009,6 +4009,103 @@ def step32_leisure(cfg: Dict[str, Any],
     systems_swept = pd.concat(by_system.values(), ignore_index=True)
     comparison = le.system_comparison(system_optima, system_crossings)
 
+    # ---- which of the two differences is doing the work -----------------
+    # The systems above differ in two ways at once -- when the benefit starts
+    # and how it is worked out -- so their gap cannot be attributed to either
+    # without crossing them. This 2x2 does that, and it is the thing that
+    # says which feature to name.
+    feature_optima: Dict[str, pd.DataFrame] = {}
+    feature_crossings: Dict[str, pd.DataFrame] = {}
+    feature_frames: List[pd.DataFrame] = []
+    for arm in le.FEATURE_ARMS:
+        overrides, adjusted = le.feature_overrides(arm, cfg)
+        LOGGER.info("--- feature arm: %s (%s) ---", arm,
+                    le.FEATURE_LABEL.get(arm, arm))
+        block = le.sweep(build(overrides), spec, cfg, gamma, ages, grid,
+                         survive, factors if adjusted else None)
+        block.insert(0, "arm", arm)
+        feature_frames.append(block)
+        feature_optima[arm] = le.optimal_age(block).assign(arm=arm)
+        feature_crossings[arm] = le.break_even(block).assign(arm=arm)
+    features_swept = pd.concat(feature_frames, ignore_index=True)
+    feature_table = le.system_comparison(feature_optima, feature_crossings)
+    decomposition = le.feature_decomposition(feature_table)
+    feature_found = le.feature_verdict(decomposition)
+    LOGGER.info("feature decomposition: timing %+.0f years, formula %+.0f "
+                "years, both %+.0f, interaction %+.0f -- %s dominates",
+                feature_found.get("timing_years", float("nan")),
+                feature_found.get("formula_years", float("nan")),
+                feature_found.get("both_years", float("nan")),
+                feature_found.get("interaction_years", float("nan")),
+                feature_found.get("dominant", "neither"))
+
+    # Where this household sits against the assets test, which is what makes
+    # the formula matter as much as it does. Measured at the reference age so
+    # it is one household compared with itself under two schedules.
+    def _at_reference(overrides: Mapping[str, Any]) -> Any:
+        return build(overrides)(reference, 1.0)
+
+    au_over, _ = le.feature_overrides("both", cfg)
+    au_spec = dataclasses.replace(pl.spec_for(spec, reference), **au_over)
+    bite = le.means_test_bite(au_spec, _at_reference(au_over))
+    us_out = _at_reference({})
+    bite["us_benefit_replacement"] = float(
+        np.mean(us_out.social_security)
+        / np.mean(us_out.career_average_income))
+    bite["reference_age"] = float(reference)
+    # ---- and under a rule that holds the standard of living fixed --------
+    # Every comparison above spends a share of the portfolio, which makes
+    # ruin nearly scale-invariant: the guarantee's extra wealth withdraws
+    # more rather than lasting longer, so it cannot show up as safety. A
+    # replacement-rate rule fixes the target and lets wealth and pension land
+    # where they belong.
+    targets = [float(x) for x in lei_cfg.get("replacement_targets",
+                                             le.DEFAULT_TARGETS)]
+    rule_set: List[Tuple[str, Any]] = [
+        (str(spec.retirement_rule),
+         spg.from_spec(spec.retirement_rule, spec.rule_rate))]
+    rule_set += [(f"replace_{int(round(100 * t))}",
+                  spg.build("income_replacement", rate=t)) for t in targets]
+
+    def _simulate_rule(system: str, rule: Any) -> Any:
+        overrides, _ = le.system_overrides(system, cfg)
+        aged = dataclasses.replace(pl.spec_for(spec, reference), **overrides)
+        income = lc.simulate_income(aged, n_paths, shocks=shocks,
+                                    dom_eq=paths.dom_eq, intl_eq=paths.intl_eq)
+        strategy = lc.build_strategies(cfg, aged)[key]
+        return lc.simulate(paths, strategy, aged, income, spending=rule)
+
+    def _score_rule(outcome: Any) -> Dict[str, Any]:
+        aged = dataclasses.replace(pl.spec_for(spec, reference))
+        window = outcome.consumption[:, aged.n_working:]
+        return {
+            "cec": float(ut.crra_certainty_equivalent(
+                ut.bundle_from_outcome(outcome, cfg, aged), gamma, beta)),
+            "prob_ruin": float(np.mean(outcome.ruin)),
+            "mean_consumption": float(window.mean()),
+            "p5_consumption": float(np.percentile(window, 5)),
+            "median_wealth": float(np.median(outcome.wealth_at_retirement)),
+        }
+
+    rules_frame = le.rule_comparison(_simulate_rule, systems, rule_set,
+                                     _score_rule)
+    rule_found = le.rule_verdict(rules_frame,
+                                 portfolio_rule=str(spec.retirement_rule))
+    LOGGER.info("withdrawal rule: portfolio-anchored ruin spread %.4f across "
+                "systems; under a replacement target the widest gap is "
+                "%.1fpp at %s",
+                rule_found.get("portfolio_rule_ruin_spread", float("nan")),
+                100.0 * rule_found.get("widest_ruin_gap", float("nan")),
+                rule_found.get("widest_ruin_rule", "n/a"))
+
+    LOGGER.info("means test: median wealth %.1fx average earnings against a "
+                "cut-off of %.1fx; %.0f%% above it; pension pays %.1f%% of "
+                "career income against the American %.0f%%",
+                bite["median_wealth_multiple"], bite["cutoff_multiple"],
+                100.0 * bite["share_above_cutoff"],
+                100.0 * bite["benefit_replacement"],
+                100.0 * bite["us_benefit_replacement"])
+
     headline = arms[-1]
     anchors = le.anchor_table()
     found = le.verdict(swept[swept["claim_arm"] == headline], optima[headline],
@@ -4037,6 +4134,10 @@ def step32_leisure(cfg: Dict[str, Any],
     _save_table(pd.concat(system_crossings.values(), ignore_index=True),
                 tables, "leisure_systems_break_even")
     _save_table(comparison, tables, "leisure_systems_comparison")
+    _save_table(features_swept, tables, "leisure_features_sweep")
+    _save_table(feature_table, tables, "leisure_features_optimal")
+    _save_table(decomposition, tables, "leisure_features_decomposition")
+    _save_table(rules_frame, tables, "leisure_rule_comparison")
 
     figures = [str(plots.plot_leisure(
         swept, optima[headline], crossings[headline], claim_tbl, anchors,
@@ -4050,7 +4151,9 @@ def step32_leisure(cfg: Dict[str, Any],
          "unadjusted_optimal": optima.get("unadjusted", pd.DataFrame()),
          "systems": systems_swept, "system_comparison": comparison,
          "system_break_even": pd.concat(system_crossings.values(),
-                                        ignore_index=True)},
+                                        ignore_index=True),
+         "features": feature_table, "decomposition": decomposition,
+         "rules": rules_frame},
         figures,
         {"elapsed_seconds": elapsed, "gamma": gamma, "n_paths": n_paths,
          "strategy": key, "reference_age": reference, "arms": arms,
@@ -4058,7 +4161,9 @@ def step32_leisure(cfg: Dict[str, Any],
          "systems": systems,
          "age_pension_age": int(lei_cfg.get("age_pension_age", 67)),
          "safety_net": float(lei_cfg.get("pre_pension_safety_net", 0.0)),
-         "system_verdict": le.system_verdict(comparison)})
+         "system_verdict": le.system_verdict(comparison),
+         "feature_verdict": feature_found, "means_test_bite": bite,
+         "rule_verdict": rule_found, "replacement_targets": targets})
     LOGGER.info("docs/32 written (%.0fs)", elapsed)
     state["leisure_break_even"] = crossings[headline]
     return state

@@ -114,6 +114,48 @@ TAPER_PER_YEAR: float = 3.0 * 26.0 / 1_000.0
 SG_RATE: float = 0.12
 SG_CONTRIBUTIONS_TAX: float = 0.15
 
+#: Resident income tax scale, ``(threshold, marginal rate)`` from the bottom
+#: up, plus the Medicare levy. 2025-26 rates, read 2 September 2026.
+#:
+#: This is here for one purpose: the two contribution streams in this model
+#: are quoted on different bases. A household's voluntary saving is a share
+#: of what reaches their bank account; the Superannuation Guarantee is a
+#: share of pre-tax ordinary time earnings. Comparing them without the wedge
+#: understates the guarantee by the average tax rate, so the wedge is
+#: computed here from the scale rather than guessed.
+TAX_BRACKETS: Tuple[Tuple[float, float], ...] = (
+    (0.0, 0.0),
+    (18_200.0, 0.16),
+    (45_000.0, 0.30),
+    (135_000.0, 0.37),
+    (190_000.0, 0.45),
+)
+MEDICARE_LEVY: float = 0.02
+
+
+def income_tax(taxable: float,
+               brackets: Tuple[Tuple[float, float], ...] = TAX_BRACKETS,
+               levy: float = MEDICARE_LEVY) -> float:
+    """Tax on ``taxable`` under a marginal scale, plus a flat levy."""
+    taxable = max(float(taxable), 0.0)
+    owed = 0.0
+    for (lower, rate), upper in zip(
+            brackets, [b[0] for b in brackets[1:]] + [float("inf")]):
+        if taxable <= lower:
+            break
+        owed += (min(taxable, upper) - lower) * rate
+    return owed + taxable * levy
+
+
+def average_tax_rate(income: float = AWOTE_ANNUAL_AUD, **kwargs: Any) -> float:
+    """The average, not marginal, rate at ``income``.
+
+    Average because the whole of the guarantee is grossed up, not its top
+    slice: the question is what share of a salary reaches the bank, and that
+    is the average rate by definition.
+    """
+    return income_tax(income, **kwargs) / income if income > 0.0 else 0.0
+
 
 @dataclasses.dataclass(frozen=True)
 class System:

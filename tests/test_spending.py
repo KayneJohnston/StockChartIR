@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import dataclasses
+
 import numpy as np
 import pytest
 
@@ -258,3 +260,72 @@ class TestIntegrationWithTheSimulator:
         np.testing.assert_allclose(explicit.consumption, implicit.consumption)
         np.testing.assert_allclose(explicit.bequest, implicit.bequest)
         np.testing.assert_array_equal(explicit.ruin, implicit.ruin)
+
+
+class TestIncomeReplacementRule:
+    """The only rule here that sets spending from the standard of living
+    rather than from the portfolio, which is what makes it the right one for
+    comparing pension systems."""
+
+    @staticmethod
+    def _state(wealth=100.0, income=10.0, benefit=0.0, n=4, **kw):
+        arr = lambda v: np.full(n, float(v))
+        return sp.SpendingState(
+            year=kw.get("year", 0), age=kw.get("age", 65),
+            years_remaining=kw.get("years_remaining", 30),
+            wealth=arr(wealth), prev_withdrawal=arr(0.0),
+            initial_withdrawal=arr(0.0), wealth_at_retirement=arr(wealth),
+            last_return=arr(0.05), last_inflation=arr(0.02),
+            pre_retirement_income=arr(income), benefit=arr(benefit))
+
+    def test_it_targets_a_share_of_income(self) -> None:
+        rule = sp.IncomeReplacementRule(rate=0.75)
+        assert rule.desired(self._state(income=10.0)) == \
+            pytest.approx(np.full(4, 7.5))
+
+    def test_the_pension_displaces_the_withdrawal(self) -> None:
+        """The whole point: a benefit funds the target rather than adding to
+        it, so a generous pension buys portfolio longevity, not spending."""
+        rule = sp.IncomeReplacementRule(rate=0.75)
+        assert rule.desired(self._state(income=10.0, benefit=3.0)) == \
+            pytest.approx(np.full(4, 4.5))
+
+    def test_a_pension_above_the_target_asks_for_nothing(self) -> None:
+        rule = sp.IncomeReplacementRule(rate=0.50)
+        assert rule.desired(self._state(income=10.0, benefit=8.0)) == \
+            pytest.approx(np.zeros(4))
+
+    def test_the_target_does_not_move_with_the_portfolio(self) -> None:
+        """Which is what makes ruin fall when wealth rises, unlike every
+        portfolio-anchored rule in this module."""
+        rule = sp.IncomeReplacementRule(rate=0.75)
+        poor = rule.desired(self._state(wealth=50.0, income=10.0))
+        rich = rule.desired(self._state(wealth=500.0, income=10.0))
+        assert poor == pytest.approx(rich)
+
+    def test_the_target_does_move_with_income(self) -> None:
+        rule = sp.IncomeReplacementRule(rate=0.75)
+        low = rule.desired(self._state(income=8.0))
+        high = rule.desired(self._state(income=12.0))
+        assert (high > low).all()
+
+    def test_it_is_flat_over_the_retirement(self) -> None:
+        rule = sp.IncomeReplacementRule(rate=0.75)
+        early = rule.desired(self._state(year=0, years_remaining=30))
+        late = rule.desired(self._state(year=25, years_remaining=5))
+        assert early == pytest.approx(late)
+
+    def test_missing_income_is_refused_rather_than_assumed(self) -> None:
+        rule = sp.IncomeReplacementRule(rate=0.75)
+        state = dataclasses.replace(self._state(), pre_retirement_income=None)
+        with pytest.raises(ValueError, match="pre_retirement_income"):
+            rule.desired(state)
+
+    def test_it_is_in_the_registry_and_takes_a_rate(self) -> None:
+        built = sp.build("income_replacement", rate=0.60)
+        assert isinstance(built, sp.IncomeReplacementRule)
+        assert built.rate == pytest.approx(0.60)
+
+    def test_the_label_names_the_rate_it_carries(self) -> None:
+        assert "60%" in sp.build("income_replacement", rate=0.60).describe()[
+            "label"]

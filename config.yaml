@@ -998,6 +998,12 @@ leisure:
   # Gompertz parameters for the survival-weighted arm, matching step 24.
   mortality_modal_age: 88.0
   mortality_dispersion: 10.0
+  # Shares of pre-retirement income the replacement-rate rule targets. The
+  # project's own rule spends a share of the *portfolio*, which makes ruin
+  # nearly scale-invariant and hides what extra saving buys; these hold the
+  # standard of living fixed instead and let the portfolio and the pension
+  # fund it between them.
+  replacement_targets: [0.50, 0.75, 1.00]
   # Pension systems compared. The two differ in more than their generosity:
   # US social security can be claimed from the day work stops (adjusted for
   # the age), while Australia's Age Pension is payable at 67 however early

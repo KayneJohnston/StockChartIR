@@ -13,6 +13,7 @@ than the value of leisure.
 from __future__ import annotations
 
 import dataclasses
+import types
 
 import numpy as np
 import pandas as pd
@@ -319,8 +320,43 @@ class TestPensionSystems:
         assert "super_guarantee_rate" not in gate
         assert full["super_guarantee_rate"] > 0.0
         assert {k: v for k, v in full.items()
-                if k != "super_guarantee_rate"
-                and k != "super_contributions_tax"} == gate
+                if k not in ("super_guarantee_rate",
+                             "super_contributions_tax",
+                             "income_tax_rate")} == gate
+
+    def test_the_guarantee_is_grossed_to_the_take_home_base(self) -> None:
+        """The guarantee is a share of pre-tax earnings and the savings rate a
+        share of take-home pay. Quoting both as one number understates the
+        guarantee, so the wedge has to ride with it."""
+        cfg = self._cfg()
+        full, _ = le.system_overrides("au_as_legislated", cfg)
+        assert full["income_tax_rate"] > 0.0
+        spec = dataclasses.replace(
+            lc.LifecycleSpec(),
+            **{k: full[k] for k in ("super_guarantee_rate",
+                                    "super_contributions_tax",
+                                    "income_tax_rate")})
+        pre_tax = full["super_guarantee_rate"] * (
+            1.0 - full["super_contributions_tax"])
+        assert spec.super_net_rate > pre_tax
+        assert spec.super_net_rate == pytest.approx(
+            pre_tax / (1.0 - full["income_tax_rate"]))
+
+    def test_a_zero_tax_rate_conflates_the_bases_again(self) -> None:
+        """The control: every result before this reconciliation used one base
+        for both, which is what a zero wedge reproduces."""
+        cfg = self._cfg()
+        zeroed = {**cfg, "pension": {**cfg["pension"], "income_tax_rate": 0.0}}
+        full, _ = le.system_overrides("au_as_legislated", zeroed)
+        assert full["income_tax_rate"] == 0.0
+        spec = dataclasses.replace(
+            lc.LifecycleSpec(),
+            **{k: full[k] for k in ("super_guarantee_rate",
+                                    "super_contributions_tax",
+                                    "income_tax_rate")})
+        assert spec.super_net_rate == pytest.approx(
+            full["super_guarantee_rate"]
+            * (1.0 - full["super_contributions_tax"]))
 
     def test_an_unknown_system_names_the_real_ones(self) -> None:
         with pytest.raises(ValueError, match="unknown pension system"):
@@ -341,8 +377,8 @@ class TestPensionSystems:
                                       "years_earlier", "break_even_pct"])
         found = le.system_verdict(le.system_comparison(
             optima, {k: empty for k in optima}))
-        assert found["gate_pushes_later"]
-        assert found["gate_years_later"] == pytest.approx(5.0)
+        assert found["australian_pension_later"]
+        assert found["australian_pension_years"] == pytest.approx(5.0)
         assert found["super_buys_back"]
         assert found["super_years_earlier"] == pytest.approx(3.0)
         assert found["australia_retires_later"]
@@ -474,3 +510,245 @@ class TestBenefitEligibilityAge:
         assert (soft.consumption[:, first]
                 >= bare.consumption[:, first]).all()
         assert (soft.consumption[:, first] > bare.consumption[:, first]).any()
+
+
+class TestFeatureDecomposition:
+    """The two systems differ in two ways at once. Naming the gap after
+    either one without crossing them is guesswork, and the 2x2 is what
+    stops it."""
+
+    @staticmethod
+    def _cfg() -> dict:
+        from src import data_loader as dl
+        return dl.load_config("config.yaml")
+
+    @staticmethod
+    def _cells(baseline=60, timing=58, formula=67, both=67,
+               cecs=(0.76, 0.77, 0.62, 0.62)) -> pd.DataFrame:
+        return pd.DataFrame({
+            "system": list(le.FEATURE_ARMS),
+            "age_at_zero_leisure": [baseline, timing, formula, both],
+            "cec_at_zero_leisure": list(cecs)})
+
+    def test_the_baseline_arm_overrides_nothing(self) -> None:
+        """It has to be the paper's own US result, or the 2x2 measures the
+        difference from something the paper never reports."""
+        overrides, adjusted = le.feature_overrides("baseline", self._cfg())
+        assert overrides == {}
+        assert adjusted
+
+    def test_the_timing_arm_gates_without_means_testing(self) -> None:
+        overrides, adjusted = le.feature_overrides("timing", self._cfg())
+        assert overrides["benefit_start_age"] == 67
+        assert "social_security_formula" not in overrides
+        # An age-gated benefit has no claiming choice left to adjust.
+        assert not adjusted
+
+    def test_the_formula_arm_means_tests_without_gating(self) -> None:
+        overrides, adjusted = le.feature_overrides("formula", self._cfg())
+        assert overrides["social_security_formula"] == "means_tested"
+        assert "benefit_start_age" not in overrides
+        assert adjusted
+
+    def test_the_joint_arm_is_the_two_singles_together(self) -> None:
+        cfg = self._cfg()
+        timing, _ = le.feature_overrides("timing", cfg)
+        formula, _ = le.feature_overrides("formula", cfg)
+        both, adjusted = le.feature_overrides("both", cfg)
+        assert both == {**timing, **formula}
+        assert not adjusted
+
+    def test_the_joint_arm_matches_the_australian_system(self) -> None:
+        """Otherwise the 2x2 decomposes a system the section never reports."""
+        cfg = self._cfg()
+        both, both_adj = le.feature_overrides("both", cfg)
+        system, sys_adj = le.system_overrides("au_pension_only", cfg)
+        assert both == system
+        assert both_adj == sys_adj
+
+    def test_an_unknown_arm_names_the_real_ones(self) -> None:
+        with pytest.raises(ValueError, match="unknown feature arm"):
+            le.feature_overrides("gate", self._cfg())
+
+    def test_a_missing_arm_is_refused_rather_than_guessed(self) -> None:
+        partial = self._cells().iloc[:3]
+        with pytest.raises(ValueError, match="missing"):
+            le.feature_decomposition(partial)
+
+    def test_each_effect_is_measured_against_the_baseline(self) -> None:
+        frame = le.feature_decomposition(self._cells())
+        by_arm = frame.set_index("arm")["effect"]
+        assert by_arm["timing"] == pytest.approx(-2.0)
+        assert by_arm["formula"] == pytest.approx(7.0)
+        assert by_arm["both"] == pytest.approx(7.0)
+
+    def test_the_interaction_is_what_the_singles_do_not_explain(self) -> None:
+        frame = le.feature_decomposition(self._cells())
+        by_arm = frame.set_index("arm")["effect"]
+        assert by_arm["interaction"] == pytest.approx(
+            by_arm["both"] - by_arm["timing"] - by_arm["formula"])
+
+    def test_additive_effects_leave_no_interaction(self) -> None:
+        """The control: features that simply add must show a zero cross
+        term, or the arithmetic is wrong rather than the world interesting."""
+        frame = le.feature_decomposition(
+            self._cells(baseline=60, timing=62, formula=65, both=67))
+        assert frame.set_index("arm").loc["interaction", "effect"] == \
+            pytest.approx(0.0)
+
+    def test_the_verdict_names_the_larger_feature(self) -> None:
+        found = le.feature_verdict(le.feature_decomposition(self._cells()))
+        assert found["dominant"] == "formula"
+        assert found["one_feature_dominates"]
+
+    def test_two_comparable_features_are_not_called_dominant(self) -> None:
+        """Naming one as the cause when both move the date equally would be
+        the same mistake this class exists to catch."""
+        found = le.feature_verdict(le.feature_decomposition(
+            self._cells(baseline=60, timing=63, formula=64, both=67)))
+        assert not found["one_feature_dominates"]
+
+    def test_a_feature_pulling_against_the_system_is_flagged(self) -> None:
+        found = le.feature_verdict(le.feature_decomposition(self._cells()))
+        assert found["timing_opposes_joint"]
+        assert not found["formula_opposes_joint"]
+
+    def test_separability_is_judged_against_the_joint_effect(self) -> None:
+        big = le.feature_verdict(le.feature_decomposition(self._cells()))
+        assert not big["separable"]
+        small = le.feature_verdict(le.feature_decomposition(
+            self._cells(baseline=60, timing=62, formula=65, both=67)))
+        assert small["separable"]
+
+    def test_an_empty_decomposition_reports_nothing(self) -> None:
+        assert le.feature_verdict(pd.DataFrame()) == {"measured": False}
+        assert not len(le.feature_decomposition(pd.DataFrame()))
+
+
+class TestMeansTestBite:
+    """A means-tested pension is only a pension to somebody the means test
+    lets through, and that is a property of the household, not the statute."""
+
+    @staticmethod
+    def _spec():
+        from src import data_loader as dl, plan as pl
+        cfg = dl.load_config("config.yaml")
+        overrides, _ = le.feature_overrides("both", cfg)
+        return dataclasses.replace(
+            pl.spec_for(lc.spec_from_config(cfg), 63), **overrides)
+
+    @staticmethod
+    def _outcome(wealth, benefit, income=1.0):
+        n = len(wealth)
+        return types.SimpleNamespace(
+            wealth_at_retirement=np.asarray(wealth, dtype=float),
+            social_security=np.asarray(benefit, dtype=float),
+            career_average_income=np.full(n, float(income)))
+
+    def test_the_cutoff_sits_above_the_free_area(self) -> None:
+        spec = self._spec()
+        found = le.means_test_bite(
+            spec, self._outcome([1.0, 2.0], [0.4, 0.4]))
+        assert found["cutoff_multiple"] > found["free_area_multiple"] > 0.0
+
+    def test_a_household_below_the_free_area_keeps_the_pension(self) -> None:
+        spec = self._spec()
+        econ = float(spec.deterministic_income().mean())
+        poor = 0.5 * spec.pension_free_area * econ
+        found = le.means_test_bite(
+            spec, self._outcome([poor] * 4, [spec.pension_full_rate * econ] * 4))
+        assert found["share_above_cutoff"] == pytest.approx(0.0)
+        assert found["median_over_cutoff"] < 1.0
+        assert found["share_receiving_nothing"] == pytest.approx(0.0)
+
+    def test_a_household_above_the_cutoff_gets_nothing(self) -> None:
+        """Which is the whole reason the formula moves the date: the schedule
+        is generous and this household is not paid it."""
+        spec = self._spec()
+        econ = float(spec.deterministic_income().mean())
+        cutoff = (spec.pension_free_area * econ
+                  + spec.pension_full_rate * econ / spec.pension_taper)
+        found = le.means_test_bite(
+            spec, self._outcome([2.0 * cutoff] * 4, [0.0] * 4))
+        assert found["share_above_cutoff"] == pytest.approx(1.0)
+        assert found["median_over_cutoff"] == pytest.approx(2.0, rel=1e-6)
+        assert found["share_receiving_nothing"] == pytest.approx(1.0)
+        assert found["benefit_replacement"] == pytest.approx(0.0)
+
+    def test_the_replacement_rate_is_against_career_income(self) -> None:
+        spec = self._spec()
+        found = le.means_test_bite(
+            spec, self._outcome([1.0] * 4, [0.5] * 4, income=2.0))
+        assert found["benefit_replacement"] == pytest.approx(0.25)
+
+
+class TestRuleComparison:
+    """The withdrawal rule is half of any comparison between pension systems,
+    and the project's own rule is the half that hides the answer."""
+
+    @staticmethod
+    def _frame(portfolio_ruin=(0.12, 0.12, 0.12),
+               target_ruin=(0.24, 0.41, 0.14),
+               target_cec=(0.75, 0.57, 0.63)):
+        rows = []
+        for system, ruin in zip(le.SYSTEMS, portfolio_ruin):
+            rows.append({"system": system, "rule": "constant_real",
+                         "cec": 1.0, "prob_ruin": ruin})
+        for system, ruin, cec in zip(le.SYSTEMS, target_ruin, target_cec):
+            rows.append({"system": system, "rule": "replace_100",
+                         "cec": cec, "prob_ruin": ruin})
+        return pd.DataFrame(rows)
+
+    def test_identical_ruin_under_the_portfolio_rule_is_flagged(self) -> None:
+        """A rule whose spending scales with wealth gives every system the
+        same ruin. That is an artefact, and the code has to say so rather
+        than report it as a finding."""
+        found = le.rule_verdict(self._frame())
+        assert found["portfolio_rule_ruin_identical"]
+        assert found["portfolio_rule_ruin_spread"] == pytest.approx(0.0)
+
+    def test_differing_ruin_is_not_flagged_as_identical(self) -> None:
+        found = le.rule_verdict(
+            self._frame(portfolio_ruin=(0.10, 0.12, 0.15)))
+        assert not found["portfolio_rule_ruin_identical"]
+        assert found["portfolio_rule_ruin_spread"] == pytest.approx(0.05)
+
+    def test_a_safer_but_lower_scoring_system_is_named(self) -> None:
+        """The combination this study exists to find: less likely to run out,
+        worse off when it does."""
+        found = le.rule_verdict(self._frame())
+        assert found["contender_ever_safer"]
+        assert not found["contender_ever_higher"]
+        assert found["safer_but_lower"]
+
+    def test_a_system_that_wins_on_both_is_not_called_safer_but_lower(self
+                                                                     ) -> None:
+        found = le.rule_verdict(
+            self._frame(target_ruin=(0.24, 0.41, 0.14),
+                        target_cec=(0.75, 0.57, 0.90)))
+        assert found["contender_ever_safer"]
+        assert found["contender_ever_higher"]
+        assert not found["safer_but_lower"]
+
+    def test_the_widest_ruin_gap_is_reported(self) -> None:
+        found = le.rule_verdict(self._frame())
+        assert found["widest_ruin_rule"] == "replace_100"
+        assert found["widest_ruin_gap"] == pytest.approx(0.24 - 0.14)
+
+    def test_an_empty_frame_reports_nothing(self) -> None:
+        assert le.rule_verdict(pd.DataFrame()) == {"measured": False}
+
+    def test_the_comparison_runs_every_system_under_every_rule(self) -> None:
+        seen = []
+
+        def simulate(system, rule):
+            seen.append((system, rule))
+            return (system, rule)
+
+        frame = le.rule_comparison(
+            simulate, ["us", "au_as_legislated"],
+            [("a", object()), ("b", object())],
+            lambda out: {"cec": 1.0, "prob_ruin": 0.1})
+        assert len(seen) == 4
+        assert len(frame) == 4
+        assert set(frame["rule"]) == {"a", "b"}

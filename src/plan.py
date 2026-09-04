@@ -81,6 +81,10 @@ CAN_DEPLETE: Mapping[str, bool] = {
     "constant_real": True, "vanguard_dynamic": True, "guyton_klinger": True,
     "endowment": True, "constant_percent": False, "life_expectancy": False,
     "gompertz": False, "amortisation": False,
+    # A fixed real target that does not scale with the portfolio, so it can
+    # outrun it -- and, unlike the others, a bigger portfolio now strictly
+    # lasts longer instead of spending more.
+    "income_replacement": True,
 }
 
 

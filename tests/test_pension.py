@@ -255,3 +255,37 @@ class TestLiftsAnchorOnTheBaseline:
         at_au = out["system"] == "age_pension_matched"
         assert float(out.loc[at_au, "best_lift_pct"].iloc[0]) == pytest.approx(-50.0)
         assert float(out.loc[at_au, "mean_lift_pct"].iloc[0]) == pytest.approx(-50.0)
+
+
+class TestIncomeTaxScale:
+    """One ratio, not a tax system. The scale is here only to reconcile the
+    two contribution bases: super is a share of pre-tax earnings, voluntary
+    saving a share of take-home pay."""
+
+    def test_no_tax_below_the_free_threshold(self) -> None:
+        first = pn.TAX_BRACKETS[1][0]
+        assert pn.income_tax(first, levy=0.0) == pytest.approx(0.0)
+
+    def test_tax_rises_with_income(self) -> None:
+        owed = [pn.income_tax(x) for x in (30_000, 60_000, 120_000, 250_000)]
+        assert owed == sorted(owed)
+
+    def test_the_average_rate_stays_below_the_top_marginal(self) -> None:
+        """A progressive scale cannot charge its top rate on the whole of an
+        income, which is exactly why the *average* rate is the right one to
+        gross a contribution up by."""
+        top = pn.TAX_BRACKETS[-1][1] + pn.MEDICARE_LEVY
+        for income in (50_000, 106_657.20, 300_000):
+            assert 0.0 < pn.average_tax_rate(income) < top
+
+    def test_the_rate_on_average_earnings_is_plausible(self) -> None:
+        rate = pn.average_tax_rate(pn.AWOTE_ANNUAL_AUD)
+        assert 0.20 < rate < 0.28
+
+    def test_the_levy_adds_flatly(self) -> None:
+        income = 80_000.0
+        assert pn.income_tax(income) - pn.income_tax(income, levy=0.0) == \
+            pytest.approx(income * pn.MEDICARE_LEVY)
+
+    def test_zero_income_is_not_a_division_by_zero(self) -> None:
+        assert pn.average_tax_rate(0.0) == 0.0

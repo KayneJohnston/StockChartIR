@@ -87,6 +87,25 @@ class LifecycleSpec:
     # retirement only -- but it is an assumption, and `docs/25` says so.
     super_guarantee_rate: float = 0.0
     super_contributions_tax: float = 0.15
+
+    #: Working years averaged to set "pre-retirement income" for a
+    #: replacement-rate spending rule. Five damps the transitory shock without
+    #: reaching back into a materially different stage of the career.
+    replacement_window: int = 5
+
+    #: Average income tax rate, used *only* to reconcile the two contribution
+    #: bases. This model carries one income series and no income tax, so that
+    #: series is take-home pay: ``savings_rate`` is a share of what lands in
+    #: the bank. The Superannuation Guarantee is not -- it is a share of
+    #: *pre-tax* ordinary time earnings, which is a larger number. Left at
+    #: zero the two bases are conflated, which understates the guarantee by
+    #: exactly this wedge; set to the average rate, ``super_net_rate`` is
+    #: grossed up to the same take-home base as everything else.
+    #:
+    #: It deliberately does *not* tax anything. Putting a real income tax
+    #: through this model would change every result in the project and answer
+    #: a different question; this reconciles one ratio.
+    income_tax_rate: float = 0.0
     # Floor on labour income, as a multiple of economy-wide average earnings,
     # standing in for unemployment insurance and in-work benefits.  Default 0
     # (no floor), which leaves every existing result unchanged.
@@ -157,6 +176,10 @@ class LifecycleSpec:
             raise ValueError("super_guarantee_rate must lie in [0, 1)")
         if not 0.0 <= self.super_contributions_tax < 1.0:
             raise ValueError("super_contributions_tax must lie in [0, 1)")
+        if not 0.0 <= self.income_tax_rate < 1.0:
+            raise ValueError("income_tax_rate must lie in [0, 1)")
+        if self.replacement_window < 1:
+            raise ValueError("replacement_window must be at least 1")
         if self.pension_taper < 0.0 or self.pension_free_area < 0.0:
             raise ValueError("pension taper and free area must be non-negative")
 
@@ -169,7 +192,8 @@ class LifecycleSpec:
         sit almost exactly on this paper's own 10% savings rate, a coincidence
         worth noticing and not worth leaning on.
         """
-        return self.super_guarantee_rate * (1.0 - self.super_contributions_tax)
+        gross = self.super_guarantee_rate * (1.0 - self.super_contributions_tax)
+        return gross / (1.0 - self.income_tax_rate)
 
     @property
     def total_contribution_rate(self) -> float:
@@ -707,6 +731,13 @@ def simulate(
     nothing = np.zeros_like(benefit)
 
     # --- decumulation -----------------------------------------------------
+    # "Pre-retirement income" for a replacement-rate rule. Averaged over the
+    # last few working years rather than taken from the final one, because a
+    # transitory shock in a single year would otherwise set the standard of
+    # living for the next thirty.
+    window = min(int(spec.replacement_window), spec.n_working)
+    pre_retirement_income = income[:, spec.n_working - window:].mean(axis=1)
+
     rule = spending or sp.from_spec(spec.retirement_rule, spec.rule_rate)
     inflation = paths.inflation[:, :horizon]
     initial_withdrawal = rule.initial_withdrawal(
@@ -732,9 +763,12 @@ def simulate(
             wealth_at_retirement=wealth_at_retirement,
             last_return=last_return,
             last_inflation=last_inflation,
+            pre_retirement_income=pre_retirement_income,
         )
-        desired = np.maximum(rule.desired(state), 0.0)
-        withdrawal = np.minimum(desired, np.maximum(available, 0.0))
+        # The pension is settled before the withdrawal, not after. It depends
+        # only on wealth entering the year, so this is bit-identical for every
+        # rule that ignores it -- and it is what lets a rule targeting total
+        # consumption net the benefit off rather than spend on top of it.
         eligible = h >= benefit_from
         share = 1.0 if eligible else float(spec.pre_eligibility_benefit_share)
         if means_tested:
@@ -743,6 +777,9 @@ def simulate(
             benefit_paid[:, h - spec.n_working] = benefit
         else:
             benefit = share * entitlement if share else nothing
+        state = dataclasses.replace(state, benefit=benefit)
+        desired = np.maximum(rule.desired(state), 0.0)
+        withdrawal = np.minimum(desired, np.maximum(available, 0.0))
         consumption[:, h] = benefit + withdrawal
         wealth[:, h + 1] = np.maximum(available - withdrawal, 0.0) * (1.0 + rp[:, h])
 

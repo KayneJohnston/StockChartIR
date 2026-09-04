@@ -56,6 +56,14 @@ class SpendingState:
     wealth_at_retirement: np.ndarray
     last_return: np.ndarray
     last_inflation: np.ndarray
+    #: Average real income over the final working years, ``(n_paths,)``. Only
+    #: a rule that targets a standard of living rather than a portfolio needs
+    #: it; the rest ignore it.
+    pre_retirement_income: np.ndarray | None = None
+    #: The pension payable this year, ``(n_paths,)``, before any withdrawal.
+    #: A rule that targets total consumption has to net it off; a rule that
+    #: targets the withdrawal itself does not.
+    benefit: np.ndarray | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -384,6 +392,62 @@ class AmortisationRule(SpendingRule):
         return state.wealth * self._factor(state.years_remaining)
 
 
+@dataclasses.dataclass(frozen=True)
+class IncomeReplacementRule(SpendingRule):
+    """Spend a fixed share of pre-retirement income, and let the portfolio
+    fund whatever the pension does not.
+
+    Every other rule here sets spending from the *portfolio*: a share of what
+    was saved, or of what is left. That makes a bigger portfolio spend more
+    rather than last longer, so under those rules ruin is almost
+    scale-invariant -- doubling wealth doubles withdrawals and runs out at the
+    same time -- and extra saving buys consumption rather than safety.
+
+    This rule sets spending from the *standard of living* instead. The target
+    is ``rate`` times income over the final working years, held in real terms
+    for life; the pension is netted off first and the portfolio pays the
+    remainder. That makes it the natural rule for comparing pension systems,
+    because it asks the question a pension is *for*: holding the retirement a
+    household wants fixed, who funds it, and who runs out.
+
+    Two consequences follow directly from the arithmetic, and both are the
+    point rather than side effects. A larger portfolio now strictly reduces
+    ruin, because the target does not grow with it. And a pension now
+    *displaces* withdrawals rather than adding to them, so a generous benefit
+    shows up as portfolio longevity instead of extra spending.
+    """
+
+    rate: float = 0.75
+    key: str = dataclasses.field(default="income_replacement", init=False)
+    label: str = dataclasses.field(
+        default="Replace 75% of pre-retirement income", init=False)
+
+    def initial_withdrawal(self, wealth_at_retirement: np.ndarray,
+                           years_remaining: int, age: int) -> np.ndarray:
+        # The anchor for this rule is income, which arrives on the state, so
+        # there is nothing to set from wealth. Feedback rules read
+        # ``state.initial_withdrawal``; this one does not.
+        return np.zeros_like(np.asarray(wealth_at_retirement, dtype=float))
+
+    def target(self, state: SpendingState) -> np.ndarray:
+        """Total consumption the rule is aiming at, pension included."""
+        if state.pre_retirement_income is None:
+            raise ValueError(
+                "IncomeReplacementRule needs pre_retirement_income on the "
+                "spending state; the simulator supplies it")
+        return self.rate * np.asarray(state.pre_retirement_income, dtype=float)
+
+    def desired(self, state: SpendingState) -> np.ndarray:
+        benefit = (np.zeros_like(state.wealth) if state.benefit is None
+                   else np.asarray(state.benefit, dtype=float))
+        return np.maximum(self.target(state) - benefit, 0.0)
+
+    def describe(self) -> Dict[str, Any]:
+        found = super().describe()
+        found["label"] = f"Replace {self.rate:.0%} of pre-retirement income"
+        return found
+
+
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
@@ -398,6 +462,7 @@ REGISTRY: Mapping[str, Callable[..., SpendingRule]] = {
     "life_expectancy": LifeExpectancyRule,
     "gompertz": GompertzRule,
     "amortisation": AmortisationRule,
+    "income_replacement": IncomeReplacementRule,
 }
 
 #: Rules whose spending level is set by a `rate` parameter.  The remainder

@@ -138,6 +138,317 @@ SYSTEMS: Tuple[str, ...] = ("us", "au_pension_only", "au_as_legislated")
 #: that a system charging half again as much is not called "similar".
 COST_SIMILAR_BAND: float = 0.10
 
+#: How much larger one feature's effect must be than the other's before the
+#: prose is allowed to name it as *the* cause rather than the larger of two.
+DOMINANCE_RATIO: float = 2.0
+
+#: The share of the joint effect the interaction may take and still let the
+#: two features be reported one at a time.
+SEPARABLE_SHARE: float = 0.25
+
+#: US social security and Australia's Age Pension differ in *two* ways at
+#: once, and :data:`SYSTEMS` only ever reports their joint effect. Naming that
+#: effect after either one is guesswork, so the two are separated here:
+#:
+#: ``timing``
+#:     When the benefit starts, and whether stopping early shrinks it. US
+#:     social security starts when work does and is actuarially reduced for
+#:     claiming early; the Age Pension arrives at its own age regardless, so
+#:     there is no claiming choice to reduce.
+#: ``formula``
+#:     How the benefit is worked out. An earnings-related benefit is paid on
+#:     the career, a means-tested one is withdrawn against assets.
+#:
+#: Crossing them gives the 2x2 below, and the difference between the two
+#: single-feature arms is what says which one is doing the work.
+FEATURE_ARMS: Tuple[str, ...] = ("baseline", "timing", "formula", "both")
+
+FEATURE_LABEL: Mapping[str, str] = {
+    "baseline": "Earnings-related, from retirement",
+    "timing": "Earnings-related, from the pension age",
+    "formula": "Means-tested, from retirement",
+    "both": "Means-tested, from the pension age",
+}
+
+
+def guarantee_overrides(cfg: Mapping[str, Any]) -> Dict[str, Any]:
+    """The Superannuation Guarantee, on the same base as everything else.
+
+    The guarantee is a share of *pre-tax* ordinary time earnings; this
+    model's income series carries no income tax, so it is take-home pay and
+    the voluntary savings rate is a share of that. Quoting both as the same
+    number understates the guarantee by the average tax rate, so the wedge is
+    passed through and :attr:`LifecycleSpec.super_net_rate` applies it.
+
+    Set ``pension.income_tax_rate`` to zero in the config to conflate the two
+    bases again, which is what every result before this reconciliation did.
+    """
+    from . import pension as pn
+
+    block = cfg.get("pension", {})
+    rate = block.get("income_tax_rate")
+    if rate is None:
+        rate = pn.average_tax_rate(
+            float(block.get("awote_annual_aud", pn.AWOTE_ANNUAL_AUD)))
+    return {
+        "super_guarantee_rate": float(block.get("sg_rate", pn.SG_RATE)),
+        "super_contributions_tax": float(
+            block.get("sg_contributions_tax", pn.SG_CONTRIBUTIONS_TAX)),
+        "income_tax_rate": float(rate),
+    }
+
+
+def feature_overrides(arm: str, cfg: Mapping[str, Any],
+                      ) -> Tuple[Dict[str, Any], bool]:
+    """``(spec overrides, whether the claiming date is actuarially adjusted)``
+    for one cell of the 2x2.
+
+    ``timing`` carries the age gate *and* drops the actuarial adjustment,
+    because those are one institutional fact rather than two: a benefit that
+    arrives on a fixed birthday has no claiming decision to adjust. Splitting
+    them would model a system nobody lives under, so the arm is named for what
+    it is -- when the benefit starts -- rather than for the flag it sets.
+    """
+    from . import pension as pn
+
+    block = cfg.get("leisure", {})
+    gate: Dict[str, Any] = {
+        "benefit_start_age": int(block.get("age_pension_age", 67)),
+        "pre_eligibility_benefit_share": float(
+            block.get("pre_pension_safety_net", 0.0)),
+    }
+    means: Dict[str, Any] = {"social_security_formula": "means_tested"}
+    au = pn.from_config(cfg)
+    au.pop("pension_free_area_non_homeowner", None)
+    means.update(au)
+
+    if arm == "baseline":
+        return {}, True
+    if arm == "timing":
+        return dict(gate), False
+    if arm == "formula":
+        return dict(means), True
+    if arm == "both":
+        return {**gate, **means}, False
+    raise ValueError(f"unknown feature arm {arm!r}; expected one of "
+                     f"{FEATURE_ARMS}")
+
+
+def feature_decomposition(comparison: pd.DataFrame,
+                          column: str = "age_at_zero_leisure",
+                          ) -> pd.DataFrame:
+    """What each feature moves the retirement date by, and their interaction.
+
+    Read off the 2x2 the way an ablation is: each single-feature arm against
+    the baseline, then the joint arm, then whatever the two singles fail to
+    account for. A large interaction would mean the features are not
+    separable and neither single number means much on its own.
+    """
+    if not len(comparison):
+        return pd.DataFrame(columns=["feature", "effect", "cec", "cec_effect"])
+    indexed = comparison.set_index("system")
+    missing = [a for a in FEATURE_ARMS if a not in indexed.index]
+    if missing:
+        raise ValueError(f"feature decomposition needs every arm; missing "
+                         f"{missing}")
+
+    def cell(arm: str, col: str) -> float:
+        return float(indexed.loc[arm, col])
+
+    base = cell("baseline", column)
+    base_cec = cell("baseline", "cec_at_zero_leisure")
+    rows: List[Dict[str, Any]] = []
+    for arm, name in (("timing", "when the benefit starts"),
+                      ("formula", "how the benefit is worked out"),
+                      ("both", "both together")):
+        rows.append({
+            "feature": name, "arm": arm,
+            "age": cell(arm, column),
+            "effect": cell(arm, column) - base,
+            "cec": cell(arm, "cec_at_zero_leisure"),
+            "cec_effect": cell(arm, "cec_at_zero_leisure") - base_cec,
+        })
+    joint, timing, formula = rows[2], rows[0], rows[1]
+    rows.append({
+        "feature": "interaction", "arm": "interaction",
+        "age": float("nan"),
+        "effect": joint["effect"] - timing["effect"] - formula["effect"],
+        "cec": float("nan"),
+        "cec_effect": (joint["cec_effect"] - timing["cec_effect"]
+                       - formula["cec_effect"]),
+    })
+    frame = pd.DataFrame.from_records(rows)
+    frame.insert(0, "baseline_age", base)
+    return frame
+
+
+#: Replacement targets swept against the portfolio-anchored rule. Half, three
+#: quarters and the whole of pre-retirement income bracket what a household
+#: might actually aim at.
+DEFAULT_TARGETS: Tuple[float, ...] = (0.50, 0.75, 1.00)
+
+
+def rule_comparison(simulate: Callable[[str, Any], Any],
+                    systems: Sequence[str], rules: Sequence[Tuple[str, Any]],
+                    score_row: Callable[[Any], Dict[str, Any]],
+                    ) -> pd.DataFrame:
+    """Each pension system under each withdrawal rule.
+
+    The rule is not a detail of the comparison, it is half of it. A rule that
+    spends a share of the *portfolio* makes ruin nearly scale-invariant --
+    twice the wealth withdraws twice as much and runs out at the same time --
+    so under it no amount of extra saving shows up as extra safety, and two
+    pension systems cannot be told apart on ruin at all. A rule that spends a
+    share of pre-retirement *income* holds the target still, so wealth and
+    pension both land where they belong.
+    """
+    rows: List[Dict[str, Any]] = []
+    for system in systems:
+        for key, rule in rules:
+            row: Dict[str, Any] = {"system": system, "rule": key}
+            row.update(score_row(simulate(system, rule)))
+            rows.append(row)
+    return pd.DataFrame.from_records(rows)
+
+
+def rule_verdict(frame: pd.DataFrame, portfolio_rule: str = "constant_real",
+                 baseline: str = "us", contender: str = "au_as_legislated",
+                 ) -> Dict[str, Any]:
+    """What changing the withdrawal rule does to the comparison.
+
+    Two separate questions, and they can have different answers: which system
+    gives the higher certainty equivalent, and which runs out less often. The
+    interesting case -- and the one this project's earlier rules could not
+    show -- is a system that is *safer* and still scores lower, which is what
+    a lower floor in the bad states looks like.
+    """
+    if not len(frame):
+        return {"measured": False}
+    found: Dict[str, Any] = {"measured": True}
+    wide = frame.set_index(["rule", "system"])
+
+    def get(rule: str, system: str, col: str) -> float:
+        try:
+            return float(wide.loc[(rule, system), col])
+        except KeyError:
+            return float("nan")
+
+    # Under a portfolio-anchored rule, does ruin distinguish the systems at
+    # all? If it does not, that is the artefact worth naming.
+    if portfolio_rule in frame["rule"].values:
+        block = frame[frame["rule"] == portfolio_rule]["prob_ruin"]
+        found["portfolio_rule_ruin_spread"] = float(
+            block.max() - block.min()) if len(block) else float("nan")
+        found["portfolio_rule_ruin_identical"] = bool(
+            np.isclose(block.max(), block.min(), atol=1e-12))
+
+    targets = [r for r in frame["rule"].unique() if r != portfolio_rule]
+    rows: List[Dict[str, Any]] = []
+    for rule in targets:
+        cec_base, cec_con = (get(rule, baseline, "cec"),
+                             get(rule, contender, "cec"))
+        ruin_base, ruin_con = (get(rule, baseline, "prob_ruin"),
+                               get(rule, contender, "prob_ruin"))
+        rows.append({
+            "rule": rule,
+            "cec_ratio": cec_con / cec_base if cec_base else float("nan"),
+            "contender_scores_higher": bool(cec_con > cec_base),
+            "contender_ruins_less": bool(ruin_con < ruin_base),
+            "ruin_gap": ruin_base - ruin_con,
+        })
+    if rows:
+        found["targets"] = rows
+        found["contender_ever_safer"] = bool(
+            any(r["contender_ruins_less"] for r in rows))
+        found["contender_ever_higher"] = bool(
+            any(r["contender_scores_higher"] for r in rows))
+        # Safer and still lower-scoring: the signature of a lower floor.
+        found["safer_but_lower"] = bool(
+            any(r["contender_ruins_less"] and not r["contender_scores_higher"]
+                for r in rows))
+        widest = max(rows, key=lambda r: r["ruin_gap"])
+        found["widest_ruin_rule"] = widest["rule"]
+        found["widest_ruin_gap"] = widest["ruin_gap"]
+    return found
+
+
+def means_test_bite(spec: Any, outcome: Any) -> Dict[str, float]:
+    """Where this household sits relative to the assets test, and what the
+    pension is actually worth to them.
+
+    A means-tested pension is only a pension to somebody the means test lets
+    through. Reporting the schedule's headline rate says nothing about that;
+    reporting where the household's wealth falls against the taper's cut-off
+    says everything, so both are measured from the run rather than read off
+    the statute.
+    """
+    economy = float(spec.deterministic_income().mean())
+    full = spec.pension_full_rate * economy
+    free = spec.pension_free_area * economy
+    cutoff = free + full / spec.pension_taper if spec.pension_taper else np.inf
+    wealth = np.asarray(outcome.wealth_at_retirement, dtype=float)
+    benefit = np.asarray(outcome.social_security, dtype=float)
+    career = float(np.mean(outcome.career_average_income))
+    median = float(np.median(wealth))
+    return {
+        "economy_average_income": economy,
+        "full_rate": full,
+        "full_rate_replacement": full / career,
+        "free_area_multiple": free / economy,
+        "cutoff_multiple": cutoff / economy,
+        "median_wealth": median,
+        "median_wealth_multiple": median / economy,
+        # The number that decides whether a means-tested pension is a pension
+        # at all for this household: above 1 the taper has taken all of it.
+        "median_over_cutoff": median / cutoff if np.isfinite(cutoff) else 0.0,
+        "share_above_cutoff": float(np.mean(wealth > cutoff)),
+        "mean_benefit": float(np.mean(benefit)),
+        "benefit_replacement": float(np.mean(benefit)) / career,
+        "share_receiving_nothing": float(np.mean(benefit <= 0.0)),
+    }
+
+
+def feature_verdict(decomposition: pd.DataFrame) -> Dict[str, Any]:
+    """Which of the two features moves the date, classified from the 2x2."""
+    if not len(decomposition):
+        return {"measured": False}
+    indexed = decomposition.set_index("arm")
+
+    def effect(arm: str, col: str = "effect") -> float:
+        return (float(indexed.loc[arm, col]) if arm in indexed.index
+                else float("nan"))
+
+    timing, formula = effect("timing"), effect("formula")
+    joint, cross = effect("both"), effect("interaction")
+    found: Dict[str, Any] = {
+        "measured": True,
+        "baseline_age": float(decomposition["baseline_age"].iloc[0]),
+        "timing_years": timing, "formula_years": formula,
+        "both_years": joint, "interaction_years": cross,
+        "timing_cec": effect("timing", "cec_effect"),
+        "formula_cec": effect("formula", "cec_effect"),
+    }
+    if np.isfinite(timing) and np.isfinite(formula):
+        # Which feature to name as the cause, and whether naming one is even
+        # honest: two comparable effects would mean neither is "the" reason.
+        found["dominant"] = "timing" if abs(timing) > abs(formula) else "formula"
+        found["timing_moves_date"] = bool(abs(timing) > 0.0)
+        found["formula_moves_date"] = bool(abs(formula) > 0.0)
+        found["one_feature_dominates"] = bool(
+            max(abs(timing), abs(formula))
+            > DOMINANCE_RATIO * min(abs(timing), abs(formula)))
+        # The counterintuitive case worth naming explicitly: a feature that
+        # moves the date the *opposite* way to the system it belongs to.
+        if np.isfinite(joint) and joint != 0.0:
+            for arm, value in (("timing", timing), ("formula", formula)):
+                found[f"{arm}_opposes_joint"] = bool(
+                    value != 0.0 and (value > 0.0) != (joint > 0.0))
+    if np.isfinite(cross) and np.isfinite(joint) and joint != 0.0:
+        found["interaction_share"] = float(abs(cross) / abs(joint))
+        found["separable"] = bool(abs(cross) <= SEPARABLE_SHARE * abs(joint))
+    return found
+
+
 
 def system_overrides(system: str, cfg: Mapping[str, Any],
                      ) -> Tuple[Dict[str, Any], bool]:
@@ -165,13 +476,7 @@ def system_overrides(system: str, cfg: Mapping[str, Any],
     if system == "au_pension_only":
         return shared, False
     if system == "au_as_legislated":
-        pension = cfg.get("pension", {})
-        return {**shared,
-                "super_guarantee_rate": float(
-                    pension.get("sg_rate", pn.SG_RATE)),
-                "super_contributions_tax": float(
-                    pension.get("sg_contributions_tax",
-                                pn.SG_CONTRIBUTIONS_TAX))}, False
+        return {**shared, **guarantee_overrides(cfg)}, False
     raise ValueError(f"unknown pension system {system!r}; expected one of "
                      f"{SYSTEMS}")
 
@@ -500,8 +805,14 @@ def system_verdict(comparison: pd.DataFrame) -> Dict[str, Any]:
         "us_age": us, "gated_age": gate, "legislated_age": legislated,
     }
     if np.isfinite(us) and np.isfinite(gate):
-        found["gate_pushes_later"] = bool(gate > us)
-        found["gate_years_later"] = float(gate - us)
+        # Named for the *comparison*, not for a cause. These two systems
+        # differ in two ways at once -- when the benefit starts and how it is
+        # worked out -- so this gap belongs to the pair, and attributing it to
+        # either feature needs :func:`feature_decomposition`, which crosses
+        # them. An earlier version of this code called it the gate's doing;
+        # the 2x2 says the gate moves the date the other way.
+        found["australian_pension_later"] = bool(gate > us)
+        found["australian_pension_years"] = float(gate - us)
     if np.isfinite(gate) and np.isfinite(legislated):
         # The Superannuation Guarantee is the other half of the Australian
         # system, and it pushes the opposite way to the eligibility gate.
