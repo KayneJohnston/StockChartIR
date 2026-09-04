@@ -1,6 +1,6 @@
 freed,rule,rate,equity,domestic,cec,gain_pct
-nothing (the fixed-horizon choice),gompertz,,1.0,0.1,1.3942555719881968,0.0
-allocation,gompertz,,1.0,0.1,1.3942555719881968,0.0
-rule,amortisation (4% assumed return),,1.0,0.1,1.4181181961320655,1.711495698729082
-rate,gompertz,,1.0,0.1,1.3942555719881968,0.0
-all three,amortisation (4% assumed return),,1.0,0.1,1.4181181961320655,1.711495698729082
+nothing (the fixed-horizon choice),gompertz,,1.0,0.1,1.384369511575113,0.0
+allocation,gompertz,,1.0,0.1,1.384369511575113,0.0
+rule,amortisation (4% assumed return),,1.0,0.1,1.4072029794783194,1.6493766810298238
+rate,gompertz,,1.0,0.1,1.384369511575113,0.0
+all three,amortisation (4% assumed return),,1.0,0.1,1.4072029794783194,1.6493766810298238

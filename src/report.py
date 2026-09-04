@@ -10784,6 +10784,35 @@ def write_doc_34(
     else:
         ablation_line = ""
 
+    if "front_load_corr" in found:
+        corr = float(found["front_load_corr"])
+        why_line = (
+            f"**And the reason is the spending level, not the mortality "
+            f"table.** Rank each rule by how much of the balance it draws in "
+            f"the first retirement year -- a number every rule has, however "
+            f"it arrives at it -- and that ordering matches the "
+            f"survival-weighted ranking with a rank correlation of "
+            f"{corr:+.2f}, against {float(found['front_load_corr_fixed']):+.2f} "
+            f"under the fixed horizon.")
+        if found.get("a_blind_rule_wins"):
+            why_line += (
+                f" The rule that wins has never heard of a survival curve: "
+                f"the best rule that reads one ranks "
+                f"{int(found['mortality_aware_best_rank'])}, behind a rule "
+                f"that simply spends faster. So the answer to \"should the "
+                f"withdrawal rule know how long you are likely to live?\" is "
+                f"that it does not need to -- it needs to spend as though "
+                f"the answer were shorter than thirty years, and there is "
+                f"more than one way to arrange that.")
+        elif "mortality_aware_best_rank" in found:
+            why_line += (
+                f" The best rule that reads a survival curve ranks "
+                f"{int(found['mortality_aware_best_rank'])}, ahead of every "
+                f"rule that does not, so on this panel reading the table is "
+                f"worth something in its own right.")
+    else:
+        why_line = ""
+
     figure_list = "\n".join(f"* `{f}`" for f in figures)
     intro = _header(
         "34 - The Rule When the Horizon Is Not Known",
@@ -10844,6 +10873,8 @@ different horizon.
 {rank_tbl}
 
 {"Of " + str(int(found.get("rules_ranked", 0))) + " rules, " + str(int(found.get("rules_that_move", 0))) + " change rank." if "rules_ranked" in found else ""}
+
+{why_line}
 
 ## 4. The ruin number everyone quotes
 

@@ -256,3 +256,76 @@ class TestDescribe:
 
     def test_none_is_handled_like_a_missing_rate(self) -> None:
         assert "no rate" in lv.describe("gompertz", None)
+
+
+class TestWhyTheOrderChanges:
+    """Two candidate explanations for the reshuffle -- that a rule wins by
+    reading a mortality table, or that it wins by spending faster -- and the
+    code has to let the data choose rather than assume the first."""
+
+    def test_front_load_is_the_first_year_share_of_the_balance(self) -> None:
+        combo = lv.Combination(equity=1.0, domestic=0.1,
+                               rule="constant_real", rate=0.045)
+        assert lv.front_load(combo) == pytest.approx(0.045)
+
+    def test_a_horizon_rule_still_has_a_front_load(self) -> None:
+        """Which is the point: it puts rules that set a rate and rules that
+        derive one on the same footing."""
+        assert 0.0 < lv.front_load(
+            lv.Combination(equity=1.0, domestic=0.1, rule="gompertz")) < 1.0
+
+    def test_a_longer_planning_horizon_spends_more_slowly(self) -> None:
+        plain = lv.front_load(
+            lv.Combination(equity=1.0, domestic=0.1, rule="gompertz"))
+        buffered = lv.front_load(
+            lv.Combination(equity=1.0, domestic=0.1, rule="gompertz",
+                           params={"buffer_years": 5.0}))
+        assert buffered < plain
+
+    def test_only_the_actuarial_rules_are_marked_mortality_aware(self) -> None:
+        assert "gompertz" in lv.MORTALITY_AWARE
+        assert "amortisation" not in lv.MORTALITY_AWARE
+        assert "life_expectancy" not in lv.MORTALITY_AWARE
+
+    @staticmethod
+    def _ordered(front_loads, cecs) -> pd.DataFrame:
+        return pd.DataFrame([
+            {"equity": 1.0, "domestic": 0.1, "rule": f"r{i}",
+             "rule_label": f"r{i}", "rate": np.nan, "has_rate": False,
+             "label": f"r{i}", lv.FIXED: 1.0, lv.MORTALITY: c,
+             "ruin_fixed": 0.0, "ruin_mortality": 0.0,
+             "mean_consumption": 1.0, "front_load": f,
+             "reads_mortality": i == 0}
+            for i, (f, c) in enumerate(zip(front_loads, cecs))])
+
+    def test_a_perfect_match_reports_a_correlation_of_one(self) -> None:
+        frame = self._ordered([0.03, 0.04, 0.05, 0.06],
+                              [0.80, 0.85, 0.90, 0.95])
+        found = lv.verdict(frame, lv.ranking_shift(frame),
+                           lv.ablation(frame))
+        assert found["front_load_corr"] == pytest.approx(1.0)
+
+    def test_no_relationship_reports_no_correlation(self) -> None:
+        """The control: if spending speed did not explain the order, the
+        section must not claim it does."""
+        frame = self._ordered([0.03, 0.06, 0.04, 0.05],
+                              [0.90, 0.85, 0.95, 0.80])
+        found = lv.verdict(frame, lv.ranking_shift(frame),
+                           lv.ablation(frame))
+        assert abs(found["front_load_corr"]) < 0.9
+
+    def test_a_blind_rule_beating_the_actuarial_one_is_flagged(self) -> None:
+        # r0 is the mortality-aware one and scores worst.
+        frame = self._ordered([0.03, 0.04, 0.05, 0.06],
+                              [0.80, 0.85, 0.90, 0.95])
+        found = lv.verdict(frame, lv.ranking_shift(frame),
+                           lv.ablation(frame))
+        assert found["a_blind_rule_wins"]
+        assert found["mortality_aware_best_rank"] > found["blind_best_rank"]
+
+    def test_an_actuarial_winner_is_not_flagged(self) -> None:
+        frame = self._ordered([0.03, 0.04, 0.05, 0.06],
+                              [0.95, 0.90, 0.85, 0.80])
+        found = lv.verdict(frame, lv.ranking_shift(frame),
+                           lv.ablation(frame))
+        assert not found["a_blind_rule_wins"]

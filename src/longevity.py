@@ -56,7 +56,7 @@ import pandas as pd
 LOGGER = logging.getLogger(__name__)
 
 __all__ = [
-    "Combination", "describe", "allocation_grid", "plan_grid", "sweep", "optimum",
+    "Combination", "describe", "front_load", "allocation_grid", "plan_grid", "sweep", "optimum",
     "by_objective", "ranking_shift", "ablation", "verdict",
     "FIXED", "MORTALITY",
 ]
@@ -133,6 +133,31 @@ def plan_grid(rule_specs: Sequence[Mapping[str, Any]],
     return out
 
 
+#: Rules whose divisor comes from a survival model rather than a fixed
+#: planning horizon. Whether being in this set is what wins under an
+#: uncertain lifespan is the question, so it is a column rather than an
+#: assumption.
+MORTALITY_AWARE: frozenset = frozenset({"gompertz"})
+
+
+def front_load(combo: "Combination", wealth: float = 1.0) -> float:
+    """The first retirement year's withdrawal, as a share of the balance.
+
+    One number that puts every rule on a comparable footing regardless of
+    how it arrives at its level -- a rate it was told, a fixed horizon it
+    amortises over, or a survival curve it reads. It is the obvious
+    candidate for *why* an uncertain lifespan reorders the rules, so it is
+    carried and correlated rather than argued about.
+    """
+    from . import lifecycle as lc
+
+    spec = lc.LifecycleSpec()
+    rule = combo.build()
+    draw = rule.initial_withdrawal(np.array([float(wealth)]),
+                                   spec.n_retired, spec.age_retire)
+    return float(np.asarray(draw, dtype=float).ravel()[0]) / float(wealth)
+
+
 def sweep(simulate: Callable[[Combination], Any],
           score_fixed: Callable[[Any], float],
           score_mortality: Callable[[Any], float],
@@ -154,6 +179,8 @@ def sweep(simulate: Callable[[Combination], Any],
             "rate": np.nan if combo.rate is None else float(combo.rate),
             "has_rate": combo.rate is not None,
             "label": combo.label(),
+            "front_load": float(front_load(combo)),
+            "reads_mortality": bool(combo.rule in MORTALITY_AWARE),
             FIXED: float(score_fixed(outcome)),
             MORTALITY: float(score_mortality(outcome)),
             "ruin_fixed": float(np.mean(outcome.ruin)),
@@ -369,6 +396,32 @@ def verdict(frame: pd.DataFrame, shift: pd.DataFrame,
             biggest = moved.loc[moved["rank_change"].abs().idxmax()]
             found["biggest_mover"] = str(biggest["rule_label"])
             found["biggest_move_places"] = int(biggest["rank_change"])
+
+    # Why the order changes. Two candidate explanations, and the data is
+    # asked which: that a rule wins by *reading a mortality table*, or that
+    # it wins by *spending faster*. The second is measurable on any rule,
+    # including the ones that have never heard of a survival curve.
+    if len(shift) > 2 and "front_load" in frame.columns:
+        best = frame.loc[frame.groupby("rule_label")[MORTALITY].idxmax()]
+        ranked = best.set_index("rule_label")
+        joined = shift.set_index("rule_label").join(
+            ranked[["front_load", "reads_mortality"]])
+        joined = joined.dropna(subset=["front_load"])
+        if len(joined) > 2:
+            found["front_load_corr"] = float(
+                joined["front_load"].corr(-joined["rank_mortality"],
+                                          method="spearman"))
+            found["front_load_corr_fixed"] = float(
+                joined["front_load"].corr(-joined["rank_fixed"],
+                                          method="spearman"))
+            aware = joined[joined["reads_mortality"].astype(bool)]
+            blind = joined[~joined["reads_mortality"].astype(bool)]
+            if len(aware) and len(blind):
+                found["mortality_aware_best_rank"] = int(
+                    aware["rank_mortality"].min())
+                found["blind_best_rank"] = int(blind["rank_mortality"].min())
+                found["a_blind_rule_wins"] = bool(
+                    found["blind_best_rank"] < found["mortality_aware_best_rank"])
 
     if len(ablated) > 1:
         singles = ablated[ablated["freed"].isin(
