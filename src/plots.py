@@ -3085,7 +3085,9 @@ def plot_longevity(swept: pd.DataFrame, shift: pd.DataFrame,
                    name: str = "fig62_uncertain_horizon") -> Path:
     """What an uncertain lifespan does to the rule, the rate and the risk."""
     with plt.rc_context(STYLE):
-        fig, axes = _grid(4, 3.0)
+        # Both rows carry long tick labels and a title, so the default row
+        # gap leaves the lower titles sitting on the upper panels' x-labels.
+        fig, axes = _grid(4, 3.4, hspace=0.55)
 
         # -- 1. rules ranked under each horizon ---------------------------
         # Plotted as the *change* in rank, because the levels of the two
@@ -3099,12 +3101,16 @@ def plot_longevity(swept: pd.DataFrame, shift: pd.DataFrame,
                 color=[_colour(0) if m > 0 else _colour(1) if m < 0 else "0.6"
                        for m in moves])
         ax.axvline(0.0, color="0.35", linewidth=0.8)
+        still = pos[moves == 0.0]
+        if len(still):
+            ax.scatter(np.zeros(len(still)), still, s=6.0, color="0.45",
+                       marker="|", zorder=3)
         ax.set_yticks(pos)
         ax.set_yticklabels([_flat(x, 26) for x in block["rule_label"]],
                            fontsize=4.6)
         ax.invert_yaxis()
-        ax.set_xlabel("Places gained when the horizon becomes uncertain")
-        _title(ax, "Which rules a real lifespan promotes")
+        ax.set_xlabel("Places gained")
+        _title(ax, "Rules a real lifespan promotes")
 
         # -- 2. the rate, under each objective ----------------------------
         ax = axes[1]
@@ -3120,8 +3126,8 @@ def plot_longevity(swept: pd.DataFrame, shift: pd.DataFrame,
                     marker=_marker(i), color=_colour(i), linewidth=1.5,
                     markersize=3.4, label=label)
         ax.set_xlabel("Withdrawal rate (%)")
-        ax.set_ylabel("Cost against that objective's own best (%)")
-        _title(ax, "Where the best rate sits under each horizon")
+        ax.set_ylabel("Cost vs that objective's best (%)")
+        _title(ax, "The best rate under each horizon")
         _key(ax)
 
         # -- 3. ruin, which the fixed horizon inflates --------------------
@@ -3139,7 +3145,7 @@ def plot_longevity(swept: pd.DataFrame, shift: pd.DataFrame,
                            fontsize=4.6)
         ax.invert_yaxis()
         ax.set_xlabel("Probability of running out (%)")
-        _title(ax, "A fixed horizon counts failures most people never live to")
+        _title(ax, "Ruin: fixed horizon vs reality")
         _key(ax)
 
         # -- 4. what re-choosing each decision is worth --------------------
@@ -3159,7 +3165,7 @@ def plot_longevity(swept: pd.DataFrame, shift: pd.DataFrame,
         ax.set_xticks(pos)
         ax.set_xticklabels([str(f) for f in rows["freed"]], fontsize=5.0)
         ax.set_ylabel("Gain over the fixed-horizon choice (%)")
-        _title(ax, "What re-choosing each decision is worth")
+        _title(ax, "What each decision is worth")
 
         return _save(fig, directory, name)
 
