@@ -9940,7 +9940,7 @@ def write_doc_32(
                 f"{sysfound['us_cost_per_year']:.1f}% -- so what the "
                 f"Australian system moves is where the clock starts, not how "
                 f"steeply it runs.")
-        else:
+        elif "cost_ratio" in sysfound:
             steeper = sysfound.get("australia_dearer_per_year")
             cost_line += (
                 f" And it moves the *slope* as well as the start: going a "
@@ -9965,20 +9965,20 @@ def write_doc_32(
     bite = notes.get("means_test_bite", {})
 
     if len(decomposition):
-        shown = decomposition.copy()
+        feature_shown = decomposition.copy()
         # Ages and year counts are whole numbers; only the certainty
         # equivalents want decimals, and a shared float format gives the
         # ages four of them.
         for col in ("age", "effect"):
-            shown[col] = shown[col].map(
+            feature_shown[col] = feature_shown[col].map(
                 lambda v: "--" if not np.isfinite(v) else f"{v:+.0f}"
                 if col == "effect" else f"{v:.0f}")
         for col in ("cec", "cec_effect"):
-            shown[col] = shown[col].map(
+            feature_shown[col] = feature_shown[col].map(
                 lambda v: "--" if not np.isfinite(v) else f"{v:+.4f}"
                 if col == "cec_effect" else f"{v:.4f}")
         feature_tbl = md_table(_compact(
-            shown, ["feature", "age", "effect", "cec", "cec_effect"],
+            feature_shown, ["feature", "age", "effect", "cec", "cec_effect"],
             {"feature": "What changes", "age": "Best date",
              "effect": "Years later than the baseline",
              "cec": "CEC", "cec_effect": "CEC against the baseline"}))
@@ -10050,12 +10050,12 @@ def write_doc_32(
     rules_frame = frames.get("rules", pd.DataFrame())
     rule_tbl = ""
     if len(rules_frame):
-        shown = rules_frame.copy()
-        shown["system"] = shown["system"].map(
+        rule_shown = rules_frame.copy()
+        rule_shown["system"] = rule_shown["system"].map(
             lambda k: SYSTEM_NAME.get(str(k), str(k)))
-        shown["prob_ruin"] = 100.0 * shown["prob_ruin"]
+        rule_shown["prob_ruin"] = 100.0 * rule_shown["prob_ruin"]
         rule_tbl = md_table(_compact(
-            shown, ["rule", "system", "cec", "prob_ruin", "mean_consumption",
+            rule_shown, ["rule", "system", "cec", "prob_ruin", "mean_consumption",
                     "p5_consumption"],
             {"rule": "Withdrawal rule", "system": "Pension system",
              "cec": "CEC", "prob_ruin": "Ruin (%)",
