@@ -55,6 +55,7 @@ from src import saving as sav
 from src import sequence as seq
 from src import sensitivity as sn
 from src import spending as spg
+from src import tax as tx
 from src import turnover as tn
 from src import utility as ut
 
@@ -4170,6 +4171,178 @@ def step32_leisure(cfg: Dict[str, Any],
     return state
 
 
+def step33_tax(cfg: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
+    """Put each system's real retirement tax in, and see if the answer holds."""
+    block = cfg.get("tax", {})
+    if not block.get("enabled", False):
+        LOGGER.info("tax study disabled; skipping step 33")
+        return state
+    LOGGER.info("=== STEP 33: the tax each system actually charges ===")
+    started = time.perf_counter()
+
+    panel = state.get("panel") or dl.build_panel(cfg)
+    spec = state.get("spec") or lc.spec_from_config(cfg)
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    beta = float(cfg["utility"]["discount_factor"])
+    lei_cfg = cfg.get("leisure", {})
+    n_paths = int(block.get("n_paths", cfg["bootstrap"]["n_paths"]))
+    key = str(lei_cfg.get("strategy", "balanced_all_equity"))
+    age = int(lei_cfg.get("claim_reference_age", spec.age_retire))
+    systems = [str(x) for x in lei_cfg.get("systems", le.SYSTEMS)]
+    targets = [float(x) for x in block.get("replacement_targets",
+                                           le.DEFAULT_TARGETS)]
+
+    for chunk in bs.from_config(panel, cfg).chunks(n_paths, n_paths):
+        paths = chunk
+    shocks = lc.draw_income_shocks(
+        n_paths, spec.horizon, np.random.default_rng(int(cfg["run"]["seed"])))
+
+    rules: List[Tuple[str, Any]] = [
+        (str(spec.retirement_rule),
+         spg.from_spec(spec.retirement_rule, spec.rule_rate))]
+    rules += [(f"replace_{int(round(100 * t))}",
+               spg.build("income_replacement", rate=t)) for t in targets]
+
+    rows: List[Dict[str, Any]] = []
+    for system, regime_key in tx.arms(systems):
+        overrides, _ = le.system_overrides(system, cfg)
+        regime = tx.regime_from_config(regime_key, cfg)
+        aged = dataclasses.replace(
+            pl.spec_for(spec, age), **overrides,
+            tax_regime=None if regime_key == "none" else regime_key,
+            fund_earnings_tax=regime.fund_earnings_tax)
+        # A traditional account takes contributions from pre-tax earnings,
+        # exactly as superannuation does, so it earns the same gross-up. A
+        # Roth does not: those contributions come out of take-home pay.
+        if regime_key == "us_traditional":
+            # A 401(k) deferral is made from pre-tax pay, so a dollar of
+            # forgone take-home buys 1/(1 - t) of contribution. The saver
+            # still gives up the same consumption as the Roth saver -- that
+            # is what makes the pair comparable -- and the top-up is the tax
+            # they did not pay, which is `s * t / (1 - t)`. Routing it
+            # through the employer-contribution machinery is what keeps it
+            # out of consumption; it is emphatically not a second salary.
+            rate = float(block.get("us_income_tax_rate",
+                                   tx.US_AVERAGE_TAX_RATE))
+            aged = dataclasses.replace(
+                aged, income_tax_rate=rate,
+                super_guarantee_rate=aged.savings_rate * rate,
+                super_contributions_tax=0.0)
+        income = lc.simulate_income(aged, n_paths, shocks=shocks,
+                                    dom_eq=paths.dom_eq, intl_eq=paths.intl_eq)
+        strategy = lc.build_strategies(cfg, aged)[key]
+        for rule_key, rule in rules:
+            out = lc.simulate(paths, strategy, aged, income, spending=rule)
+            window = out.consumption[:, aged.n_working:]
+            paid = (float(np.mean(out.tax_paid))
+                    if out.tax_paid is not None else 0.0)
+            rows.append({
+                "system": system, "regime": regime_key, "rule": rule_key,
+                "cec": float(ut.crra_certainty_equivalent(
+                    ut.bundle_from_outcome(out, cfg, aged), gamma, beta)),
+                "prob_ruin": float(np.mean(out.ruin)),
+                "mean_consumption": float(window.mean()),
+                "p5_consumption": float(np.percentile(window, 5)),
+                "mean_tax": paid,
+                "tax_share_of_gross": (
+                    paid / (window.mean() + paid) if window.mean() + paid
+                    else 0.0),
+                "median_wealth": float(np.median(out.wealth_at_retirement)),
+            })
+        LOGGER.info("%s under %s: cec %.4f, ruin %.1f%%", system, regime_key,
+                    rows[-len(rules)]["cec"],
+                    100.0 * rows[-len(rules)]["prob_ruin"])
+
+    swept = pd.DataFrame.from_records(rows)
+    headline = swept[swept["rule"] == str(spec.retirement_rule)]
+    found = tx.tax_verdict(headline)
+
+    # How much of the Australian result rests on a rate nobody can pin down.
+    # The statutory 15% is an upper bound: franking credits and the CGT
+    # discount both cut what a growth fund actually pays, and Section
+    # #franking has already measured the first of those on this panel.
+    grid = [float(x) for x in block.get("fund_earnings_grid", (0.15,))]
+    fund_rows: List[Dict[str, Any]] = []
+    au_over, _ = le.system_overrides("au_as_legislated", cfg)
+    for rate in grid:
+        aged = dataclasses.replace(pl.spec_for(spec, age), **au_over,
+                                   tax_regime="au", fund_earnings_tax=rate)
+        income = lc.simulate_income(aged, n_paths, shocks=shocks,
+                                    dom_eq=paths.dom_eq, intl_eq=paths.intl_eq)
+        strategy = lc.build_strategies(cfg, aged)[key]
+        out = lc.simulate(paths, strategy, aged, income,
+                          spending=spg.from_spec(spec.retirement_rule,
+                                                 spec.rule_rate))
+        fund_rows.append({
+            "fund_earnings_tax": rate,
+            "cec": float(ut.crra_certainty_equivalent(
+                ut.bundle_from_outcome(out, cfg, aged), gamma, beta)),
+            "prob_ruin": float(np.mean(out.ruin)),
+            "median_wealth": float(np.median(out.wealth_at_retirement)),
+        })
+    fund_frame = pd.DataFrame.from_records(fund_rows)
+    if len(fund_frame) > 1:
+        free = fund_frame[fund_frame["fund_earnings_tax"] == 0.0]["cec"]
+        if len(free):
+            fund_frame["cost_pct"] = 100.0 * (
+                fund_frame["cec"] / float(free.iloc[0]) - 1.0)
+        LOGGER.info("fund earnings tax: %.4f at 0%% down to %.4f at %.0f%%",
+                    fund_frame["cec"].iloc[0], fund_frame["cec"].iloc[-1],
+                    100.0 * fund_frame["fund_earnings_tax"].iloc[-1])
+
+    average = float(spec.deterministic_income().mean())
+    benefit = float(found.get("benefit", 0.0)) or None
+    us_benefit = float(np.mean(lc.simulate(
+        paths, lc.build_strategies(cfg, pl.spec_for(spec, age))[key],
+        pl.spec_for(spec, age),
+        lc.simulate_income(pl.spec_for(spec, age), n_paths, shocks=shocks,
+                           dom_eq=paths.dom_eq, intl_eq=paths.intl_eq)
+    ).social_security))
+    draws = np.linspace(0.0, 2.5, 2001)
+    curve = tx.effective_rate_curve(tx.REGIMES["us_traditional"], us_benefit,
+                                    average, draws)
+    curve_frame = pd.DataFrame({
+        "withdrawal": curve["withdrawal"], "tax": curve["tax"],
+        "average_rate": curve["average_rate"],
+        "marginal_rate": curve["marginal_rate"],
+        "statutory_rate": curve["statutory_rate"]})
+    LOGGER.info("torpedo: marginal %.1f%% against a statutory %.0f%% "
+                "(%.2fx) at a withdrawal of %.2f",
+                100.0 * curve["torpedo_marginal"],
+                100.0 * curve["torpedo_statutory"],
+                curve["torpedo_multiple"], curve["torpedo_at"])
+    if found.get("measured") and "ranking_survives" in found:
+        LOGGER.info("tax costs the US arm %.1f%% and the Australian %.1f%%; "
+                    "the gap moves from %.1f%% to %.1f%% and the ranking %s",
+                    found.get("us_traditional_cost_pct", float("nan")),
+                    found.get("au_cost_pct", float("nan")),
+                    found["gap_untaxed_pct"], found["gap_taxed_pct"],
+                    "holds" if found["ranking_survives"] else "flips")
+
+    tables = Path(cfg["run"]["table_dir"])
+    _save_table(swept, tables, "tax_comparison")
+    _save_table(curve_frame, tables, "tax_effective_rates")
+    _save_table(pd.DataFrame([{k: v for k, v in curve.items()
+                               if np.isscalar(v)}]),
+                tables, "tax_torpedo")
+    _save_table(fund_frame, tables, "tax_fund_earnings")
+
+    figures = [str(plots.plot_tax(
+        swept, curve_frame, curve, Path(cfg["run"]["figure_dir"])))]
+    elapsed = time.perf_counter() - started
+    rp.write_doc_33(
+        Path("docs") / "33_retirement_tax.md", cfg,
+        {"swept": swept, "curve": curve_frame, "fund": fund_frame},
+        figures,
+        {"elapsed_seconds": elapsed, "gamma": gamma, "n_paths": n_paths,
+         "strategy": key, "retire_age": age, "verdict": found,
+         "torpedo": {k: v for k, v in curve.items() if np.isscalar(v)},
+         "us_benefit": us_benefit, "average_income": average,
+         "targets": targets})
+    LOGGER.info("docs/33 written (%.0fs)", elapsed)
+    return state
+
+
 STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
          4: step4_report, 5: step5_sensitivity, 6: step6_spending,
          7: step7_glide_path, 8: step8_hedging, 9: step9_retirement_timing,
@@ -4184,11 +4357,11 @@ STEPS = {1: step1_dataset, 2: step2_bootstrap, 3: step3_lifecycle,
          26: step26_turnover, 27: step27_inflation,
          28: step28_withholding, 29: step29_sequence,
          30: step30_franking, 31: step31_plan,
-         32: step32_leisure}
+         32: step32_leisure, 33: step33_tax}
 
 
 def run(config_path: str = "config.yaml",
-        steps: Sequence[int] = tuple(range(1, 33)),
+        steps: Sequence[int] = tuple(range(1, 34)),
         quick: bool = False) -> Dict[str, Any]:
     """Execute the pipeline and return the accumulated state."""
     cfg = dl.load_config(config_path)
@@ -4218,8 +4391,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config.yaml")
     parser.add_argument("--steps", nargs="+", type=int,
-                        default=list(range(1, 33)),
-                        choices=list(range(1, 33)))
+                        default=list(range(1, 34)),
+                        choices=list(range(1, 34)))
     parser.add_argument("--quick", action="store_true",
                         help="small N for smoke tests")
     parser.add_argument("--verbose", action="store_true")

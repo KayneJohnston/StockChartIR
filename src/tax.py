@@ -174,6 +174,7 @@ AU_SAPTO = Offset(maximum=2_230.0 / 106_657.20,
 AU_FUND_EARNINGS_TAX: float = 0.15
 
 
+
 # ---------------------------------------------------------------------------
 # United States
 # ---------------------------------------------------------------------------
@@ -206,6 +207,15 @@ US_SENIOR_DEDUCTION: float = (2_000.0 + 6_000.0) / US_AVERAGE_WAGE
 #: would once have left alone.
 US_PROVISIONAL_BASE: float = 25_000.0 / US_AVERAGE_WAGE
 US_PROVISIONAL_SECOND: float = 34_000.0 / US_AVERAGE_WAGE
+
+#: Average federal rate a single filer pays on average earnings, net of the
+#: working-age standard deduction. Used only to gross a pre-tax contribution
+#: onto the model's take-home base -- the same wedge
+#: :func:`src.leisure.guarantee_overrides` applies to the Superannuation
+#: Guarantee, so that a 401(k) and a super fund are compared on one footing.
+US_AVERAGE_TAX_RATE: float = float(
+    US_SCALE.tax(np.array([US_AVERAGE_WAGE * (1.0 - US_STANDARD_DEDUCTION)]),
+                 US_AVERAGE_WAGE)[0] / US_AVERAGE_WAGE)
 
 
 def taxable_social_security(benefit: np.ndarray, other_income: np.ndarray,
@@ -352,6 +362,95 @@ def regime_from_config(key: str, cfg: Mapping[str, Any] | None = None
                                           for k, v in override.items()})
 
 
+#: What each pension system's arm is paired with. The two US rows are the
+#: honest pair: modelling American saving as a Roth is what every earlier
+#: section implicitly assumed, and modelling it as a traditional account is
+#: the comparison Australian superannuation actually deserves, since both
+#: then take contributions from pre-tax earnings.
+SYSTEM_REGIMES: Mapping[str, Tuple[str, ...]] = {
+    "us": ("none", "us_roth", "us_traditional"),
+    "au_pension_only": ("none", "au"),
+    "au_as_legislated": ("none", "au"),
+}
+
+
+def arms(systems: Sequence[str],
+         regimes: Mapping[str, Sequence[str]] | None = None,
+         ) -> Tuple[Tuple[str, str], ...]:
+    """``(system, regime)`` pairs to run, untaxed arm first for each."""
+    table = regimes or SYSTEM_REGIMES
+    out = []
+    for system in systems:
+        for key in table.get(system, ("none",)):
+            out.append((str(system), str(key)))
+    return tuple(out)
+
+
+def tax_verdict(frame: "Any") -> Dict[str, Any]:
+    """What putting real tax in does to the ranking.
+
+    The question is not whether tax lowers consumption -- it must -- but
+    whether it lowers it *unevenly enough to change the answer*. A tax that
+    costs both systems the same is a level effect and can be ignored; one
+    that closes or reverses the gap cannot.
+    """
+    import pandas as pd
+
+    if frame is None or not len(frame):
+        return {"measured": False}
+    wide = frame.set_index(["system", "regime"])
+
+    def cell(system: str, regime: str, column: str) -> float:
+        try:
+            return float(wide.loc[(system, regime), column])
+        except KeyError:
+            return float("nan")
+
+    found: Dict[str, Any] = {"measured": True}
+    rows = []
+    for system in frame["system"].unique():
+        free = cell(system, "none", "cec")
+        for regime in frame[frame["system"] == system]["regime"].unique():
+            if regime == "none":
+                continue
+            taxed = cell(system, regime, "cec")
+            rows.append({
+                "system": system, "regime": regime,
+                "cec_untaxed": free, "cec_taxed": taxed,
+                "cost_pct": 100.0 * (taxed / free - 1.0) if free else np.nan,
+            })
+    if not rows:
+        return found
+    found["rows"] = rows
+    by = {(r["system"], r["regime"]): r["cost_pct"] for r in rows}
+    au = by.get(("au_as_legislated", "au"), float("nan"))
+    for label, key in (("us_roth", ("us", "us_roth")),
+                       ("us_traditional", ("us", "us_traditional"))):
+        us = by.get(key, float("nan"))
+        if np.isfinite(us) and np.isfinite(au):
+            found[f"{label}_cost_pct"] = us
+            found[f"{label}_gap_pp"] = us - au
+            # The only comparison that matters: does tax cost the American
+            # arm more than the Australian one, and by enough to matter?
+            found[f"{label}_costs_more_than_au"] = bool(us < au)
+    found["au_cost_pct"] = au
+    # Does the untaxed ranking survive?
+    us_free = cell("us", "none", "cec")
+    au_free = cell("au_as_legislated", "none", "cec")
+    us_trad = cell("us", "us_traditional", "cec")
+    au_taxed = cell("au_as_legislated", "au", "cec")
+    if all(np.isfinite(x) for x in (us_free, au_free, us_trad, au_taxed)):
+        found["us_led_untaxed"] = bool(us_free > au_free)
+        found["us_leads_taxed"] = bool(us_trad > au_taxed)
+        found["ranking_survives"] = bool(
+            found["us_led_untaxed"] == found["us_leads_taxed"])
+        found["gap_untaxed_pct"] = 100.0 * (au_free / us_free - 1.0)
+        found["gap_taxed_pct"] = 100.0 * (au_taxed / us_trad - 1.0)
+        found["gap_narrowed"] = bool(
+            abs(found["gap_taxed_pct"]) < abs(found["gap_untaxed_pct"]))
+    return found
+
+
 def effective_rate_curve(regime: Regime, benefit: float, average: float,
                          withdrawals: Sequence[float]) -> Dict[str, Any]:
     """Marginal and average rates across a range of withdrawals.
@@ -365,7 +464,16 @@ def effective_rate_curve(regime: Regime, benefit: float, average: float,
     ben = np.full_like(draws, float(benefit))
     owed = regime.tax(ben, draws, average)
     gross = ben + draws
-    step = np.gradient(owed, draws) if len(draws) > 1 else np.zeros_like(owed)
+    # A forward difference, not a central one: the quantity a retiree cares
+    # about is the tax on the *next* dollar drawn, and a central difference
+    # averages across the kink the torpedo creates, which is exactly the
+    # feature being measured. The last point repeats its predecessor so the
+    # array lines up with `draws`.
+    if len(draws) > 1:
+        step = np.diff(owed) / np.diff(draws)
+        step = np.append(step, step[-1])
+    else:
+        step = np.zeros_like(owed)
     # The statutory rate the household would look up, against the rate it
     # actually faces. Their difference is the torpedo, and it is the only
     # honest way to say the effect is present: a high marginal rate at a
@@ -374,9 +482,20 @@ def effective_rate_curve(regime: Regime, benefit: float, average: float,
     taxable = np.maximum(assessable - regime.deduction * average, 0.0)
     statutory = np.zeros_like(taxable)
     for lower, rate in regime.scale.brackets:
-        statutory = np.where(taxable >= lower * average, rate, statutory)
+        statutory = np.where(taxable > lower * average, rate, statutory)
+    # A filer whose taxable income is nil is not "in the bottom bracket" in
+    # any sense that matters here: the next dollar they draw is untaxed. So
+    # the bracket is zero there, and the excess over it is zero too, which
+    # is what a system with no torpedo has to report.
+    statutory = np.where(taxable > 0.0, statutory, 0.0)
     excess = step - statutory
-    hit = int(np.argmax(excess)) if len(excess) else 0
+    # Only where the filer is actually *in* a bracket. At the edge of the
+    # standard deduction the rate jumps from nothing to something, and that
+    # is the deduction ending rather than a torpedo: a torpedo is being
+    # charged more than the bracket you are in, which needs a bracket.
+    inside = statutory > 0.0
+    searchable = np.where(inside, excess, -np.inf)
+    hit = int(np.argmax(searchable)) if inside.any() else 0
     return {
         "withdrawal": draws, "tax": owed,
         "average_rate": np.divide(owed, gross, out=np.zeros_like(owed),
@@ -392,7 +511,8 @@ def effective_rate_curve(regime: Regime, benefit: float, average: float,
         "torpedo_marginal": float(step[hit]) if len(step) else float("nan"),
         "torpedo_statutory": (float(statutory[hit]) if len(statutory)
                               else float("nan")),
-        "torpedo_excess": float(excess[hit]) if len(excess) else float("nan"),
+        "torpedo_excess": (float(excess[hit]) if len(excess) and inside.any()
+                           else 0.0),
         "torpedo_at": float(draws[hit]) if len(draws) else float("nan"),
         "torpedo_multiple": (float(step[hit] / statutory[hit])
                              if len(step) and statutory[hit] > 0.0

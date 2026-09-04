@@ -3065,6 +3065,107 @@ def plot_sequence(frame: pd.DataFrame, ranking: pd.DataFrame,
     return _save(fig, directory, name)
 
 
+def plot_tax(swept: pd.DataFrame, curve: pd.DataFrame,
+             torpedo: Mapping[str, Any], directory: str | Path,
+             name: str = "fig60_retirement_tax") -> Path:
+    """What each system's real retirement tax costs, and where it bites."""
+    with plt.rc_context(STYLE):
+        fig, axes = _grid(4, 3.0)
+        labels = {"none": "no tax", "us_roth": "US, Roth",
+                  "us_traditional": "US, traditional", "au": "Australia"}
+
+        # -- 1. what tax costs, as a share of the untaxed CEC --------------
+        # Plotted as a *change* rather than a level: the levels differ by
+        # more than the tax does, and a bar chart of them would hide the
+        # thing being measured.
+        ax = axes[0]
+        rules = list(dict.fromkeys(swept["rule"]))
+        arms, heights = [], []
+        for system in dict.fromkeys(swept["system"]):
+            block = swept[(swept["system"] == system)
+                          & (swept["rule"] == rules[0])]
+            free = block[block["regime"] == "none"]["cec"]
+            if not len(free):
+                continue
+            for _, r in block[block["regime"] != "none"].iterrows():
+                arms.append(f"{SYSTEM_SHORT.get(system, system)}\n"
+                            f"{labels.get(str(r['regime']), r['regime'])}")
+                heights.append(100.0 * (float(r["cec"])
+                                        / float(free.iloc[0]) - 1.0))
+        if arms:
+            idx = np.arange(len(arms))
+            ax.bar(idx, heights, width=0.6,
+                   color=[_colour(0) if h > min(heights) else _colour(1)
+                          for h in heights])
+            ax.set_xticks(idx)
+            ax.set_xticklabels(arms, fontsize=4.6)
+            ax.axhline(0.0, color="0.35", linewidth=0.8)
+        ax.set_ylabel("Change in CEC from taxing it (%)")
+        _title(ax, "What the real tax costs each system")
+
+        # -- 2. the effective rate curve, and the bracket beneath it -------
+        ax = axes[1]
+        draws = curve["withdrawal"].to_numpy(dtype=float)
+        ax.plot(draws, 100.0 * curve["marginal_rate"].to_numpy(dtype=float),
+                color=_colour(0), linewidth=1.5, label="marginal rate faced")
+        ax.plot(draws, 100.0 * curve["statutory_rate"].to_numpy(dtype=float),
+                color=_colour(1), linewidth=1.2, linestyle="--",
+                label="statutory bracket")
+        ax.plot(draws, 100.0 * curve["average_rate"].to_numpy(dtype=float),
+                color=_colour(2), linewidth=1.0, linestyle=":",
+                label="average rate")
+        at = float(torpedo.get("torpedo_at", float("nan")))
+        if np.isfinite(at):
+            ax.axvline(at, color="0.55", linewidth=0.8, linestyle=":",
+                       zorder=0)
+        ax.set_xlabel("Withdrawal (multiples of average earnings)")
+        ax.set_ylabel("Rate (%)")
+        _title(ax, "The US torpedo: the rate faced against the bracket")
+        _legend(ax)
+
+        # -- 3. ruin, which the tax moves through the withdrawal -----------
+        ax = axes[2]
+        for i, regime in enumerate(dict.fromkeys(swept["regime"])):
+            block = swept[swept["regime"] == regime]
+            by_rule = block.groupby("rule")["prob_ruin"].mean()
+            ordered = [r for r in rules if r in by_rule.index]
+            ax.plot(np.arange(len(ordered)),
+                    [100.0 * by_rule[r] for r in ordered],
+                    marker=_marker(i), color=_colour(i), linewidth=1.4,
+                    markersize=3.2, label=labels.get(str(regime), regime))
+        ax.set_xticks(np.arange(len(rules)))
+        ax.set_xticklabels([r.replace("_", " ") for r in rules], fontsize=5.0)
+        ax.set_ylabel("Probability of ruin (%)")
+        _title(ax, "Ruin, by withdrawal rule and tax regime")
+        _legend(ax)
+
+        # -- 4. tax as a share of gross retirement income ------------------
+        ax = axes[3]
+        taxed = swept[swept["regime"] != "none"]
+        for i, regime in enumerate(dict.fromkeys(taxed["regime"])):
+            block = taxed[taxed["regime"] == regime]
+            by_rule = block.groupby("rule")["tax_share_of_gross"].mean()
+            ordered = [r for r in rules if r in by_rule.index]
+            ax.plot(np.arange(len(ordered)),
+                    [100.0 * by_rule[r] for r in ordered],
+                    marker=_marker(i), color=_colour(i), linewidth=1.4,
+                    markersize=3.2, label=labels.get(str(regime), regime))
+        ax.set_xticks(np.arange(len(rules)))
+        ax.set_xticklabels([r.replace("_", " ") for r in rules], fontsize=5.0)
+        ax.set_ylabel("Tax as a share of gross income (%)")
+        _title(ax, "What is actually paid")
+        _legend(ax)
+
+        return _save(fig, directory, name)
+
+
+#: Short names for the pension systems, for axis labels that have no room.
+SYSTEM_SHORT: Mapping[str, str] = {
+    "us": "US", "au_pension_only": "AU (pension)",
+    "au_as_legislated": "AU (+ super)",
+}
+
+
 def plot_leisure(swept: pd.DataFrame, optima: pd.DataFrame,
                  crossings: pd.DataFrame, claim: pd.DataFrame,
                  anchors: pd.DataFrame, arm: str, spec: Any,

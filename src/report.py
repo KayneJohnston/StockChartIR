@@ -10303,3 +10303,221 @@ paths, γ = {gamma:g}, holding `{strategy}` throughout. Tables in
 `{cfg['run']['table_dir']}/leisure_*.csv`.
 """
     return _write(path, [intro, body])
+
+
+REGIME_NAME: Dict[str, str] = {
+    "none": "No tax",
+    "us_roth": "US, saving in a Roth",
+    "us_traditional": "US, saving in a traditional account",
+    "au": "Australia, superannuation after 60",
+}
+
+
+def write_doc_33(
+    path: str | Path,
+    cfg: Mapping[str, Any],
+    frames: Mapping[str, pd.DataFrame],
+    figures: Sequence[str],
+    notes: Mapping[str, Any],
+) -> Path:
+    """The tax each retirement system actually charges."""
+    swept = frames["swept"]
+    curve = frames.get("curve", pd.DataFrame())
+    found = notes.get("verdict", {"measured": False})
+    torpedo = notes.get("torpedo", {})
+    gamma = float(notes["gamma"])
+    rule = str(cfg["lifecycle"]["retirement"]["rule"])
+
+    shown = swept.copy()
+    shown["system"] = shown["system"].map(
+        lambda k: SYSTEM_NAME.get(str(k), str(k)))
+    shown["regime"] = shown["regime"].map(
+        lambda k: REGIME_NAME.get(str(k), str(k)))
+    shown["prob_ruin"] = 100.0 * shown["prob_ruin"]
+    shown["tax_share_of_gross"] = 100.0 * shown["tax_share_of_gross"]
+    headline = shown[shown["rule"] == rule]
+    head_tbl = md_table(_compact(
+        headline, ["system", "regime", "cec", "prob_ruin",
+                   "mean_consumption", "tax_share_of_gross"],
+        {"system": "Pension system", "regime": "Tax regime", "cec": "CEC",
+         "prob_ruin": "Ruin (%)", "mean_consumption": "Mean consumption",
+         "tax_share_of_gross": "Tax paid (% of gross)"}), floatfmt="{:.4f}")
+    all_tbl = md_table(_compact(
+        shown, ["rule", "system", "regime", "cec", "prob_ruin",
+                "tax_share_of_gross"],
+        {"rule": "Rule", "system": "Pension system", "regime": "Tax regime",
+         "cec": "CEC", "prob_ruin": "Ruin (%)",
+         "tax_share_of_gross": "Tax paid (% of gross)"}), floatfmt="{:.4f}")
+
+    if torpedo:
+        torpedo_line = (
+            f"At the withdrawal this household actually makes, the American "
+            f"retiree faces a marginal rate of "
+            f"{100 * float(torpedo['torpedo_marginal']):.1f}% while sitting "
+            f"in a {100 * float(torpedo['torpedo_statutory']):.0f}% bracket "
+            f"-- a factor of {float(torpedo['torpedo_multiple']):.2f}, "
+            f"{'which is the arithmetic ceiling' if abs(float(torpedo['torpedo_multiple']) - 1.85) < 0.005 else 'against an arithmetic ceiling of 1.85'}. "
+            f"The Australian retiree "
+            f"faces no such thing, because superannuation drawn after 60 is "
+            f"not assessable income and so cannot drag the pension into tax "
+            f"behind it.")
+    else:
+        torpedo_line = ""
+
+    def _cost(value: float) -> str:
+        """Tax is not always a cost. Deferring it buys a larger contribution,
+        and where that outweighs what is paid later the arm *gains*, so the
+        sentence has to be able to say so."""
+        if abs(value) < 0.05:
+            return "costs nothing at all"
+        return (f"costs {abs(value):.1f}%" if value < 0.0
+                else f"is worth {value:+.1f}%")
+
+    if found.get("measured") and "ranking_survives" in found:
+        roth = found.get("us_roth_cost_pct")
+        trad = float(found.get("us_traditional_cost_pct", 0.0))
+        au_cost = float(found.get("au_cost_pct", 0.0))
+        verdict_line = (
+            f"**Tax {_cost(trad)} of certainty-equivalent consumption to an "
+            f"American saving in a traditional account, and "
+            f"{_cost(au_cost)} to an Australian.**")
+        if roth is not None:
+            verdict_line += (
+                f" To an American saving in a Roth it "
+                f"{_cost(float(roth))}: with no other assessable income the "
+                f"benefit alone stays under thresholds frozen since 1993, "
+                f"and the torpedo needs other income to fire.")
+        verdict_line += (
+            f" The gap between the two countries moves from "
+            f"{float(found['gap_untaxed_pct']):+.1f}% to "
+            f"{float(found['gap_taxed_pct']):+.1f}%, and the ranking "
+            f"{'holds' if found['ranking_survives'] else 'flips'}.")
+        if found.get("gap_narrowed"):
+            verdict_line += (
+                " Narrower, then, but not reversed -- which is the honest "
+                "answer to the objection that prompted this section, and not "
+                "the one the objection expected.")
+        elif found.get("ranking_survives"):
+            verdict_line += (
+                " **The gap widens.** That is the opposite of what the "
+                "objection behind this section anticipated, and the reason "
+                "is a timing asymmetry rather than a rate one. Australia's "
+                "tax-free withdrawal is real, but it is collected once, at "
+                "the end; the fund-earnings tax that pays for it is levied "
+                "every year for four decades and compounds against the "
+                "balance. Deferring tax, by contrast, is worth something "
+                "positive to the American saver, because the contribution "
+                "grows by the tax not paid on it and what is owed later is "
+                "owed on a lower income. Section 5 says how much of this "
+                "rests on the one rate nobody can pin down.")
+    else:
+        verdict_line = ""
+
+    figure_list = "\n".join(f"* `{f}`" for f in figures)
+    intro = _header(
+        "33 - The Tax Each System Actually Charges",
+        "Every other document in this project is tax-free. Comparing two "
+        "countries is where that stops being harmless.")
+
+    body = f"""
+## 1. Why a tax-free model was fine until it wasn't
+
+A tax that falls on every strategy alike cancels out of a comparison between
+strategies. That is why `docs/03` can leave it out and why nothing in the
+asset-allocation half of this project is wrong for want of it: the ranking
+of portfolios is unchanged by a charge they all pay.
+
+`docs/32` compares two *countries*, and there the argument collapses. What
+differs between the American and Australian retirement systems is precisely
+which income is taxed, when, and in what order -- so leaving tax out does
+not cancel, it silently picks a winner.
+
+The gap is not symmetric, which is why it could not be reasoned about:
+
+* **Australia** charges during accumulation, at 15% on fund earnings, and
+  then not at all: superannuation drawn after 60 from a taxed fund is not
+  merely tax-free but *not assessable income*, so it cannot affect the tax
+  on anything else. The Age Pension is assessable, but the seniors and
+  pensioners offset lifts the effective threshold above the full single
+  rate, so a pensioner living on the pension pays nothing.
+* **The United States** charges during retirement, progressively, and
+  interactively. Social security is taxable on a sliding scale whose
+  thresholds have not been indexed since 1993, and a withdrawal from a
+  traditional account is ordinary income *and* counts toward the
+  provisional income that decides how much benefit is taxed.
+
+One charge is smooth and early; the other is progressive, late, and lands in
+the years a risk-averse aggregator weights most heavily. Which costs more is
+a question to measure.
+
+## 2. The torpedo, measured
+
+{torpedo_line}
+
+The shape is worth seeing rather than describing: the marginal rate rises,
+then *falls* as the 85% inclusion completes, then rises again into the next
+bracket. A retiree who looked up their bracket would be wrong about the cost
+of their next withdrawal over most of the range this household occupies.
+
+## 3. What it does to the comparison
+
+Each system is run twice, once tax-free and once under its own schedule,
+under the project's own withdrawal rule.
+
+{head_tbl}
+
+{verdict_line}
+
+The two American rows are the honest pair. Modelling US saving as a Roth --
+contributions from take-home pay, nothing taxed thereafter -- is what every
+earlier section of this project implicitly assumed. Modelling it as a
+traditional account is the comparison Australian superannuation actually
+deserves, because both then take contributions from pre-tax earnings; it is
+also what switches the torpedo on.
+
+## 4. Across the withdrawal rules
+
+Tax bites differently at different withdrawal levels, which is the whole
+point of an interacting charge, so a single spending rule would not show it.
+
+{all_tbl}
+
+## 5. What this changes
+
+* The untaxed comparison in `docs/32` was not neutral between the two
+  systems, and this section says by how much rather than leaving a reader
+  to guess.
+* **The direction is the surprise.** The objection that prompted this work
+  expected tax to flatter Australia, since its super is withdrawn tax-free.
+  It does -- but Australia also pays the fund-earnings tax for forty years
+  first, and the two very nearly cancel.
+* A retiree cannot read their marginal rate off a bracket table. On this
+  calibration the American household's true marginal rate is close to twice
+  the statutory one over most of its plausible withdrawal range.
+
+## 6. What is still not modelled
+
+* State and local income taxes, which would raise the American charge.
+* Capital gains tax and its one-third discount inside an Australian fund,
+  which would lower the 15% headline on fund earnings.
+* Any filing status but single, since this model has one earner.
+* The Australian marginal tax on earnings held *outside* super. Voluntary
+  saving is treated as a Roth in both countries, which isolates the
+  comparison to the retirement wrapper and is the assumption most likely to
+  matter of the four.
+
+## 7. Figures
+
+{figure_list}
+
+## 8. Reproduction
+
+```bash
+python main.py --steps 33
+```
+
+Runtime {float(notes['elapsed_seconds']):.0f}s at {int(notes['n_paths']):,}
+paths, gamma = {gamma:g}, retiring at {int(notes['retire_age'])}. Tables in
+`results/tables/tax_*.csv`; schedules and their sources in `src/tax.py`.
+"""
+    return _write(path, [intro, body])

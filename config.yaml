@@ -1077,3 +1077,34 @@ mortality:
     - {label: "baseline (m=88)", modal_age: 88.0, dispersion: 10.0}
     - {label: "longer lives (m=93)", modal_age: 93.0, dispersion: 10.0}
     - {label: "less dispersed (m=88, b=7)", modal_age: 88.0, dispersion: 7.0}
+
+# ---------------------------------------------------------------------
+# Step 33 - the tax each retirement system actually charges
+# ---------------------------------------------------------------------
+# Every other section is tax-free, which is fine while the question is asset
+# allocation -- a charge that falls on every strategy alike cancels out of
+# the comparison. It stops being fine when two countries are compared,
+# because what differs between their retirement systems is precisely which
+# income is taxed and when. See docs/33 and `src/tax.py` for the schedules
+# and their sources.
+tax:
+  enabled: true
+  n_paths: 50000
+  # Replacement targets crossed with each system, as in step 32. Tax bites
+  # differently at different withdrawal levels, which is the whole point of
+  # the torpedo, so a single target would not show it.
+  replacement_targets: [0.50, 0.75, 1.00]
+  # Per-regime overrides. `fund_earnings_tax` is the one worth moving: the
+  # statutory rate inside an Australian fund is 15%, but franking credits
+  # (section #franking measures them on this panel) and the one-third
+  # discount on gains held beyond a year both reduce what a growth fund
+  # actually pays, so the statutory rate is an upper bound on the drag.
+  au:
+    fund_earnings_tax: 0.15
+  # The statutory 15% is an upper bound on what a fund actually pays, and by
+  # a wide margin: franking credits (section #franking measures a fully
+  # franked credit worth 42.9% on this panel) and the one-third discount on
+  # gains held beyond a year both cut it. Sweeping the rate says how much of
+  # the result depends on a number nobody can pin down, which is better than
+  # picking one and hoping.
+  fund_earnings_grid: [0.00, 0.05, 0.075, 0.10, 0.15]

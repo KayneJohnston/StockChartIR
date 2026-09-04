@@ -616,6 +616,7 @@ SECTION_ORDER: Tuple[str, ...] = (
     "spending",
     "plan",
     "leisure",
+    "tax",
     # Closing.
     "discussion",
     "limitations",
@@ -650,8 +651,11 @@ EXTENSION_GROUPS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("portfolio", ("glide", "allocation", "leverage", "turnover",
                    "out_of_sample")),
     ("menu", ("housing", "mortgage")),
+    # `tax` sits here rather than with the other charges above because it
+    # is not a charge on the *portfolio* but on the retirement system, and
+    # it exists only to check the comparison `leisure` makes.
     ("plan", ("saving", "accumulation", "retirement", "sequence",
-              "spending", "plan", "leisure")),
+              "spending", "plan", "leisure", "tax")),
 )
 
 
@@ -708,6 +712,13 @@ COMPACT_STRATEGY: Dict[str, str] = {
 
 
 #: Readable names for Section #leisure's pension systems.
+REGIME_LABEL: Dict[str, str] = {
+    "none": "No tax",
+    "us_roth": "Roth",
+    "us_traditional": "Traditional",
+    "au": "Australia, super after 60",
+}
+
 SYSTEM_LABEL: Dict[str, str] = {
     "us": "US social security",
     "au_pension_only": "Age Pension only",
@@ -7522,6 +7533,149 @@ def section_leisure(ctx: Any) -> List[Flowable]:
 # ---------------------------------------------------------------------------
 # 19. Discussion
 # ---------------------------------------------------------------------------
+def section_tax(ctx: Any) -> List[Flowable]:
+    """What each retirement system's own tax does to the comparison."""
+    f = ctx.f
+    swept = f.table("tax_comparison")
+    torpedo_frame = f.table("tax_torpedo")
+    cfg = f.cfg
+    gamma = float(cfg["utility"]["baseline_risk_aversion"])
+    rule = str(cfg["lifecycle"]["retirement"]["rule"])
+
+    from src import tax as tx
+
+    headline = swept[swept["rule"] == rule] if len(swept) else swept
+    found = tx.tax_verdict(headline) if len(headline) else {"measured": False}
+    torpedo = torpedo_frame.iloc[0].to_dict() if len(torpedo_frame) else {}
+
+    out: List[Flowable] = [
+        ctx.h1("#tax. The Tax Each System Actually Charges")]
+    out.append(ctx.p(
+        "Every result so far is tax-free, and until Section #leisure that "
+        "was harmless. A charge every strategy pays alike cancels out of a "
+        "comparison between strategies, so the ranking of portfolios is "
+        "unchanged by leaving it out. Comparing two <i>countries</i> is "
+        "where the argument fails, because what differs between the "
+        "American and Australian retirement systems is precisely which "
+        "income is taxed, and when."))
+    out.append(ctx.p(
+        "The asymmetry is the reason it could not be reasoned about. "
+        "Australia charges early and smoothly — 15% on fund earnings through "
+        "accumulation — and then not at all: superannuation drawn after 60 "
+        "from a taxed fund is not merely tax-free but <i>not assessable "
+        "income</i>, so it cannot affect the tax on anything else. The Age "
+        "Pension is assessable, but the seniors and pensioners offset lifts "
+        "the effective threshold above the full single rate, so a pensioner "
+        "living on the pension pays nothing. The United States charges late, "
+        "progressively, and interactively: social security is taxable on a "
+        "sliding scale whose thresholds have not been indexed since 1993, "
+        "and a withdrawal from a traditional account is ordinary income "
+        "<i>and</i> counts toward the provisional income deciding how much "
+        "of the benefit is taxed."))
+
+    out.append(ctx.h2("#tax.1 The torpedo, measured"))
+    if torpedo:
+        out.append(ctx.p(
+            f"At the withdrawal this household actually makes, the American "
+            f"retiree faces a marginal rate of "
+            f"{100 * float(torpedo['torpedo_marginal']):.1f}% while sitting "
+            f"in a {100 * float(torpedo['torpedo_statutory']):.0f}% bracket "
+            f"— a factor of {float(torpedo['torpedo_multiple']):.2f}, "
+            f"{'which is the arithmetic ceiling' if abs(float(torpedo['torpedo_multiple']) - 1.85) < 0.005 else 'against an arithmetic ceiling of 1.85'}: "
+            f"every dollar drawn drags up to eighty-five cents of benefit "
+            f"into the tax base behind it. The "
+            f"Australian retiree faces no such thing, because the withdrawal "
+            f"that would do the dragging is not assessable income."))
+        out.append(ctx.p(
+            "The shape matters as much as the level. The marginal rate rises, "
+            "then <i>falls</i> as the 85% inclusion completes, then rises "
+            "again into the next bracket — so it is not monotone in income, "
+            "and a retiree who looked up their bracket would be wrong about "
+            "the cost of their next withdrawal across most of the range this "
+            "household occupies."))
+
+    out.append(ctx.h2("#tax.2 What it does to the comparison"))
+    if len(headline):
+        shown = headline.copy()
+        out.extend(ctx.table(
+            [["Pension system", "Tax regime", "CEC", "Ruin (%)",
+              "Tax paid (% of gross)"]]
+            + [[SYSTEM_LABEL.get(str(r["system"]), str(r["system"])),
+                REGIME_LABEL.get(str(r["regime"]), str(r["regime"])),
+                f"{float(r['cec']):.4f}",
+                f"{100 * float(r['prob_ruin']):.1f}",
+                f"{100 * float(r['tax_share_of_gross']):.1f}"]
+               for _, r in shown.iterrows()],
+            f"Each system tax-free and under its own schedule, γ = "
+            f"{gamma:g}.",
+            note="The two American rows are the honest pair: a Roth is what "
+                 "every earlier section implicitly assumed, and a "
+                 "traditional account is what superannuation deserves to be "
+                 "compared with, since both take contributions from pre-tax "
+                 "earnings."))
+    if found.get("measured") and "ranking_survives" in found:
+        def _cost(value: float) -> str:
+            # Deferring tax buys a larger contribution, so an arm can come
+            # out ahead. The sentence has to be able to say that.
+            if abs(value) < 0.05:
+                return "costs nothing at all"
+            return (f"costs {abs(value):.1f}%" if value < 0.0
+                    else f"is worth {value:+.1f}%")
+
+        trad = float(found.get("us_traditional_cost_pct", 0.0))
+        au_cost = float(found.get("au_cost_pct", 0.0))
+        roth = found.get("us_roth_cost_pct")
+        body = (
+            f"<b>Tax {_cost(trad)} of certainty-equivalent consumption to an "
+            f"American saving in a traditional account, and "
+            f"{_cost(au_cost)} to an Australian.</b>")
+        if roth is not None:
+            body += (
+                f" To an American saving in a Roth it {_cost(float(roth))}: "
+                f"with no other assessable income the benefit alone stays "
+                f"below thresholds frozen since 1993, and the torpedo needs "
+                f"other income to fire.")
+        body += (
+            f" The gap between the two countries moves from "
+            f"{float(found['gap_untaxed_pct']):+.1f}% to "
+            f"{float(found['gap_taxed_pct']):+.1f}%, and the ranking "
+            f"{'holds' if found['ranking_survives'] else 'flips'}.")
+        out.append(ctx.p(body))
+        if found.get("gap_narrowed") and found.get("ranking_survives"):
+            out.append(ctx.p(
+                "Narrower, then, but not reversed — the honest answer to the "
+                "objection that prompted this section, and not the one it "
+                "expected."))
+        elif found.get("ranking_survives"):
+            out.append(ctx.p(
+                "<b>The gap widens.</b> That is the opposite of what the "
+                "objection behind this section anticipated, and the reason is "
+                "a timing asymmetry rather than a difference in rates. "
+                "Australia's tax-free withdrawal is real, but it is collected "
+                "once, at the end; the fund-earnings tax that pays for it is "
+                "levied every year for four decades and compounds against the "
+                "balance. Deferring tax runs the other way — the contribution "
+                "grows by the tax not paid on it, and what is owed later is "
+                "owed on a lower income — which is why the traditional arm "
+                "comes out ahead of paying no tax at all. How much of this "
+                "rests on the one rate nobody can pin down is the next "
+                "subsection."))
+        else:
+            out.append(ctx.p(
+                "The untaxed comparison in Section #leisure therefore did not "
+                "merely lack precision; it pointed the wrong way. That is "
+                "what a section like this exists to find."))
+    out.append(ctx.note(
+        "What is still missing, in rough order of how much it would move "
+        "this: the Australian marginal tax on earnings held outside super, "
+        "since voluntary saving is treated as a Roth in both countries to "
+        "isolate the retirement wrapper; capital gains tax and its "
+        "one-third discount inside a fund, which would push the 15% on fund "
+        "earnings down; US state income taxes, which would push the American "
+        "charge up; and any filing status but single."))
+    return out
+
+
 def section_discussion(ctx: Any) -> List[Flowable]:
     f = ctx.f
     lottery = f.table("retirement_lottery_stats").iloc[0]
@@ -10207,6 +10361,7 @@ def story(ctx: Any) -> List[Flowable]:
     parts += section_spending(ctx)
     parts += section_plan(ctx)
     parts += section_leisure(ctx)
+    parts += section_tax(ctx)
     parts += section_discussion(ctx)
     parts += section_limitations(ctx)
     parts += section_conclusion(ctx)
