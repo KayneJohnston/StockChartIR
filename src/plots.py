@@ -3065,6 +3065,80 @@ def plot_sequence(frame: pd.DataFrame, ranking: pd.DataFrame,
     return _save(fig, directory, name)
 
 
+def plot_bridge(bridge: pd.DataFrame, directory: str | Path,
+                name: str = "fig61_system_bridge") -> Path:
+    """US to Australia in one chart, one feature at a time.
+
+    A waterfall rather than a pair of bars, because the pair only says the
+    two systems differ and the question all along was *what* differs. Each
+    step turns on exactly one feature, so the height of a step is that
+    feature's contribution and nothing else's.
+    """
+    with plt.rc_context(STYLE):
+        fig, axes = _grid(2, 3.4, max_cols=1)
+
+        labels = [str(x) for x in bridge["step"]]
+        levels = bridge["cec"].to_numpy(dtype=float)
+        start, end = levels[0], levels[-1]
+
+        # -- 1. the waterfall ---------------------------------------------
+        ax = axes[0]
+        idx = np.arange(len(levels))
+        # Endpoints are levels and sit on the floor; the steps between them
+        # float, so their height reads as the change rather than the total.
+        ax.bar(idx[0], start, width=0.62, color="0.35", zorder=2)
+        ax.bar(idx[-1], end, width=0.62, color="0.35", zorder=2)
+        for i in range(1, len(levels) - 1):
+            low, high = sorted((levels[i - 1], levels[i]))
+            ax.bar(i, high - low, bottom=low, width=0.62, zorder=2,
+                   color=_colour(0) if levels[i] > levels[i - 1]
+                   else _colour(1))
+        for i in range(len(levels) - 1):
+            ax.plot([i + 0.31, i + 1 - 0.31], [levels[i]] * 2,
+                    color="0.5", linewidth=0.7, linestyle=":", zorder=1)
+        for i, value in enumerate(levels):
+            if i in (0, len(levels) - 1):
+                ax.annotate(f"{value:.3f}", (i, value), ha="center",
+                            va="bottom", fontsize=5.6, xytext=(0, 2),
+                            textcoords="offset points")
+            else:
+                change = value - levels[i - 1]
+                top = max(value, levels[i - 1])
+                ax.annotate(f"{change:+.3f}", (i, top), ha="center",
+                            va="bottom", fontsize=5.6, xytext=(0, 2),
+                            textcoords="offset points")
+        ax.set_xticks(idx)
+        ax.set_xticklabels(labels, fontsize=5.2)
+        ax.set_ylabel("Certainty-equivalent consumption")
+        ax.set_ylim(0.0, max(levels) * 1.16)
+        _title(ax, "From US social security to Australia, one feature "
+                   "at a time")
+
+        # -- 2. the same steps ranked by size ------------------------------
+        # The waterfall shows the path; this shows which step is the answer,
+        # which is the thing a reader takes away.
+        ax = axes[1]
+        moves = [(labels[i], levels[i] - levels[i - 1])
+                 for i in range(1, len(levels))]
+        moves.sort(key=lambda r: abs(r[1]))
+        pos = np.arange(len(moves))
+        ax.barh(pos, [abs(v) for _, v in moves], height=0.6,
+                color=[_colour(0) if v > 0 else _colour(1) for _, v in moves])
+        for i, (_, value) in enumerate(moves):
+            ax.annotate(f"{abs(value):.3f}", (abs(value), i), va="center",
+                        ha="left", fontsize=5.6, xytext=(2, 0),
+                        textcoords="offset points")
+        ax.set_yticks(pos)
+        ax.set_yticklabels([lab.replace("+ ", "") for lab, _ in moves],
+                           fontsize=5.6)
+        ax.set_xlabel("Size of the step (certainty-equivalent consumption)")
+        ax.set_xlim(0.0, max(abs(v) for _, v in moves) * 1.16)
+        _title(ax, "Ranked: the means test is the answer, and the tax is "
+                   "a rounding error")
+
+        return _save(fig, directory, name)
+
+
 def plot_tax(swept: pd.DataFrame, curve: pd.DataFrame,
              torpedo: Mapping[str, Any], directory: str | Path,
              name: str = "fig60_retirement_tax") -> Path:

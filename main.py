@@ -4220,6 +4220,9 @@ def step33_tax(cfg: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
             return 0.0
         return float(regime.fund_tax.drag(_domestic_weight(strategy_key)))
 
+    gate_only, _ = le.feature_overrides("timing", cfg)
+    means_only, _ = le.feature_overrides("formula", cfg)
+
     rows: List[Dict[str, Any]] = []
     for system, regime_key in tx.arms(systems):
         overrides, _ = le.system_overrides(system, cfg)
@@ -4343,7 +4346,47 @@ def step33_tax(cfg: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
                     found["gap_untaxed_pct"], found["gap_taxed_pct"],
                     "holds" if found["ranking_survives"] else "flips")
 
+    # ---- the whole comparison in one chart -------------------------------
+    # Each step turns on exactly one feature, so a step's height is that
+    # feature's contribution. The date is held fixed here: Section 32 lets
+    # it move, and the eligibility gate reads differently when it can.
+    au_full = {**gate_only, **means_only, **le.guarantee_overrides(cfg)}
+    bridge_steps = [
+        ("US social security", {}, 0.0, None),
+        (f"+ pension age {int(lei_cfg.get('age_pension_age', 67))}",
+         dict(gate_only), 0.0, None),
+        ("+ means test", {**gate_only, **means_only}, 0.0, None),
+        ("+ super guarantee", dict(au_full), 0.0, None),
+        ("+ Australian tax", dict(au_full),
+         _fund_drag(tx.regime_from_config("au", cfg), key, cfg, spec), "au"),
+    ]
+    bridge_rows: List[Dict[str, Any]] = []
+    headline_rule = spg.from_spec(spec.retirement_rule, spec.rule_rate)
+    for label, over, drag, regime_key in bridge_steps:
+        aged = dataclasses.replace(pl.spec_for(spec, age), **over,
+                                   tax_regime=regime_key, fund_tax_drag=drag)
+        income = lc.simulate_income(aged, n_paths, shocks=shocks,
+                                    dom_eq=paths.dom_eq, intl_eq=paths.intl_eq)
+        strategy = lc.build_strategies(cfg, aged)[key]
+        out = lc.simulate(paths, strategy, aged, income,
+                          spending=headline_rule)
+        bridge_rows.append({
+            "step": label,
+            "cec": float(ut.crra_certainty_equivalent(
+                ut.bundle_from_outcome(out, cfg, aged), gamma, beta)),
+            "prob_ruin": float(np.mean(out.ruin))})
+    bridge = pd.DataFrame.from_records(bridge_rows)
+    bridge["change"] = bridge["cec"].diff()
+    span = float(bridge["cec"].iloc[-1] - bridge["cec"].iloc[0])
+    bridge["share_of_gap_pct"] = 100.0 * bridge["change"] / span if span \
+        else np.nan
+    biggest = bridge.iloc[bridge["change"].abs().idxmax()]
+    LOGGER.info("bridge: %s moves the certainty equivalent by %+.4f, the "
+                "largest of the %d steps", biggest["step"],
+                float(biggest["change"]), len(bridge) - 1)
+
     tables = Path(cfg["run"]["table_dir"])
+    _save_table(bridge, tables, "tax_system_bridge")
     _save_table(swept, tables, "tax_comparison")
     _save_table(curve_frame, tables, "tax_effective_rates")
     _save_table(pd.DataFrame([{k: v for k, v in curve.items()
@@ -4354,12 +4397,14 @@ def step33_tax(cfg: Dict[str, Any], state: Dict[str, Any]) -> Dict[str, Any]:
                 tables, "tax_fund_components")
 
     figures = [str(plots.plot_tax(
-        swept, curve_frame, curve, Path(cfg["run"]["figure_dir"])))]
+        swept, curve_frame, curve, Path(cfg["run"]["figure_dir"]))),
+               str(plots.plot_bridge(bridge, Path(cfg["run"]["figure_dir"])))]
     elapsed = time.perf_counter() - started
     rp.write_doc_33(
         Path("docs") / "33_retirement_tax.md", cfg,
         {"swept": swept, "curve": curve_frame, "fund": fund_frame,
-         "components": pd.DataFrame([base_fund.components(w_dom)])},
+         "components": pd.DataFrame([base_fund.components(w_dom)]),
+         "bridge": bridge},
         figures,
         {"elapsed_seconds": elapsed, "gamma": gamma, "n_paths": n_paths,
          "strategy": key, "retire_age": age, "verdict": found,

@@ -10324,6 +10324,7 @@ def write_doc_33(
     swept = frames["swept"]
     curve = frames.get("curve", pd.DataFrame())
     fund = frames.get("fund", pd.DataFrame())
+    bridge = frames.get("bridge", pd.DataFrame())
     parts = frames.get("components", pd.DataFrame())
     found = notes.get("verdict", {"measured": False})
     torpedo = notes.get("torpedo", {})
@@ -10479,6 +10480,28 @@ def write_doc_33(
     else:
         fund_line = ""
 
+    bridge_tbl = md_table(_compact(
+        bridge, ["step", "cec", "change", "share_of_gap_pct", "prob_ruin"],
+        {"step": "Turning on", "cec": "CEC", "change": "Change",
+         "share_of_gap_pct": "Share of the whole gap (%)",
+         "prob_ruin": "Ruin"}), floatfmt="{:.4f}") if len(bridge) else ""
+
+    if len(bridge) > 2:
+        moves = bridge.dropna(subset=["change"])
+        top = moves.loc[moves["change"].abs().idxmax()]
+        least = moves.loc[moves["change"].abs().idxmin()]
+        ratio = (abs(float(top["change"])) / abs(float(least["change"]))
+                 if float(least["change"]) else float("inf"))
+        bridge_line = (
+            f"**One step is the answer.** Turning on `{str(top['step']).strip('+ ')}` "
+            f"moves the certainty equivalent by {float(top['change']):+.3f}; "
+            f"the smallest step, `{str(least['step']).strip('+ ')}`, moves it "
+            f"{float(least['change']):+.3f} -- a ratio of {ratio:.0f}. "
+            f"Whatever separates these two systems, it is not the tax, and "
+            f"it is not mainly the pension age either.")
+    else:
+        bridge_line = ""
+
     figure_list = "\n".join(f"* `{f}`" for f in figures)
     intro = _header(
         "33 - The Tax Each System Actually Charges",
@@ -10578,7 +10601,25 @@ swept rather than the rate.
 
 {fund_line}
 
-## 6. What this changes
+## 6. The whole comparison in one chart
+
+Sections 1 to 5 change one thing at a time but report each against its own
+reference. This walks the same ground in one line, from the American
+schedule to the Australian one, turning on a single feature at each step so
+that a step's height is that feature's contribution and nothing else's.
+
+{bridge_tbl}
+
+{bridge_line}
+
+The retirement date is held fixed here. `docs/32` lets it move, and the
+eligibility gate reads differently when it can: at a fixed date the gate is
+a straight loss of the years before it, while a mover responds by retiring
+*earlier*, because a pension that arrives on a fixed birthday carries no
+penalty for stopping early. Both are true and they answer different
+questions.
+
+## 7. What this changes
 
 * The untaxed comparison in `docs/32` was not neutral between the two
   systems, and this section says by how much rather than leaving a reader
@@ -10598,7 +10639,7 @@ swept rather than the rate.
   calibration the American household's true marginal rate is close to twice
   the statutory one over most of its plausible withdrawal range.
 
-## 7. What is still not modelled
+## 8. What is still not modelled
 
 * State and local income taxes, which would raise the American charge.
 * Capital gains tax and its one-third discount inside an Australian fund,
@@ -10609,11 +10650,11 @@ swept rather than the rate.
   comparison to the retirement wrapper and is the assumption most likely to
   matter of the four.
 
-## 8. Figures
+## 9. Figures
 
 {figure_list}
 
-## 9. Reproduction
+## 10. Reproduction
 
 ```bash
 python main.py --steps 33

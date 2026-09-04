@@ -7731,6 +7731,50 @@ def section_tax(ctx: Any) -> List[Flowable]:
                 f"{abs(float(measured['cost_pct'])):.1f}% of the certainty "
                 f"equivalent."))
 
+    bridge = f.table("tax_system_bridge")
+    if len(bridge) > 2:
+        moves = bridge.dropna(subset=["change"])
+        top = moves.loc[moves["change"].abs().idxmax()]
+        least = moves.loc[moves["change"].abs().idxmin()]
+        ratio = (abs(float(top["change"])) / abs(float(least["change"]))
+                 if float(least["change"]) else float("inf"))
+        out.append(ctx.h2("#tax.4 The whole comparison in one chart"))
+        out.append(ctx.p(
+            "The sections above each change one thing, but report it against "
+            "its own reference. This walks the same ground in a single line, "
+            "from the American schedule to the Australian one, turning on one "
+            "feature at each step so that a step's height is that feature's "
+            "contribution and nothing else's."))
+        out.extend(ctx.table(
+            [["Turning on", "CEC", "Change", "Share of the gap (%)"]]
+            + [[str(r["step"]), f"{float(r['cec']):.4f}",
+                "—" if not np.isfinite(float(r["change"]))
+                else f"{float(r['change']):+.4f}",
+                "—" if not np.isfinite(float(r.get("share_of_gap_pct",
+                                                   float("nan"))))
+                else f"{float(r['share_of_gap_pct']):+.0f}"]
+               for _, r in bridge.iterrows()],
+            f"From US social security to Australia as legislated, γ = "
+            f"{gamma:g}.",
+            note="The retirement date is held fixed here. Section #leisure "
+                 "lets it move, and the pension age reads differently when "
+                 "it can."))
+        out.append(ctx.p(
+            f"<b>One step is the answer.</b> Turning on "
+            f"{str(top['step']).lstrip('+ ')} moves the certainty equivalent "
+            f"by {float(top['change']):+.3f}; the smallest step, "
+            f"{str(least['step']).lstrip('+ ')}, moves it "
+            f"{float(least['change']):+.3f} — a ratio of {ratio:.0f}. "
+            f"Whatever separates these two systems, it is not the tax, and it "
+            f"is not mainly the pension age either."))
+        out.extend(ctx.figure(
+            "fig61_system_bridge",
+            "US social security to Australia as legislated, one feature at a "
+            "time. Endpoints sit on the floor and are levels; the steps "
+            "between them float, so a bar's height is the change that "
+            "feature makes. The lower panel ranks the same steps by size. "
+            "The retirement date is held fixed at the reference age."))
+
     out.append(ctx.note(
         "What is still missing, in rough order of how much it would move "
         "this: the Australian marginal tax on earnings held outside super, "
